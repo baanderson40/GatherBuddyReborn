@@ -58,6 +58,10 @@ public static class CraftingGatherBridge
     
     public static uint RecipeToCraft => _recipeIdToCraft;
     public static bool WaitingForGatherComplete => _waitingForGatherComplete;
+    internal static CraftingQueueProcessor? AutoRetainerQueue => _isQueueMode ? _queueProcessor : null;
+    internal static string? AutoRetainerOwner => _isQueueMode && _queueProcessor is { } queue
+        && queue.CurrentState is not (CraftingQueueProcessor.QueueState.Idle or CraftingQueueProcessor.QueueState.Complete or CraftingQueueProcessor.QueueState.Cancelled)
+        ? $"Vulcan:{_activeExecutionPlan?.AcquisitionRunId}" : null;
     public static bool IsAcquiringMaterials => _isQueueMode && _queueProcessor?.IsAcquiringMaterials == true;
     public static bool HasAcquisitionOwnership => IsAcquiringMaterials || (_activeExecutionPlan?.PurchasePolicy.Enabled == true
         && _queueProcessor?.CurrentState is CraftingQueueProcessor.QueueState.NavigatingToRetainerBell
@@ -192,8 +196,11 @@ public static class CraftingGatherBridge
     {
         if (_isQueueMode && _queueProcessor != null)
         {
-            UpdateCollectablesHomeReturnBeforeResume();
-            TryStartCollectablesInterruption();
+            if (GatherBuddy.AutoRetainerIntegration?.Coordinator.YieldRequested != true)
+            {
+                UpdateCollectablesHomeReturnBeforeResume();
+                TryStartCollectablesInterruption();
+            }
             _queueProcessor.Update();
             
             if (_queueProcessor.CurrentState == CraftingQueueProcessor.QueueState.Complete && !_queueProcessor.HasPendingTasks())
@@ -238,6 +245,7 @@ public static class CraftingGatherBridge
 
     public static void StartGatherAndCraft(uint recipeId, Dictionary<uint, int> missing)
     {
+        if (GatherBuddy.AutoRetainerIntegration?.CanStartAutomation() == false) return;
         if (ResolvedVendorPurchasePolicy.Resolve(GatherBuddy.Config.AutomaticVendorPurchases).Enabled)
         {
             var list = new CraftingListDefinition { ID = -1, Name = "Quick Gather + Craft", Recipes = [new(recipeId, 1)] };
@@ -259,6 +267,7 @@ public static class CraftingGatherBridge
     
     public static void StartQueueCraftAndGather(CraftingExecutionPlan executionPlan, CraftingListConsumableSettings? listConsumables = null, int? ephemeralListId = null)
     {
+        if (GatherBuddy.AutoRetainerIntegration?.CanStartAutomation() == false) return;
         if (GatherBuddy.VendorPurchaseManager.AutomationLease.Owner.HasValue || _activeExecutionPlan != null
             || GatherBuddy.VendorPurchaseManager.IsRunning || GatherBuddy.VendorBuyListManager.IsBusy
             || GatherBuddy.VendorNavigator.IsActive || GatherBuddy.AutoGather.Enabled || GatherBuddy.CollectableManager.IsRunning)
@@ -362,6 +371,7 @@ public static class CraftingGatherBridge
     
     public static void OnGatherComplete()
     {
+        if (GatherBuddy.AutoRetainerIntegration?.Coordinator.YieldRequested == true) return;
         if (_isQueueMode && _queueProcessor != null)
         {
             if (_queueProcessor.Paused || _queueProcessor.CurrentState != CraftingQueueProcessor.QueueState.WaitingForGather) return;
@@ -777,6 +787,7 @@ public static class CraftingGatherBridge
     
     public static void StopQueue()
     {
+        var arOwner = AutoRetainerOwner;
         if (_queueProcessor != null)
         {
             GatherBuddy.Log.Information("[CraftingGatherBridge] Stopping queue processor");
@@ -799,6 +810,7 @@ public static class CraftingGatherBridge
         {
             GatherBuddy.Log.Information("[CraftingGatherBridge] No queue processor running");
         }
+        GatherBuddy.AutoRetainerIntegration?.StopVulcanOwner(arOwner);
     }
 
     public static void PauseQueue(string reason)

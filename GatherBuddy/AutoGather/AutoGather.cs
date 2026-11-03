@@ -67,6 +67,7 @@ namespace GatherBuddy.AutoGather
         public Fish? PreviouslyCaughtFish { get; private set; }
         private void OnFishCaught(Fish arg1, ushort arg2, byte arg3, bool arg4, bool arg5)
         {
+            if (GatherBuddy.AutoRetainerIntegration?.Coordinator.BlocksAutomation == true) return;
             PreviouslyCaughtFish = LastCaughtFish;
             LastCaughtFish       = arg1;
             
@@ -131,6 +132,7 @@ namespace GatherBuddy.AutoGather
 
         private void OnQuestToast(ref SeString message, ref QuestToastOptions options, ref bool isHandled)
         {
+            if (GatherBuddy.AutoRetainerIntegration?.Coordinator.BlocksAutomation == true) return;
             try
             {
                 var text = message.TextValue;
@@ -179,6 +181,7 @@ namespace GatherBuddy.AutoGather
 
         private void OnMessageHandled(IHandleableChatMessage chatMessage)
         {
+            if (GatherBuddy.AutoRetainerIntegration?.Coordinator.BlocksAutomation == true) return;
             try
             {
                 if (chatMessage.LogKind is (XivChatType)2243)
@@ -391,6 +394,7 @@ namespace GatherBuddy.AutoGather
             get => _enabled;
             set
             {
+                if (value && !_enabled && GatherBuddy.AutoRetainerIntegration?.CanStartAutomation() == false) return;
                 if (value && (GatherBuddy.VendorPurchaseManager?.AutomationLease.Owner.HasValue == true
                     || global::GatherBuddy.Crafting.CraftingGatherBridge.HasAcquisitionOwnership))
                 {
@@ -399,6 +403,7 @@ namespace GatherBuddy.AutoGather
                 }
                 if (_enabled == value)
                     return;
+                if (value) AutomationRunId = Guid.NewGuid();
 
                 if (!value)
                 {
@@ -437,20 +442,7 @@ namespace GatherBuddy.AutoGather
                     // Restore normal controller blocking (blocks everything)
                     GatherBuddy.ControllerSupport?.SetBlockingMode(true, true, true);
 
-                    if (_autoRetainerMultiModeEnabled && AutoRetainer.IsEnabled)
-                    {
-                        try
-                        {
-                            AutoRetainer.DisableAllFunctions?.Invoke();
-                            _autoRetainerMultiModeEnabled = false;
-                            _originalCharacterNameWorld = null;
-                            GatherBuddy.Log.Debug("Disabled AutoRetainer MultiMode on AutoGather shutdown");
-                        }
-                        catch (Exception e)
-                        {
-                            GatherBuddy.Log.Error($"Failed to disable AutoRetainer MultiMode: {e.Message}");
-                        }
-                    }
+                    GatherBuddy.AutoRetainerIntegration?.Coordinator.PreventResume();
                     
                 if (GatherBuddy.CollectableManager?.IsRunning == true)
                 {
@@ -546,9 +538,6 @@ namespace GatherBuddy.AutoGather
 
         private bool _diademQueuingInProgress = false;
         private bool _homeWorldWarning        = false;
-        private bool _autoRetainerMultiModeEnabled = false;
-        private string? _originalCharacterNameWorld = null;
-        private bool _autoRetainerWasEnabledBeforeDiadem = false;
 
         public void DoAutoGather()
         {
@@ -559,27 +548,6 @@ namespace GatherBuddy.AutoGather
                 _lastTerritory = currentTerritory;
                 _diademPathIndex = -1;
                 
-                var isInDiademOrFirmament = currentTerritory == Diadem.Territory.Id;
-                var wasInDiademOrFirmament = _lastTerritory == Diadem.Territory.Id;
-                
-                if (isInDiademOrFirmament && !wasInDiademOrFirmament)
-                {
-                    _autoRetainerWasEnabledBeforeDiadem = GatherBuddy.Config.AutoGatherConfig.AutoRetainerMultiMode;
-                    if (_autoRetainerWasEnabledBeforeDiadem)
-                    {
-                        GatherBuddy.Config.AutoGatherConfig.AutoRetainerMultiMode = false;
-                        GatherBuddy.Log.Information("Temporarily disabled AutoRetainer integration while in Diadem/Firmament");
-                    }
-                }
-                else if (!isInDiademOrFirmament && wasInDiademOrFirmament)
-                {
-                    if (_autoRetainerWasEnabledBeforeDiadem)
-                    {
-                        GatherBuddy.Config.AutoGatherConfig.AutoRetainerMultiMode = true;
-                        GatherBuddy.Log.Information("Re-enabled AutoRetainer integration after leaving Diadem/Firmament");
-                        _autoRetainerWasEnabledBeforeDiadem = false;
-                    }
-                }
             }
 
             // Reset the flag before checking Enabled to get correct state even if auto-gather is disabled.
@@ -589,6 +557,13 @@ namespace GatherBuddy.AutoGather
 
             if (!Enabled)
             {
+                return;
+            }
+
+            if (GatherBuddy.AutoRetainerIntegration?.Coordinator.YieldRequested == true)
+            {
+                TryYieldToAutoRetainer(out _);
+                SetAutoRetainerStatus(GatherBuddy.AutoRetainerIntegration.Coordinator.Status);
                 return;
             }
 
@@ -841,16 +816,6 @@ namespace GatherBuddy.AutoGather
 
 
                 return;
-            }
-
-            if (AutoRetainer.IsEnabled && GatherBuddy.Config.AutoGatherConfig.AutoRetainerMultiMode)
-            {
-                if (ShouldWaitForAutoRetainer())
-                {
-                    Waiting = true;
-                    _plugin.Ipc.AutoGatherWaiting();
-                    return;
-                }
             }
 
             if (_wasGatheringSpearfish)
@@ -2642,183 +2607,6 @@ namespace GatherBuddy.AutoGather
             }
         }
         
-        private bool ShouldWaitForAutoRetainer()
-        {
-            try
-            {
-                if (GatherBuddy.Config.AutoGatherConfig.AutoRetainerDelayForTimedNodes)
-                {
-                    if (_currentGatherTarget != null)
-                    {
-                        var target = _currentGatherTarget.Value;
-                        if (target.Node?.NodeType is NodeType.Legendary or NodeType.Unspoiled)
-                        {
-                            return false;
-                        }
-                    }
-                    
-                    var nextItem = _activeItemList.GetNextOrDefault();
-                    if (nextItem != default)
-                    {
-                        if (nextItem.Node?.NodeType is NodeType.Legendary or NodeType.Unspoiled)
-                        {
-                            if (nextItem.Time.InRange(AdjustedServerTime) && 
-                                !_activeItemList.DebugVisitedTimedLocations.ContainsKey(nextItem.Node))
-                            {
-                                return false;
-                            }
-                        }
-                    }
-                }
-                
-                if (AutoRetainer.GetEnabledRetainers == null || AutoRetainer.GetOfflineCharacterData == null)
-                    return false;
-
-                var enabledRetainers = AutoRetainer.GetEnabledRetainers();
-                
-                if (enabledRetainers == null || !enabledRetainers.Any())
-                {
-                    if (_autoRetainerMultiModeEnabled)
-                    {
-                        AutoRetainer.AbortAllTasks?.Invoke();
-                        AutoRetainer.DisableAllFunctions?.Invoke();
-                        _autoRetainerMultiModeEnabled = false;
-                    }
-                    return false;
-                }
-
-                var threshold = GatherBuddy.Config.AutoGatherConfig.AutoRetainerMultiModeThreshold;
-                var currentTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-                bool hasRetainersReady = false;
-                long? closestTime = null;
-
-                foreach (var (cid, retainerNames) in enabledRetainers)
-                {
-                    if (!retainerNames.Any())
-                        continue;
-
-                    var charData = AutoRetainer.GetOfflineCharacterData(cid);
-                    if (charData == null || charData.RetainerData == null)
-                        continue;
-
-                    if (!charData.Enabled)
-                        continue;
-
-                    foreach (var retainer in charData.RetainerData)
-                    {
-                        if (!retainerNames.Contains(retainer.Name))
-                            continue;
-
-                        if (!retainer.HasVenture)
-                            continue;
-
-                        var secondsRemaining = (long)retainer.VentureEndsAt - currentTime;
-                        
-                        if (secondsRemaining <= 0 || secondsRemaining <= threshold)
-                        {
-                            hasRetainersReady = true;
-                            var effectiveTime = secondsRemaining <= 0 ? 0 : secondsRemaining;
-                            if (!closestTime.HasValue || effectiveTime < closestTime.Value)
-                                closestTime = effectiveTime;
-                        }
-                    }
-                }
-
-                if (hasRetainersReady && closestTime.HasValue)
-                {
-                    if (!_autoRetainerMultiModeEnabled)
-                    {
-                        var player = Dalamud.Objects.LocalPlayer;
-                        if (player != null)
-                            _originalCharacterNameWorld = $"{player.Name}@{player.HomeWorld.Value.Name}";
-                        
-                        AutoRetainer.EnableMultiMode?.Invoke();
-                        _autoRetainerMultiModeEnabled = true;
-                    }
-                    AutoStatus = $"Waiting for retainers ({closestTime.Value}s remaining)...";
-                    return true;
-                }
-                else
-                {
-                    if (_autoRetainerMultiModeEnabled)
-                    {
-                        AutoRetainer.AbortAllTasks?.Invoke();
-                        AutoRetainer.DisableAllFunctions?.Invoke();
-                        _autoRetainerMultiModeEnabled = false;
-                    }
-                    
-                    if (!string.IsNullOrEmpty(_originalCharacterNameWorld))
-                    {
-                        var currentPlayer = Dalamud.Objects.LocalPlayer;
-                        if (currentPlayer != null)
-                        {
-                            var currentCharacter = $"{currentPlayer.Name}@{currentPlayer.HomeWorld.Value.Name}";
-                            if (currentCharacter != _originalCharacterNameWorld)
-                            {
-                                if (Lifestream.IsBusy != null && Lifestream.IsBusy())
-                                {
-                                    AutoStatus = $"Waiting for character change to complete...";
-                                    return true;
-                                }
-                                
-                                if (Lifestream.Enabled && Lifestream.ChangeCharacter != null)
-                                {
-                                    var parts = _originalCharacterNameWorld.Split('@');
-                                    if (parts.Length == 2)
-                                    {
-                                        var charName = parts[0];
-                                        var worldName = parts[1];
-                                        
-                                        AutoStatus = $"Relogging to {charName}@{worldName}...";
-                                        
-                                        var errorCode = Lifestream.ChangeCharacter(charName, worldName);
-                                        if (errorCode == 0)
-                                        {
-                                            return true;
-                                        }
-                                        else
-                                        {
-                                            GatherBuddy.Log.Warning($"Failed to relog to {_originalCharacterNameWorld}. Error code: {errorCode}");
-                                            _originalCharacterNameWorld = null;
-                                        }
-                                    }
-                                    else
-                                    {
-                                        GatherBuddy.Log.Warning($"Invalid character format: {_originalCharacterNameWorld}");
-                                        _originalCharacterNameWorld = null;
-                                    }
-                                }
-                                else
-                                {
-                                    GatherBuddy.Log.Warning("Cannot relog - Lifestream not available");
-                                    _originalCharacterNameWorld = null;
-                                }
-                            }
-                            else
-                            {
-                                if (!Player.Available || !Player.Interactable)
-                                {
-                                    AutoStatus = "Waiting for player to be ready...";
-                                    return true;
-                                }
-                                
-                                _originalCharacterNameWorld = null;
-                            }
-                        }
-                        
-                        return true;
-                    }
-                    
-                    return false;
-                }
-            }
-            catch (Exception e)
-            {
-                GatherBuddy.Log.Error($"Failed to check AutoRetainer venture times: {e.Message}");
-                return false;
-            }
-        }
-
         public void Dispose()
         {
             _soundHelper.Dispose();

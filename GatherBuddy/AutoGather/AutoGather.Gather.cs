@@ -63,6 +63,7 @@ namespace GatherBuddy.AutoGather
 
         private unsafe void HandleNodeInteractionErrorToast(ref SeString message, ref bool isHandled)
         {
+            if (GatherBuddy.AutoRetainerIntegration?.Coordinator.BlocksAutomation == true) return;
             // With current navigation, getting 'Unable to execute command while in flight' means we are either too high above the ground
             // or even not above traversable ground, so retrying node interaction is pointless, force dismount instead.
             // In the rare cases of 'Unable to execute command while jumping' we are already dismounted, so just Abort() to retry.

@@ -267,6 +267,7 @@ public class TaskManager : IDisposable
 
     private void Tick(IFramework _)
     {
+        if (GatherBuddy.AutoRetainerIntegration?.Coordinator.BlocksAutomation == true) return;
         if (_currentTask == null)
         {
             if (_immediateTasks.Count > 0)

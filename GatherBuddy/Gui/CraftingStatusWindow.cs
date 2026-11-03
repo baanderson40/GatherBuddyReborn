@@ -80,6 +80,7 @@ public class CraftingStatusWindow : Window
 
     public override void Draw()
     {
+        AutoRetainerSettingsUi.DrawStatus();
         if (_queueProcessor == null)
             return;
         

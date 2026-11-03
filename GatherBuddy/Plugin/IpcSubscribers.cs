@@ -361,43 +361,4 @@ namespace GatherBuddy.Plugin
         internal static readonly Action DeleteSelectedPreset;
     }
 
-    internal static class AutoRetainer
-        {
-            public class OfflineRetainerData
-            {
-                public string Name { get; set; } = string.Empty;
-                public uint VentureEndsAt { get; set; }
-                public bool HasVenture { get; set; }
-            }
-
-            public class OfflineCharacterData
-            {
-                public ulong CID { get; set; }
-                public string Name { get; set; } = string.Empty;
-                public string World { get; set; } = string.Empty;
-                public bool Enabled { get; set; }
-                public List<OfflineRetainerData> RetainerData { get; set; } = new();
-            }
-
-            private static EzIPCDisposalToken[] _disposalTokens = EzIPC.Init(typeof(AutoRetainer), "AutoRetainer.PluginState", SafeWrapper.IPCException);
-
-            static AutoRetainer()
-            {
-                Debug.Assert(IsBusy != null);
-                Debug.Assert(GetEnabledRetainers != null);
-                Debug.Assert(AbortAllTasks != null);
-                Debug.Assert(DisableAllFunctions != null);
-                Debug.Assert(EnableMultiMode != null);
-                Debug.Assert(GetOfflineCharacterData != null);
-            }
-
-            internal static bool IsEnabled => IPCSubscriber.IsReady("AutoRetainer");
-
-        [EzIPC] internal static readonly Func<bool> IsBusy;
-        [EzIPC] internal static readonly Func<Dictionary<ulong, HashSet<string>>> GetEnabledRetainers;
-        [EzIPC] internal static readonly Action AbortAllTasks;
-        [EzIPC] internal static readonly Action DisableAllFunctions;
-        [EzIPC] internal static readonly Action EnableMultiMode;
-        [EzIPC("AutoRetainer.GetOfflineCharacterData", applyPrefix: false)] internal static readonly Func<ulong, OfflineCharacterData> GetOfflineCharacterData;
-    }
 }

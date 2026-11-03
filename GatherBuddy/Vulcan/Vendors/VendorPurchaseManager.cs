@@ -147,6 +147,7 @@ public sealed class VendorPurchaseManager : IDisposable
     public void StartPurchase(VendorShopEntry entry, VendorNpc vendor, VendorNpcLocation location, uint quantity, bool continueCurrentVendorInteraction = false,
         VendorPurchaseConstraints? purchaseConstraints = null, Guid? ownerSessionId = null, Guid? allocationId = null)
     {
+        if (GatherBuddy.AutoRetainerIntegration?.Coordinator.BlocksAutomation == true) return;
         if (!AutomationLease.Allows(ownerSessionId) || ownerSessionId.HasValue && (AutomationLease.Owner != ownerSessionId || IsRunning)
             || ownerSessionId == null && Crafting.CraftingGatherBridge.HasAcquisitionOwnership)
         {

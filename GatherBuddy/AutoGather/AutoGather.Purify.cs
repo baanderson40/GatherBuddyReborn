@@ -17,13 +17,13 @@ namespace GatherBuddy.AutoGather
 
             if (!QuestManager.IsQuestComplete(67633))
             {
-                if (!_autoRetainerMultiModeEnabled && string.IsNullOrEmpty(_originalCharacterNameWorld))
+                if (GatherBuddy.AutoRetainerIntegration?.Coordinator.YieldRequested != true)
                 {
                     GatherBuddy.Config.AutoGatherConfig.DoReduce = false;
                     Communicator.PrintError(
                         "[GatherBuddyReborn] Aetherial reduction is enabled, but the relevant quest has not been completed yet. The feature has been disabled.");
                 }
-                GatherBuddy.Log.Debug($"[Reduction] Skipping reduction - quest not complete. AR MultiMode: {_autoRetainerMultiModeEnabled}, Original Character: {_originalCharacterNameWorld ?? "null"}");
+                GatherBuddy.Log.Debug("[Reduction] Skipping reduction - quest not complete.");
                 return false;
             }
 

@@ -89,6 +89,7 @@ public partial class GatherBuddy : IDalamudPlugin
     public static Vulcan.Vendors.VendorPurchaseManager VendorPurchaseManager { get; private set; } = null!;
     public static Vulcan.Vendors.VendorBuyListManager VendorBuyListManager { get; private set; } = null!;
     public static Vulcan.Vendors.TransientVendorPurchaseService TransientVendorPurchases { get; private set; } = null!;
+    public static Automation.AutoRetainerIntegration? AutoRetainerIntegration { get; private set; }
 
     internal readonly GatherGroup.GatherGroupManager GatherGroupManager;
     internal readonly LocationManager                LocationManager;
@@ -175,6 +176,7 @@ public partial class GatherBuddy : IDalamudPlugin
             FishRecorder.Enable();
             BiteTimerService = new AutoHookIntegration.BiteTimerService(pluginInterface.ConfigDirectory.FullName);
             AutoGather   = new AutoGather.AutoGather(this);
+            AutoRetainerIntegration = new Automation.AutoRetainerIntegration();
             CollectableManager = new AutoGather.Collectables.CollectableManager(Dalamud.Framework, Dalamud.Conditions, Config);
             global::GatherBuddy.AutoGather.Collectables.CollectableInventoryHelper.InitializeAsync();
             CraftingGatherBridge.BindCollectableManager(CollectableManager);
@@ -314,6 +316,9 @@ public partial class GatherBuddy : IDalamudPlugin
 
         try
         {
+            AutoRetainerIntegration?.Update();
+            if (AutoRetainerIntegration?.Coordinator.BlocksAutomation == true)
+                return;
             CraftingGameInterop.Update();
             CraftingGatherBridge.Update();
             VendorNavigator.Update();
@@ -338,6 +343,7 @@ public partial class GatherBuddy : IDalamudPlugin
 
     void IDisposable.Dispose()
     {
+        AutoRetainerIntegration?.Dispose();
         Config?.SaveIfDirty(force: true);
         MarketboardService?.Dispose();
         RaphaelSolveCoordinator?.Save();

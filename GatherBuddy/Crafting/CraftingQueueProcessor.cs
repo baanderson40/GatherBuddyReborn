@@ -98,6 +98,8 @@ public partial class CraftingQueueProcessor
 
     public void StartQueue(CraftingExecutionPlan executionPlan, CraftingListConsumableSettings? listConsumables = null, RaphaelSolveCoordinator? raphaelCoordinator = null)
     {
+        if (GatherBuddy.AutoRetainerIntegration?.Coordinator.YieldRequested == true)
+            throw new InvalidOperationException("Finish/recover the AutoRetainer handoff before starting another queue.");
         YesAlready.Lock();
         _executionPlan = executionPlan;
         _acquisition = null;
@@ -174,6 +176,11 @@ public partial class CraftingQueueProcessor
 
     public void Update()
     {
+        if (GatherBuddy.AutoRetainerIntegration?.Coordinator.YieldRequested == true)
+        {
+            UpdateAutoRetainerYield();
+            return;
+        }
         if (_paused)
         {
             return;
@@ -1387,6 +1394,7 @@ public partial class CraftingQueueProcessor
 
     public void Pause(string? reason = null)
     {
+        GatherBuddy.AutoRetainerIntegration?.Coordinator.PreventResume();
         if (_paused || _currentState == QueueState.Complete || _currentState == QueueState.Idle)
             return;
 
@@ -1425,6 +1433,7 @@ public partial class CraftingQueueProcessor
 
     public void Resume()
     {
+        if (GatherBuddy.AutoRetainerIntegration?.CanStartAutomation() == false) return;
         if (!_paused)
             return;
 
@@ -1484,6 +1493,8 @@ public partial class CraftingQueueProcessor
 
     public void Stop()
     {
+        var arOwner = _executionPlan == null ? null : $"Vulcan:{_executionPlan.AcquisitionRunId}";
+        GatherBuddy.AutoRetainerIntegration?.Coordinator.PreventResume();
         _preparationGate.Cancel();
         _inventoryRecovery?.Cancel();
         _inventoryRecovery = null;
@@ -1500,6 +1511,7 @@ public partial class CraftingQueueProcessor
             YesAlready.Unlock();
             _currentState = QueueState.Cancelled;
             StateChanged?.Invoke(_currentState);
+            GatherBuddy.AutoRetainerIntegration?.StopOwner(arOwner);
             return;
         }
         GatherBuddy.Log.Information("[CraftingQueueProcessor] Stopping queue");
@@ -1514,6 +1526,7 @@ public partial class CraftingQueueProcessor
         CraftingGatherBridge.DeleteTemporaryGatherList();
         
         CompleteQueue();
+        GatherBuddy.AutoRetainerIntegration?.StopOwner(arOwner);
     }
 
     private void UpdateCurrentRecipeTracking(int batchSize = 1)

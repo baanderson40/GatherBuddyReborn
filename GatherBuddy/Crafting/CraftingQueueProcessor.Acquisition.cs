@@ -75,6 +75,7 @@ public partial class CraftingQueueProcessor
 
     public void RecheckAcquiredMaterials()
     {
+        if (GatherBuddy.AutoRetainerIntegration?.Coordinator.YieldRequested == true) return;
         if (_currentState != QueueState.BlockedByMaterials) return;
         if (_acquisitionPort == null || !_acquisitionPort.CanContinue(out _))
         {
@@ -92,6 +93,7 @@ public partial class CraftingQueueProcessor
 
     public void RetryMaterialAcquisition()
     {
+        if (GatherBuddy.AutoRetainerIntegration?.Coordinator.YieldRequested == true) return;
         if (_currentState != QueueState.BlockedByMaterials || _executionPlan == null) return;
         if (CraftingGameInterop.CurrentState != CraftingGameInterop.CraftState.IdleNormal
             || _acquisitionPort == null || !_acquisitionPort.CanContinue(out _))

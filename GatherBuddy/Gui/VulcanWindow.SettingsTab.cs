@@ -22,6 +22,7 @@ public partial class VulcanWindow
         Repair,
         Materia,
         RetainerBell,
+        AutoRetainer,
         Raphael,
     }
 
@@ -73,6 +74,7 @@ public partial class VulcanWindow
                 DrawSettingsSectionLink(SettingsSection.Repair);
                 DrawSettingsSectionLink(SettingsSection.Materia);
                 DrawSettingsSectionLink(SettingsSection.RetainerBell);
+                DrawSettingsSectionLink(SettingsSection.AutoRetainer);
                 DrawSettingsSectionLink(SettingsSection.Raphael);
             }
         }
@@ -113,6 +115,9 @@ public partial class VulcanWindow
                 case SettingsSection.Raphael:
                     DrawRaphaelSettings();
                     break;
+                case SettingsSection.AutoRetainer:
+                    AutoRetainerSettingsUi.Draw();
+                    break;
             }
         }
         finally
@@ -134,6 +139,7 @@ public partial class VulcanWindow
         SettingsSection.Repair => "Repair",
         SettingsSection.Materia => "Materia Extraction",
         SettingsSection.RetainerBell => "Retainer Bell",
+        SettingsSection.AutoRetainer => "AutoRetainer",
         SettingsSection.Raphael => "Raphael Solver",
         _ => "Unknown",
     };

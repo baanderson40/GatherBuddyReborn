@@ -57,6 +57,9 @@ public static class CraftReadiness
     public static int ConfirmedCrafts(int before, int after, int outputPerCraft, int requested)
         => outputPerCraft <= 0 ? 0 : Math.Clamp((after - before) / outputPerCraft, 0, requested);
 
+    public static int AttemptedCrafts(bool quickSynthesis, int requested, int reported, bool intentionalStop)
+        => quickSynthesis && (reported > 0 || intentionalStop) ? Math.Clamp(reported, 0, requested) : requested;
+
     public static int MaximumReadyBatch(IReadOnlyDictionary<uint, IngredientQualityDemand> ingredients,
         IReadOnlyDictionary<uint, AcquisitionInventory> inventory, int requested)
     {

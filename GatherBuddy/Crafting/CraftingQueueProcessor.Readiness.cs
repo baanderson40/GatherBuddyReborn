@@ -163,8 +163,7 @@ public partial class CraftingQueueProcessor
             BlockAcquisition($"Craft output reconciliation failed: {ex.Message}", QueueState.AcquisitionFailed);
             return;
         }
-        var attempted = _lastCraftWasQuickSynth && _resultReported > 0
-            ? Math.Min(_resultRequested, _resultReported) : _resultRequested;
+        var attempted = CraftReadiness.AttemptedCrafts(_lastCraftWasQuickSynth, _resultRequested, _resultReported, _arQuickSynthStop);
         if (confirmed < attempted && _runClock.Elapsed < _resultDeadline) return;
         var recipeId = CurrentRecipeItem?.RecipeId ?? 0;
         var previousIndex = _currentQueueIndex;
@@ -174,7 +173,9 @@ public partial class CraftingQueueProcessor
         _readinessSelected = false;
         _jobSwitchGuard.Reset();
         if (confirmed > 0) _missingIngredientFailures.Clear();
-        if (confirmed < attempted || _resultCancelled)
+        var intentionalArStop = _arQuickSynthStop && _lastCraftWasQuickSynth && confirmed == attempted;
+        _arQuickSynthStop = false;
+        if (confirmed < attempted || _resultCancelled && !intentionalArStop)
         {
             _currentState = QueueState.WaitingForJobSwitch;
             StateChanged?.Invoke(_currentState);

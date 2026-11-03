@@ -16,6 +16,7 @@ namespace GatherBuddy.AutoGather
         public int TimedNodePrecog { get; set; } = 20;
         public bool DoGathering { get; set; } = true;
         public bool AutoRetainerMultiMode { get; set; } = false;
+        public Automation.AutoRetainerProcessingMode AutoRetainerMode { get; set; } = Automation.AutoRetainerProcessingMode.Ventures;
         public int AutoRetainerMultiModeThreshold { get; set; } = 300;
         public bool AutoRetainerDelayForTimedNodes { get; set; } = true;
         public float NavResetCooldown { get; set; } = 3.0f;

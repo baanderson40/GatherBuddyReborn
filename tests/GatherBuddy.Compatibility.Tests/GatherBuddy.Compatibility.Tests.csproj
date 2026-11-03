@@ -6,11 +6,18 @@
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <PlatformTarget>x64</PlatformTarget>
+    <DalamudLibPath Condition="'$(DalamudLibPath)' == ''">$(AppData)\XIVLauncher\addon\Hooks\dev\</DalamudLibPath>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" PrivateAssets="all" />
     <ProjectReference Include="../../GatherBuddy/GatherBuddy.csproj" />
+    <!-- Actual queue event signatures use Lumina's Recipe. Supply host data
+         assemblies for managed-only parking tests; no game process is loaded. -->
+    <Reference Include="Lumina.Excel" HintPath="$(DalamudLibPath)Lumina.Excel.dll" Private="true" />
+    <Reference Include="Lumina" HintPath="$(DalamudLibPath)Lumina.dll" Private="true" />
+    <Reference Include="FFXIVClientStructs" HintPath="$(DalamudLibPath)FFXIVClientStructs.dll" Private="true" />
+    <Reference Include="InteropGenerator.Runtime" HintPath="$(DalamudLibPath)InteropGenerator.Runtime.dll" Private="true" />
   </ItemGroup>
 </Project>

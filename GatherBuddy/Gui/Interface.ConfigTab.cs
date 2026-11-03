@@ -155,30 +155,8 @@ public partial class Interface
 
         public static void DrawAutoretainerBox()
         {
-            DrawCheckbox("Wait for AutoRetainer Multi-mode", "Pause GBR automatically when AutoRetainer has retainers to process during Multi-mode",
-                GatherBuddy.Config.AutoGatherConfig.AutoRetainerMultiMode, b => GatherBuddy.Config.AutoGatherConfig.AutoRetainerMultiMode = b);
-            ImGui.SameLine();
-            ImGuiEx.PluginAvailabilityIndicator([new ImGuiEx.RequiredPluginInfo("AutoRetainer")]);
+            AutoRetainerSettingsUi.Draw();
         }
-
-        public static void DrawAutoretainerThreshold()
-        {
-            ImGui.SetNextItemWidth(150);
-            var tmp = GatherBuddy.Config.AutoGatherConfig.AutoRetainerMultiModeThreshold;
-            if (ImGui.DragInt("AutoRetainer Threshold (Seconds)", ref tmp, 1, 0, 3600))
-            {
-                GatherBuddy.Config.AutoGatherConfig.AutoRetainerMultiModeThreshold = tmp;
-                GatherBuddy.Config.Save();
-            }
-
-            ImGuiUtil.HoverTooltip("How many seconds before a retainer venture completes GBR should pause and wait for MultiMode.");
-        }
-
-        public static void DrawAutoretainerTimedNodeDelayBox()
-            => DrawCheckbox("Delay AutoRetainer for timed nodes",
-                "Wait to process retainers until after active/upcoming timed nodes are gathered.",
-                GatherBuddy.Config.AutoGatherConfig.AutoRetainerDelayForTimedNodes,
-                b => GatherBuddy.Config.AutoGatherConfig.AutoRetainerDelayForTimedNodes = b);
 
         public static void DrawLifestreamCommandTextInput()
         {
@@ -1533,15 +1511,10 @@ public partial class Interface
                     if (GatherBuddy.Config.AutoGatherConfig.DoReduce)
                         layout.Child.Draw(ConfigFunctions.DrawAlwaysReduceAllItemsBox);
                 }),
-            new("Wait for AutoRetainer Multi-mode AutoRetainer Threshold Delay AutoRetainer for timed nodes",
+            new("Wait for AutoRetainer Multi-mode AutoRetainer Threshold Delay AutoRetainer for timed nodes Ventures Deployables Submarines Airships",
                 layout =>
                 {
                     ConfigFunctions.DrawAutoretainerBox();
-                    if (GatherBuddy.Config.AutoGatherConfig.AutoRetainerMultiMode)
-                    {
-                        layout.Child.Draw(ConfigFunctions.DrawAutoretainerThreshold);
-                        layout.Child.Draw(ConfigFunctions.DrawAutoretainerTimedNodeDelayBox);
-                    }
                 }),
             new("Diadem Auto-Aethercannon",                       ConfigFunctions.DrawDiademAutoAetherCannonBox),
             new("Diadem Windmire Jumps",                          ConfigFunctions.DrawDiademWindmireJumps),

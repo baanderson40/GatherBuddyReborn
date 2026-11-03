@@ -86,6 +86,7 @@ public unsafe class CollectableManager : IDisposable
 
     public bool Start(CollectableRunSource source = CollectableRunSource.Manual, bool returnHomeAfterCompletion = false)
     {
+        if (GatherBuddy.AutoRetainerIntegration?.Coordinator.YieldRequested == true) return false;
         if (GatherBuddy.VendorPurchaseManager?.AutomationLease.Owner.HasValue == true
             || global::GatherBuddy.Crafting.CraftingGatherBridge.HasAcquisitionOwnership)
         {
