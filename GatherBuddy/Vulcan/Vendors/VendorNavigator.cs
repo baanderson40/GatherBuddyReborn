@@ -573,9 +573,10 @@ public class VendorNavigator
     public void PlaceMapMarker(VendorNpcLocation target)
         => PlaceMapFlag(target);
 
-    public void StartNavigation(VendorNpcLocation target, bool continueCurrentVendorInteraction = false)
+    public void StartNavigation(VendorNpcLocation target, bool continueCurrentVendorInteraction = false, Guid? ownerSessionId = null)
     {
-        Stop();
+        if (!GatherBuddy.VendorPurchaseManager.AutomationLease.Allows(ownerSessionId)) return;
+        Stop(ownerSessionId);
         _target            = target;
         _teleportAttempted = false;
         _stateStartTime    = DateTime.UtcNow;
@@ -654,8 +655,9 @@ public class VendorNavigator
         }
     }
 
-    public void Stop()
+    public void Stop(Guid? ownerSessionId = null)
     {
+        if (!GatherBuddy.VendorPurchaseManager.AutomationLease.Allows(ownerSessionId)) return;
         StopPathing();
         _state                              = State.Idle;
         _target                             = null;
@@ -2768,4 +2770,3 @@ public class VendorNavigator
         return true;
     }
 }
-

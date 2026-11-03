@@ -76,6 +76,7 @@ public partial class Configuration : IPluginConfiguration
     public CollectableConfig CollectableConfig { get; set; } = new();
 
     // Vulcan Configs
+    public AutomaticVendorPurchasePolicy AutomaticVendorPurchases { get; set; } = new();
     public RaphaelSolveCoordinatorConfig RaphaelSolverConfig { get; set; } = new();
     public Vulcan.StandardSolverConfig StandardSolverConfig { get; set; } = new();
     public VulcanRepairConfig VulcanRepairConfig { get; set; } = new();
@@ -211,6 +212,15 @@ public partial class Configuration : IPluginConfiguration
             if (Dalamud.PluginInterface.GetPluginConfig() is Configuration config)
             {
                 var changed = false;
+                var purchaseTrace = new AcquisitionTrace(Guid.NewGuid(), 128);
+                changed |= config.AutomaticVendorPurchases == null;
+                if (config.AutomaticVendorPurchases == null)
+                    purchaseTrace.Record("P1", "Normalize", "field=AutomaticVendorPurchases action=InitializeMissingPolicy");
+                config.AutomaticVendorPurchases ??= new();
+                config.AutomaticVendorPurchases.DrainLoadDiagnostics(purchaseTrace, "AutomaticVendorPurchases");
+                changed |= config.AutomaticVendorPurchases.Normalize(purchaseTrace, "AutomaticVendorPurchases");
+                changed |= purchaseTrace.Events.Count > 0;
+                Plugin.AcquisitionTraceLogger.Write(purchaseTrace);
                 config.AddColors();
                 config.Migrate4To5();
                 config.Migrate5To6();

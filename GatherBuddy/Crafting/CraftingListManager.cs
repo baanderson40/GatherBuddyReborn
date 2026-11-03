@@ -372,9 +372,16 @@ public class CraftingListManager
             _lists = JsonConvert.DeserializeObject<List<CraftingListDefinition>>(GatherBuddy.Config.CraftingLists) ?? new();
             
             var needsSave = false;
+            var purchaseTrace = new AcquisitionTrace(Guid.NewGuid(), 512);
             var baseTime = DateTime.UtcNow.AddDays(-_lists.Count);
             for (int i = 0; i < _lists.Count; i++)
             {
+                needsSave |= _lists[i].VendorPurchases == null;
+                if (_lists[i].VendorPurchases == null)
+                    purchaseTrace.Record("P1", "Normalize", $"list={_lists[i].ID}; field=VendorPurchases action=InitializeMissingPolicy");
+                _lists[i].VendorPurchases ??= new();
+                _lists[i].VendorPurchases.DrainLoadDiagnostics(purchaseTrace, $"List[{_lists[i].ID}].VendorPurchases");
+                needsSave |= _lists[i].VendorPurchases.Normalize(purchaseTrace, $"List[{_lists[i].ID}].VendorPurchases");
                 var normalizedFolderPath = NormalizeFolderPath(_lists[i].FolderPath);
                 if (_lists[i].FolderPath != normalizedFolderPath)
                 {
@@ -392,6 +399,8 @@ public class CraftingListManager
                 if (CanonicalizeOriginalItemQualitySettings(_lists[i]))
                     needsSave = true;
             }
+            needsSave |= purchaseTrace.Events.Count > 0;
+            Plugin.AcquisitionTraceLogger.Write(purchaseTrace);
             foreach (var folderLists in _lists.GroupBy(list => NormalizeFolderPath(list.FolderPath), StringComparer.OrdinalIgnoreCase))
             {
                 if (!folderLists.Any(list => list.Order < 0))
@@ -588,6 +597,11 @@ public class CraftingListManager
             newList.QuickSynthAllPreferNQ = source.QuickSynthAllPreferNQ;
             newList.QuickSynthAllPrecraftsOnly = source.QuickSynthAllPrecraftsOnly;
             newList.UseAllHQ              = source.UseAllHQ;
+            var purchaseTrace = new AcquisitionTrace(Guid.NewGuid(), 128);
+            source.VendorPurchases?.DrainLoadDiagnostics(purchaseTrace, "ImportedList.VendorPurchases");
+            newList.VendorPurchases = source.VendorPurchases?.Clone(purchaseTrace) ?? new();
+            purchaseTrace.Record("P1", "Import", $"list={newList.ID}; preservedMode={newList.VendorPurchases.Mode}; customEnabled={newList.VendorPurchases.CustomPolicy.Enabled}");
+            Plugin.AcquisitionTraceLogger.Write(purchaseTrace);
             CanonicalizeOriginalItemQualitySettings(newList);
             Save();
 

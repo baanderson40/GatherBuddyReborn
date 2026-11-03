@@ -13,6 +13,23 @@ namespace GatherBuddy.Gui;
 
 public partial class VulcanWindow
 {
+    private enum DebugSection
+    {
+        Acquisition,
+        ContextMenus,
+        VendorLocations,
+        Repair,
+        Materia,
+        Gearsets,
+        Gamepad,
+    }
+
+#if DEBUG
+    private DebugSection _selectedDebugSection = DebugSection.Acquisition;
+#else
+    private DebugSection _selectedDebugSection = DebugSection.ContextMenus;
+#endif
+
     private void DrawDebugTab()
     {
         IDisposable tabItem;
@@ -20,7 +37,7 @@ public partial class VulcanWindow
         
         if (GatherBuddy.ControllerSupport != null)
         {
-        var handle = GatherBuddy.ControllerSupport.TabNavigation.TabItem("Debug##debugTab", 7, 9);
+            var handle = GatherBuddy.ControllerSupport.TabNavigation.TabItem("Debug##debugTab", 7, 9);
             tabItem = handle;
             tabOpen = handle;
         }
@@ -36,6 +53,100 @@ public partial class VulcanWindow
             if (!tabOpen)
                 return;
 
+            DrawDebugPanels();
+        }
+    }
+
+    private void DrawDebugPanels()
+    {
+        var available = ImGui.GetContentRegionAvail();
+        var height = Math.Max(1f, available.Y);
+        var navigationWidth = Math.Max(1f, Math.Min(VulcanUiScaling.Scaled(220f),
+            (available.X - ImGui.GetStyle().ItemSpacing.X) * 0.4f));
+        var navigationVisible = ImGui.BeginChild("##VulcanDebugNavigation", new Vector2(navigationWidth, height), true);
+        try
+        {
+            if (navigationVisible)
+            {
+                ImGui.TextUnformatted("Debug Sections");
+                ImGui.Separator();
+                ImGui.Spacing();
+#if DEBUG
+                DrawDebugSectionLink(DebugSection.Acquisition);
+#endif
+                DrawDebugSectionLink(DebugSection.ContextMenus);
+                DrawDebugSectionLink(DebugSection.VendorLocations);
+                DrawDebugSectionLink(DebugSection.Repair);
+                DrawDebugSectionLink(DebugSection.Materia);
+                DrawDebugSectionLink(DebugSection.Gearsets);
+                DrawDebugSectionLink(DebugSection.Gamepad);
+            }
+        }
+        finally
+        {
+            ImGui.EndChild();
+        }
+
+        ImGui.SameLine();
+        // Separate child IDs preserve independent scroll positions for each section.
+        var contentVisible = ImGui.BeginChild($"##VulcanDebugContent{_selectedDebugSection}", new Vector2(0, height), true);
+        try
+        {
+            if (!contentVisible)
+                return;
+            switch (_selectedDebugSection)
+            {
+#if DEBUG
+                case DebugSection.Acquisition:
+                    DrawAcquisitionPreviewDebug();
+                    break;
+#endif
+                case DebugSection.ContextMenus:
+                    DrawDebugContextMenuSettings();
+                    break;
+                case DebugSection.VendorLocations:
+                    DrawVendorNpcLocationDebug();
+                    break;
+                case DebugSection.Repair:
+                    DrawDebugRepairStatus();
+                    break;
+                case DebugSection.Materia:
+                    DrawDebugMateriaStatus();
+                    break;
+                case DebugSection.Gearsets:
+                    DrawDebugGearsetTest();
+                    break;
+                case DebugSection.Gamepad:
+                    DrawGamepadInputTest();
+                    break;
+            }
+        }
+        finally
+        {
+            ImGui.EndChild();
+        }
+    }
+
+    private void DrawDebugSectionLink(DebugSection section)
+    {
+        if (ImGui.Selectable($"{GetDebugSectionName(section)}##DebugSection{section}", _selectedDebugSection == section))
+            _selectedDebugSection = section;
+    }
+
+    private static string GetDebugSectionName(DebugSection section) => section switch
+    {
+        DebugSection.Acquisition => "Automatic Acquisition",
+        DebugSection.ContextMenus => "Context Menus",
+        DebugSection.VendorLocations => "Vendor Locations",
+        DebugSection.Repair => "Repair Status",
+        DebugSection.Materia => "Materia Extraction",
+        DebugSection.Gearsets => "Gearset Stats",
+        DebugSection.Gamepad => "Gamepad Input",
+        _ => "Unknown",
+    };
+
+    private static void DrawDebugContextMenuSettings()
+    {
         ImGui.BeginGroup();
         ImGui.Text("Context Menu Settings");
         ImGui.Spacing();
@@ -53,16 +164,10 @@ public partial class VulcanWindow
             ImGui.SetTooltip("Maximum number of recent crafting lists to show in context menus (1-50)");
 
         ImGui.EndGroup();
+    }
 
-        ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.Spacing();
-        DrawVendorNpcLocationDebug();
-
-        ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.Spacing();
-
+    private static void DrawDebugRepairStatus()
+    {
         ImGui.BeginGroup();
         ImGui.Text("Repair Status");
         ImGui.Spacing();
@@ -74,11 +179,10 @@ public partial class VulcanWindow
             ImGui.Text($"  NPC Repair Price: {Crafting.RepairManager.GetNPCRepairPrice()} gil");
         }
         ImGui.EndGroup();
+    }
 
-        ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.Spacing();
-
+    private static void DrawDebugMateriaStatus()
+    {
         ImGui.BeginGroup();
         ImGui.Text("Materia Extraction Status");
         ImGui.Spacing();
@@ -86,11 +190,10 @@ public partial class VulcanWindow
         ImGui.Text($"  Items Ready: {Crafting.MateriaManager.ReadySpiritbondItemCount()}");
         ImGui.Text($"  Free Slots: {Crafting.MateriaManager.HasFreeInventorySlots()}");
         ImGui.EndGroup();
+    }
 
-        ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.Spacing();
-
+    private void DrawDebugGearsetTest()
+    {
         ImGui.BeginGroup();
         ImGui.Text("Gearset Stat Test");
         ImGui.Text("  Select Job:");
@@ -142,13 +245,6 @@ public partial class VulcanWindow
             ImGui.TextWrapped(_debugLastTestResult);
         }
         ImGui.EndGroup();
-
-        ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.Spacing();
-
-        DrawGamepadInputTest();
-        }
     }
 
     private static void DrawVendorNpcLocationDebug()

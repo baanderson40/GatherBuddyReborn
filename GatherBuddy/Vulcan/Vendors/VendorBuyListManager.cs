@@ -392,6 +392,8 @@ public sealed partial class VendorBuyListManager : IDisposable
 
     public StartResult Start(Guid? listId = null, VendorPurchaseConstraints? purchaseConstraints = null)
     {
+        if (GatherBuddy.VendorPurchaseManager.AutomationLease.Owner.HasValue)
+            return StartResult.AnotherPurchaseRunning;
         EnsureListState();
         if (_isRunning)
             return StartResult.AlreadyRunning;

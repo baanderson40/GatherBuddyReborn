@@ -526,7 +526,11 @@ public static class VendorInteractionHelper
     }
 
     public static unsafe bool TryConfirmYesNo()
+        => TryConfirmYesNo(out _);
+
+    public static unsafe bool TryConfirmYesNo(out bool submitted)
     {
+        submitted = false;
         if (!GenericHelpers.TryGetAddonByName<AddonSelectYesno>("SelectYesno", out var addon)
          || !addon->AtkUnitBase.IsVisible
          || addon->YesButton == null)
@@ -536,7 +540,22 @@ public static class VendorInteractionHelper
             return true;
 
         new AddonMaster.SelectYesno((nint)addon).Yes();
+        submitted = true;
         return true;
+    }
+
+    // Owned execution must not repeat exchange submission while waiting for the final Yes/No.
+    public static bool TryConfirmOwnedPurchase(bool exchangeAlreadyConfirmed, out bool exchangeConfirmed, out bool submitted)
+    {
+        exchangeConfirmed = exchangeAlreadyConfirmed;
+        submitted = false;
+        if (!exchangeAlreadyConfirmed && (TryConfirmShopExchangeDialog("ShopExchangeItemDialog")
+            || TryConfirmShopExchangeDialog("ShopExchangeCurrencyDialog")))
+        {
+            exchangeConfirmed = true;
+            return true;
+        }
+        return TryConfirmYesNo(out submitted);
     }
 
     public static unsafe bool TryExitVendorInteraction()

@@ -88,6 +88,7 @@ public partial class GatherBuddy : IDalamudPlugin
     public static Vulcan.Vendors.VendorNavigator  VendorNavigator        { get; private set; } = null!;
     public static Vulcan.Vendors.VendorPurchaseManager VendorPurchaseManager { get; private set; } = null!;
     public static Vulcan.Vendors.VendorBuyListManager VendorBuyListManager { get; private set; } = null!;
+    public static Vulcan.Vendors.TransientVendorPurchaseService TransientVendorPurchases { get; private set; } = null!;
 
     internal readonly GatherGroup.GatherGroupManager GatherGroupManager;
     internal readonly LocationManager                LocationManager;
@@ -150,6 +151,7 @@ public partial class GatherBuddy : IDalamudPlugin
             VendorNavigator = new Vulcan.Vendors.VendorNavigator();
             VendorPurchaseManager = new Vulcan.Vendors.VendorPurchaseManager();
             VendorBuyListManager = new Vulcan.Vendors.VendorBuyListManager();
+            TransientVendorPurchases = new Vulcan.Vendors.TransientVendorPurchaseService(VendorPurchaseManager);
             CraftingGameInterop.Initialize();
             CraftingGatherBridge.Initialize(this);
             CraftingGameInterop.CraftFinished += (recipe, cancelled) => CraftingGatherBridge.OnCraftFinished(recipe, cancelled);
@@ -316,6 +318,7 @@ public partial class GatherBuddy : IDalamudPlugin
             VendorNavigator.Update();
             VendorPurchaseManager.Update();
             VendorBuyListManager.Update();
+            TransientVendorPurchases.Update();
         }
         catch (Exception e)
         {
@@ -347,6 +350,7 @@ public partial class GatherBuddy : IDalamudPlugin
             Dalamud.PluginInterface.UiBuilder.OpenMainUi -= Interface.Toggle;
         }
         CraftingGameInterop.Dispose();
+        TransientVendorPurchases?.Dispose();
         FishRecorder?.Dispose();
         ContextMenu?.Dispose();
         UptimeManager?.Dispose();

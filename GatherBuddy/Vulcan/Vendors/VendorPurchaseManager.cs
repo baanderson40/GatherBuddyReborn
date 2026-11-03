@@ -12,6 +12,8 @@ namespace GatherBuddy.Vulcan.Vendors;
 
 public sealed record VendorPurchaseConstraints(uint ReservedScripAmount = 0)
 {
+    public TransientPurchaseBudget? TransientBudget { get; init; }
+    public uint? TargetInventoryQuantity { get; init; }
     public bool HasReservedScripAmount
         => ReservedScripAmount > 0;
 }
@@ -59,7 +61,13 @@ public sealed class VendorPurchaseManager : IDisposable
         VendorNpc       Vendor,
         string          Message,
         bool            WasLimitedByScripReserve
-    );
+    )
+    {
+        public Guid? SessionId { get; init; }
+        public Guid? AllocationId { get; init; }
+        public ulong? ConfirmedCurrencySpent { get; init; }
+        public bool AccountingUncertain { get; init; }
+    }
 
     private static readonly TimeSpan ActionThrottle       = TimeSpan.FromMilliseconds(400);
     private static readonly TimeSpan InteractionCooldown  = TimeSpan.FromSeconds(1);
@@ -87,6 +95,15 @@ public sealed class VendorPurchaseManager : IDisposable
     private List<int>?             _inclusionRecoverySubPageCandidates;
     private int                    _inclusionRecoverySubPageCandidateIndex;
     private int                    _activeInclusionSubPageIndex;
+    private Guid? _ownerSessionId;
+    private Guid? _allocationId;
+    private uint _currencyBeforeBatch;
+    private ulong _confirmedCurrencySpent;
+    private bool _accountingUncertain;
+    private bool _ownedExchangeConfirmed;
+    public VendorAutomationLease AutomationLease { get; } = new();
+    public bool HasSubmittedBatch => _request != null && _currentBatchQuantity > 0
+        && _state is State.ConfirmingPurchase or State.WaitingForPurchaseComplete;
 
     public event Action<PurchaseResult>? PurchaseFinished;
 
@@ -128,8 +145,13 @@ public sealed class VendorPurchaseManager : IDisposable
         };
 
     public void StartPurchase(VendorShopEntry entry, VendorNpc vendor, VendorNpcLocation location, uint quantity, bool continueCurrentVendorInteraction = false,
-        VendorPurchaseConstraints? purchaseConstraints = null)
+        VendorPurchaseConstraints? purchaseConstraints = null, Guid? ownerSessionId = null, Guid? allocationId = null)
     {
+        if (!AutomationLease.Allows(ownerSessionId) || ownerSessionId.HasValue && (AutomationLease.Owner != ownerSessionId || IsRunning))
+        {
+            GatherBuddy.Log.Warning("[VendorPurchaseManager] Purchase rejected: vendor execution is owned by another operation.");
+            return;
+        }
         if (VendorDevExclusions.IsExcluded(vendor))
         {
             GatherBuddy.Log.Warning($"[VendorPurchaseManager] Ignoring purchase request for dev-excluded vendor {vendor.Name} ({vendor.NpcId}/{vendor.MenuShopType}/{vendor.ShopId}/{vendor.SourceShopId}:{vendor.ShopItemIndex}, gc={vendor.GcRankIndex}/{vendor.GcCategoryIndex})");
@@ -147,7 +169,9 @@ public sealed class VendorPurchaseManager : IDisposable
             return;
         }
 
-        Stop();
+        Stop(ownerSessionId);
+        _ownerSessionId = ownerSessionId;
+        _allocationId = allocationId;
 
         var requestedQuantity = quantity == 0 ? 1u : quantity;
         VendorInteractionHelper.ResetShopSelectionState(vendor);
@@ -182,7 +206,7 @@ public sealed class VendorPurchaseManager : IDisposable
             return;
         else
             GatherBuddy.Log.Information($"[VendorPurchaseManager] Starting {entry.ShopType} purchase of {requestedQuantity:N0}x {entry.ItemName} from {vendor.Name} (menu={vendor.MenuShopType}, shop={vendor.ShopId}, source={vendor.SourceShopId}, itemIndex={vendor.ShopItemIndex}, gc={vendor.GcRankIndex}/{vendor.GcCategoryIndex})");
-        GatherBuddy.VendorNavigator.StartNavigation(location, continueCurrentVendorInteraction);
+        GatherBuddy.VendorNavigator.StartNavigation(location, continueCurrentVendorInteraction, ownerSessionId);
     }
 
     public void Update()
@@ -192,6 +216,16 @@ public sealed class VendorPurchaseManager : IDisposable
 
         try
         {
+            if (_ownerSessionId.HasValue)
+            {
+                if (!GatherBuddy.TransientVendorPurchases.IsSafe(out var reason))
+                {
+                    Stop(_ownerSessionId);
+                    GatherBuddy.Log.Warning($"[VendorPurchaseManager] Transient purchase stopped: {reason}");
+                    return;
+                }
+                if (!GenericHelpers.IsScreenReady()) return;
+            }
             switch (_state)
             {
                 case State.WaitingForNavigation:       UpdateWaitingForNavigation();       break;
@@ -207,8 +241,9 @@ public sealed class VendorPurchaseManager : IDisposable
         }
     }
 
-    public void Stop()
+    public void Stop(Guid? ownerSessionId = null)
     {
+        if (!AutomationLease.Allows(ownerSessionId)) return;
         if (_request == null)
         {
             ResetState();
@@ -224,6 +259,8 @@ public sealed class VendorPurchaseManager : IDisposable
             _request.Vendor,
             $"Cancelled purchase of {_request.ItemName} from {_request.Vendor.Name}.",
             false);
+        _accountingUncertain |= _ownerSessionId.HasValue && HasSubmittedBatch;
+        result = EnrichResult(result);
         ResetState();
         PurchaseFinished?.Invoke(result);
     }
@@ -260,6 +297,16 @@ public sealed class VendorPurchaseManager : IDisposable
 
         _currentBatchQuantity = 0;
         var desiredBatchQuantity = GetDesiredBatchQuantity(remainingQuantity);
+        if (_ownerSessionId.HasValue && _purchaseConstraints?.TargetInventoryQuantity is { } target)
+        {
+            var owned = (uint)Math.Max(0, CountItemOnCharacter(_request.ItemId));
+            desiredBatchQuantity = Math.Min(desiredBatchQuantity, target > owned ? target - owned : 0);
+            if (desiredBatchQuantity == 0)
+            {
+                CompletePartially("Inventory target already satisfied; no additional purchase submitted.");
+                return false;
+            }
+        }
         if (desiredBatchQuantity == 0)
             return false;
 
@@ -272,9 +319,14 @@ public sealed class VendorPurchaseManager : IDisposable
         var availability = VendorCurrencyAvailabilityResolver.Resolve(_request.CurrencyGroup, _request.CurrencyItemId, _request.CurrencyName);
         var reserveAmount = GetReservedScripAmount();
         var spendableAmount = GetSpendableCurrencyAmount(availability.AvailableAmount, reserveAmount);
+        if (_ownerSessionId.HasValue && _purchaseConstraints?.TransientBudget is { } budget)
+        {
+            spendableAmount = (uint)Math.Min(spendableAmount, budget.Spendable(availability.AvailableAmount, _confirmedCurrencySpent));
+            _currencyBeforeBatch = availability.AvailableAmount;
+        }
         var maxByAvailableCurrency = availability.AvailableAmount / _request.Cost;
         var maxBySpendableCurrency = spendableAmount / _request.Cost;
-        var wasLimitedByScripReserve = maxBySpendableCurrency < maxByAvailableCurrency;
+        var wasLimitedByScripReserve = _request.CurrencyGroup == VendorCurrencyGroup.Scrips && maxBySpendableCurrency < maxByAvailableCurrency;
         var affordableBatchQuantity = Math.Min(desiredBatchQuantity, maxBySpendableCurrency);
         if (affordableBatchQuantity == 0)
         {
@@ -362,6 +414,24 @@ public sealed class VendorPurchaseManager : IDisposable
         if (purchasedThisBatch == 0)
             return false;
 
+        if (_ownerSessionId.HasValue)
+        {
+            var currency = VendorCurrencyAvailabilityResolver.Resolve(_request.CurrencyGroup, _request.CurrencyItemId, _request.CurrencyName).AvailableAmount;
+            var expectedSpend = checked((ulong)purchasedThisBatch * _request.Cost);
+            // Currency/inventory updates can arrive on different frames. Wait for both; never launch a duplicate purchase.
+            if (currency > _currencyBeforeBatch || (ulong)(_currencyBeforeBatch - currency) != expectedSpend)
+            {
+                if ((DateTime.UtcNow - _stateStartTime) > PurchaseTimeout)
+                {
+                    _accountingUncertain = true;
+                    Fail("Inventory/currency changes could not be reconciled; further transient purchasing stopped.");
+                    return true;
+                }
+                return false;
+            }
+            _confirmedCurrencySpent = checked(_confirmedCurrencySpent + expectedSpend);
+        }
+
         _completedQuantity += purchasedThisBatch;
 
         if (_completedQuantity >= _request.Quantity)
@@ -370,6 +440,11 @@ public sealed class VendorPurchaseManager : IDisposable
             return true;
         }
 
+        if (_ownerSessionId.HasValue)
+        {
+            CompletePartially($"Purchased {_completedQuantity:N0}/{_request.Quantity:N0}x {_request.ItemName}; returning settled batch to transient coordinator.");
+            return true;
+        }
         BeginNextBatch();
         return true;
     }
@@ -538,6 +613,11 @@ public sealed class VendorPurchaseManager : IDisposable
         if (targetItem == null)
         {
             Fail($"Could not find {_request.ItemName} in {_request.Vendor.Name}'s gil shop.");
+            return;
+        }
+        if (_ownerSessionId.HasValue && targetItem.GilCost != _request.Cost)
+        {
+            Fail("Live gil price differs from the authorized purchase offer.");
             return;
         }
         if (!TryPrepareBatchQuantity(remainingQuantity))
@@ -896,6 +976,15 @@ public sealed class VendorPurchaseManager : IDisposable
             Fail($"{_request.ItemName} is not sold by the current Grand Company.");
             return;
         }
+        if (_ownerSessionId.HasValue)
+        {
+            var liveItem = new VendorGrandCompanyExchangeReader(shop).Items.FirstOrDefault(item => item.ItemId == _request.ItemId);
+            if (liveItem == null || liveItem.SealCost != _request.Cost || liveItem.RequiredRank > GetCurrentGrandCompanyRank(currentGrandCompanyId))
+            {
+                Fail("Live Grand Company offer, cost, or required rank does not match authorized purchase access.");
+                return;
+            }
+        }
         var remainingQuantity = GetRemainingQuantity();
         if (!TryPrepareBatchQuantity(remainingQuantity))
             return;
@@ -923,6 +1012,35 @@ public sealed class VendorPurchaseManager : IDisposable
     {
         if (_request == null)
             return;
+        if (_ownerSessionId.HasValue)
+        {
+            if (TryAdvancePurchaseProgress()) return;
+            if (CountItemOnCharacter(_request.ItemId) > _ownedCountBeforePurchase) return;
+            if (_purchaseConstraints?.TargetInventoryQuantity is { } target
+                && (ulong)Math.Max(0, CountItemOnCharacter(_request.ItemId)) + _currentBatchQuantity > target)
+            {
+                _accountingUncertain = true;
+                Fail("Inventory target changed before confirmation; no additional confirmation submitted.");
+                return;
+            }
+            var availability = VendorCurrencyAvailabilityResolver.Resolve(_request.CurrencyGroup, _request.CurrencyItemId, _request.CurrencyName);
+            if (availability.AvailableAmount != _currencyBeforeBatch)
+            {
+                if ((DateTime.UtcNow - _stateStartTime) > PurchaseTimeout)
+                {
+                    _accountingUncertain = true;
+                    Fail("Currency changed without a matching inventory receipt; no further confirmation submitted.");
+                }
+                return;
+            }
+            if (_purchaseConstraints?.TransientBudget is not { } budget
+                || budget.Spendable(availability.AvailableAmount, _confirmedCurrencySpent) < checked((ulong)_currentBatchQuantity * _request.Cost))
+            {
+                _accountingUncertain = true;
+                Fail("Currency changed before confirmation; transient purchase stopped for reconciliation.");
+                return;
+            }
+        }
 
         if (_request.ShopType == VendorShopType.GrandCompanySeals && !_grandCompanyQuantityPrepared)
         {
@@ -944,7 +1062,21 @@ public sealed class VendorPurchaseManager : IDisposable
             }
         }
 
-        if ((DateTime.UtcNow - _lastActionTime) >= ActionThrottle && VendorInteractionHelper.TryConfirmPurchase())
+        var confirmed = false;
+        if ((DateTime.UtcNow - _lastActionTime) >= ActionThrottle)
+        {
+            if (_ownerSessionId.HasValue)
+            {
+                if (VendorInteractionHelper.TryConfirmOwnedPurchase(_ownedExchangeConfirmed, out var exchangeConfirmed, out var submitted))
+                {
+                    _ownedExchangeConfirmed = exchangeConfirmed;
+                    _lastActionTime = DateTime.UtcNow;
+                    confirmed = submitted;
+                }
+            }
+            else confirmed = VendorInteractionHelper.TryConfirmPurchase();
+        }
+        if (confirmed)
         {
             _state = State.WaitingForPurchaseComplete;
             _stateStartTime = DateTime.UtcNow;
@@ -968,7 +1100,7 @@ public sealed class VendorPurchaseManager : IDisposable
         if (TryAdvancePurchaseProgress())
             return;
 
-        var shouldAttemptReconfirm = (DateTime.UtcNow - _lastActionTime) >= ActionThrottle;
+        var shouldAttemptReconfirm = !_ownerSessionId.HasValue && (DateTime.UtcNow - _lastActionTime) >= ActionThrottle;
         var reConfirmed = shouldAttemptReconfirm
             && (_request.ShopType == VendorShopType.GrandCompanySeals
                 ? VendorInteractionHelper.TryConfirmYesNo()
@@ -1014,6 +1146,7 @@ public sealed class VendorPurchaseManager : IDisposable
             _request.Vendor,
             message,
             false);
+        result = EnrichResult(result);
         ResetState();
         PurchaseFinished?.Invoke(result);
     }
@@ -1041,6 +1174,7 @@ public sealed class VendorPurchaseManager : IDisposable
             _request.Vendor,
             message,
             wasLimitedByScripReserve);
+        result = EnrichResult(result);
         ResetState();
         PurchaseFinished?.Invoke(result);
     }
@@ -1060,6 +1194,7 @@ public sealed class VendorPurchaseManager : IDisposable
             _request.Vendor,
             message,
             wasLimitedByScripReserve);
+        result = EnrichResult(result);
         ResetState();
         PurchaseFinished?.Invoke(result);
     }
@@ -1080,6 +1215,8 @@ public sealed class VendorPurchaseManager : IDisposable
             _request.Vendor,
             message,
             false);
+        _accountingUncertain |= _ownerSessionId.HasValue && HasSubmittedBatch;
+        result = EnrichResult(result);
         ResetState();
         PurchaseFinished?.Invoke(result);
     }
@@ -1088,7 +1225,7 @@ public sealed class VendorPurchaseManager : IDisposable
     {
         if (_request != null)
             VendorInteractionHelper.ResetShopSelectionState(_request.Vendor);
-        GatherBuddy.VendorNavigator.Stop();
+        GatherBuddy.VendorNavigator.Stop(_ownerSessionId);
         YesAlready.Unlock();
 
         _state = State.Idle;
@@ -1109,7 +1246,21 @@ public sealed class VendorPurchaseManager : IDisposable
         _inclusionRecoverySubPageCandidateIndex = 0;
         _activeInclusionSubPageIndex = 0;
         _statusText = string.Empty;
+        _ownerSessionId = null;
+        _allocationId = null;
+        _currencyBeforeBatch = 0;
+        _confirmedCurrencySpent = 0;
+        _accountingUncertain = false;
+        _ownedExchangeConfirmed = false;
     }
+
+    private PurchaseResult EnrichResult(PurchaseResult result) => result with
+    {
+        SessionId = _ownerSessionId,
+        AllocationId = _allocationId,
+        ConfirmedCurrencySpent = _ownerSessionId.HasValue && !_accountingUncertain ? _confirmedCurrencySpent : null,
+        AccountingUncertain = _accountingUncertain,
+    };
 
     private static string DescribeShopLabel(VendorPurchaseRequest request)
         => request.ShopType switch

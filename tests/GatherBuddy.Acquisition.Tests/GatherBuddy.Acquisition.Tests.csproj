@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" PrivateAssets="all" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+  <!-- Test the actual pure production sources without loading Dalamud or native game services. -->
+  <ItemGroup>
+    <Compile Include="../../GatherBuddy/Crafting/AutomaticVendorPurchasePolicy.cs" Link="Production/AutomaticVendorPurchasePolicy.cs" />
+    <Compile Include="../../GatherBuddy/Crafting/AcquisitionTrace.cs" Link="Production/AcquisitionTrace.cs" />
+    <Compile Include="../../GatherBuddy/Crafting/TransientVendorExecution.cs" Link="Production/TransientVendorExecution.cs" />
+    <Compile Include="../../GatherBuddy/Vulcan/Vendors/VendorAutomationLease.cs" Link="Production/VendorAutomationLease.cs" />
+    <Compile Include="../../GatherBuddy/Crafting/MaterialAcquisitionModels.cs" Link="Production/MaterialAcquisitionModels.cs" />
+    <Compile Include="../../GatherBuddy/Crafting/MaterialAcquisitionPlan.cs" Link="Production/MaterialAcquisitionPlan.cs" />
+    <Compile Include="../../GatherBuddy/Crafting/MaterialAcquisitionPlanner.cs" Link="Production/MaterialAcquisitionPlanner.cs" />
+    <Compile Include="../../GatherBuddy/Crafting/MaterialAcquisitionDiagnostics.cs" Link="Production/MaterialAcquisitionDiagnostics.cs" />
+    <Compile Include="../../GatherBuddy/Crafting/IngredientQualityDemand.cs" Link="Production/IngredientQualityDemand.cs" />
+    <Compile Include="../../GatherBuddy/Vulcan/Vendors/VendorItem.cs" Link="Production/VendorItem.cs" />
+  </ItemGroup>
+</Project>

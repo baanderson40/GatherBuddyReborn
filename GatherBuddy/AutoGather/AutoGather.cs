@@ -391,6 +391,11 @@ namespace GatherBuddy.AutoGather
             get => _enabled;
             set
             {
+                if (value && GatherBuddy.VendorPurchaseManager?.AutomationLease.Owner.HasValue == true)
+                {
+                    Communicator.PrintError("[GatherBuddyReborn] Stop transient vendor execution before starting AutoGather.");
+                    return;
+                }
                 if (_enabled == value)
                     return;
 

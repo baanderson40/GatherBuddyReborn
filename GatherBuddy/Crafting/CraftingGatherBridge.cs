@@ -200,6 +200,11 @@ public static class CraftingGatherBridge
 
     public static void StartGatherAndCraft(uint recipeId, Dictionary<uint, int> missing)
     {
+        if (GatherBuddy.VendorPurchaseManager.AutomationLease.Owner.HasValue)
+        {
+            Communicator.PrintError("[GatherBuddyReborn] Stop transient vendor execution before starting Gather + Craft.");
+            return;
+        }
         _isQueueMode = false;
         _recipeIdToCraft = recipeId;
         _waitingForGatherComplete = true;
@@ -208,6 +213,11 @@ public static class CraftingGatherBridge
     
     public static void StartQueueCraftAndGather(CraftingExecutionPlan executionPlan, CraftingListConsumableSettings? listConsumables = null, int? ephemeralListId = null)
     {
+        if (GatherBuddy.VendorPurchaseManager.AutomationLease.Owner.HasValue)
+        {
+            Communicator.PrintError("[GatherBuddyReborn] Stop transient vendor execution before starting Gather + Craft.");
+            return;
+        }
         _isQueueMode = true;
         _ephemeralListId = ephemeralListId;
         _activeExecutionPlan = executionPlan;
