@@ -1,51 +1,37 @@
-# [![](https://raw.githubusercontent.com/FFXIV-CombatReborn/RebornAssets/main/IconAssets/GBR_Icon.png)](https://github.com/FFXIV-CombatReborn/GatherBuddyReborn)
+# GatherBuddyReborn — Personal Development Fork
 
-**GatherBuddyReborn**
+> **This is a personal, experimental fork, not an official upstream release.**
+> Maintained by [baanderson40](https://github.com/baanderson40) for personal builds and testing.
+> No public releases or plugin distribution are planned. Features may be incomplete or unstable.
 
-![Github Latest Releases](https://img.shields.io/github/downloads/FFXIV-CombatReborn/GatherBuddyReborn/latest/total.svg?style=for-the-badge)
-![Github All Releases](https://img.shields.io/github/downloads/FFXIV-CombatReborn/GatherBuddyReborn/total.svg?style=for-the-badge)
-![Github License](https://img.shields.io/github/license/FFXIV-CombatReborn/GatherBuddyReborn.svg?label=License&style=for-the-badge)
-[![](https://dcbadge.limes.pink/api/server/p54TZMPnC9)](https://discord.gg/p54TZMPnC9)
+This repository forks [FFXIV-CombatReborn/GatherBuddyReborn](https://github.com/FFXIV-CombatReborn/GatherBuddyReborn),
+which builds on the original [GatherBuddy](https://github.com/Ottermandias/GatherBuddy) plugin for Final Fantasy XIV.
+Upstream maintainers do not support changes made in this fork, and their projects are not implied to endorse it.
 
-GatherBuddyReborn is a community-made fork of the original GatherBuddy plugin for Final Fantasy XIV. This tool is designed to enhance your gameplay experience by assisting with all things gathering, now with automated routes via vnavmesh.
+For the upstream project, its documentation, and its installation options, visit the
+[upstream repository](https://github.com/FFXIV-CombatReborn/GatherBuddyReborn).
+Installing an upstream release does **not** install the changes in this fork.
 
-## Features
+## Fork Status
 
-- **AutoGather**: Automated pathing for gathering up to 10 full stacks (999 each) of a resource.
-- **Resource Queueing**: Create a list of resources you want and GBR will gather up to 10 stacks of each!
-- **Full BTN/MIN Automation**: GBR can find any BTN/MIN item in the world and gather it for you fully automatically, no user input required beyond initial setup
+The fork inherits upstream gathering, resource-list, and navigation functionality. Automated navigation requires
+[vnavmesh](https://github.com/awgil/ffxiv_navmesh).
 
-**NOTE**: vnavmesh plugin is *required* for full automation. Please see the links section of this README for more information on vnavmesh.
-  
-## Installing
-- Enter `/xlsettings` in the chat window and go to the Experimental tab in the opening window.
-- **Skip below the DevPlugins section to the Custom Plugin Repositories section.**
-- Copy and paste the repo.json link into the first free text input field.
-```
-https://raw.githubusercontent.com/FFXIV-CombatReborn/CombatRebornRepo/main/pluginmaster.json
-```
-- Click on the + button and make sure the checkmark beside the new field is set afterwards.
-- **Click on the Save-icon in the bottom right.**
+## Support and Changes
 
-Following these steps, you should be able to see all contained plugins in the Available Plugins tab in the Dalamud Plugin Installer.
-No Plugins will be installed, you have just made them available. You can now select which of these plugins you actually want to install.
+This is a personal development repository, not a supported release channel. Keep fork-specific reports and changes
+in [this repository](https://github.com/baanderson40/GatherBuddyReborn); do not ask upstream maintainers to debug this fork.
+When reporting an upstream issue, first reproduce it on an unmodified upstream build and follow upstream's reporting guidance.
 
-## Want to contribute?
+## License and Acknowledgements
 
-- Create a fork
-- Make your changes
-- Test the changes
-- Create a PR and point it to main
+See [LICENSE](LICENSE) for the Apache License 2.0. Existing attribution and license terms remain applicable.
+Credit belongs to the upstream maintainers and the contributors whose work this project builds on:
 
-## Links
+- [GatherBuddyReborn](https://github.com/FFXIV-CombatReborn/GatherBuddyReborn): the Combat Reborn team and contributors.
+- All contributors to Dalamud and FFXIVLauncher.
+- [Artisan](https://github.com/PunishXIV/Artisan): Taurenkey, pksage, Limiana, et al.
+- [GatherBuddy](https://github.com/Ottermandias/GatherBuddy): Ottermandias, et al.
+- [vnavmesh](https://github.com/awgil/ffxiv_navmesh): awgil, xanderscore, et al.
 
-[vnavmesh](https://github.com/awgil/ffxiv_navmesh) Required for automated navigation
-
-## Attribution and Acknowledgements
-
-GatherBuddyReborn and its various functions relies heavily on the original foundations of various individuals whom without their prior works GatherBuddyReborn would not be the utility it is today and in the future. These attributions are NOT implied as endorsements of GatherBuddyReborn. In alphabetical order:
-
-    - All of the contributors to Dalamud and FFXIVLauncher
-    - [Artisan](https://github.com/PunishXIV/Artisan): Taurenkey, pksage, Limiana, et al.
-    - [GatherBuddy](https://github.com/Ottermandias/GatherBuddy): Ottermandias, et al.
-    - [vnavmesh](https://github.com/awgil/ffxiv_navmesh): awgil, xanderscore, et al.
+Acknowledgement does not imply endorsement or support for this fork.
