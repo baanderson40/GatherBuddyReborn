@@ -443,9 +443,6 @@ public class VendorNavigator
 
     private const float  LiveNpcInteractionDistance         = 5.0f;
     private const float  CachedInteractionDistance          = 5.0f;
-    private const float  AetheryteSourceInteractionDistance = 15.0f;
-    private const float  AetheryteSourceHorizontalInteractionDistance = 11.0f;
-    private const float  AethernetShardInteractionDistance  = 4.6f;
     private const float  LocalAethernetDestinationProximityThreshold = 10.0f;
     private const float  LocalAethernetEstimatedInteractionCost      = 10.0f;
     private const float  LocalAethernetMinimumSavings                = 15.0f;
@@ -521,6 +518,13 @@ public class VendorNavigator
     ];
 
     private State              _state = State.Idle;
+    private readonly AethernetSourceApproach _sourceApproach = new();
+    private DateTime _lastSourceActionTime;
+    private DateTime _lastSourceLogTime;
+    private (ulong Source, AethernetSourceAction Action)? _lastSourceLog;
+    private Task<List<Vector3>>? _sourcePathTask;
+    private CancellationTokenSource? _sourcePathCancellation;
+    private ulong _sourcePathObjectId;
     private VendorNpcLocation? _target;
     private DateTime           _stateStartTime;
     private DateTime           _teleportWaitStartTime;
@@ -577,6 +581,7 @@ public class VendorNavigator
     {
         if (!GatherBuddy.VendorPurchaseManager.AutomationLease.Allows(ownerSessionId)) return;
         Stop(ownerSessionId);
+        ResetSourceApproach();
         _target            = target;
         _teleportAttempted = false;
         _stateStartTime    = DateTime.UtcNow;
@@ -651,6 +656,8 @@ public class VendorNavigator
         catch (Exception ex)
         {
             GatherBuddy.Log.Error($"[VendorNavigator] Error in Update: {ex.Message}");
+            StopPathing();
+            _sourceApproach.Finish();
             _state = State.Failed;
         }
     }
@@ -659,6 +666,7 @@ public class VendorNavigator
     {
         if (!GatherBuddy.VendorPurchaseManager.AutomationLease.Allows(ownerSessionId)) return;
         StopPathing();
+        _sourceApproach.Finish();
         _state                              = State.Idle;
         _target                             = null;
         _pendingAethernetName               = null;
@@ -818,36 +826,8 @@ public class VendorNavigator
 
             _awaitingForcedHousingOriginExit = false;
         }
-        if (_pendingAethernetName != null
-         && _pendingAethernetNeedsSourceApproach
-         && HandlePendingLocalAethernetTeleport())
+        if (_pendingAethernetName != null && HandlePendingLocalAethernetTeleport())
             return;
-
-
-        if (_pendingAethernetName != null && Lifestream.Enabled && !Lifestream.IsBusy())
-        {
-            // Only fire once we've confirmed arrival in the parent (city) territory
-            if (_pendingAethernetParentTerritoryId != 0 &&
-                Dalamud.ClientState.TerritoryType != _pendingAethernetParentTerritoryId)
-                return;
-            if (!CanIssueTeleportRequest())
-                return;
-            if (Lifestream.AethernetTeleport(_pendingAethernetName))
-            {
-                _pendingAethernetName              = null;
-                _pendingAethernetNeedsSourceApproach = false;
-                _pendingAethernetParentTerritoryId = 0;
-                _stateStartTime                    = DateTime.UtcNow;
-                _teleportWaitStartTime             = _stateStartTime;
-                _lastTeleportWaitDiagnosticsLogTime = DateTime.MinValue;
-            }
-            else
-            {
-                _stateStartTime = DateTime.UtcNow;
-            }
-            return;
-        }
-
         if (IsEquivalentTerritory(Dalamud.ClientState.TerritoryType, _target!.TerritoryId))
         {
             _pendingAethernetName = null;
@@ -923,6 +903,7 @@ public class VendorNavigator
             else
             {
                 _attemptedHousingShardTeleport      = true;
+                ResetSourceApproach();
                 _pendingHousingShardTeleportName    = shardName;
                 _pendingHousingShardDistanceToVendor = shardDistanceToVendor;
                 if (HandlePendingHousingShardTeleport())
@@ -943,51 +924,13 @@ public class VendorNavigator
         if (_pendingHousingShardTeleportName == null)
             return false;
 
-        if (!TryGetNearestAethernetSource(out var sourceAetheryte, out var sourceHorizontalDistance, out var sourceDistance) || sourceAetheryte == null)
-        {
-            LogHousingEntryStatus("[VendorNavigator] Waiting for a residential aetheryte or shard source before housing aethernet teleport");
-            return true;
-        }
-
-        var interactionDistance = GetAethernetSourceInteractionDistance(sourceAetheryte);
-        var horizontalInteractionDistance = GetAethernetSourceHorizontalInteractionDistance(sourceAetheryte);
-        if (!IsWithinAethernetSourceInteractionRange(sourceAetheryte, sourceHorizontalDistance, sourceDistance))
-        {
-            if (VNavmesh.Path.IsRunning() || VNavmesh.SimpleMove.PathfindInProgress())
-                return true;
-
-            if (!CanIssueHousingEntryAction())
-                return true;
-
-            var started = VNavmesh.SimpleMove.PathfindAndMoveTo(sourceAetheryte.Position, false);
-            if (started)
-            {
-                _lastHousingEntryActionTime = DateTime.UtcNow;
-                return true;
-            }
-
-            LogHousingEntryStatus($"[VendorNavigator] Failed to start movement toward residential aetheryte '{sourceAetheryte.Name.TextValue}' before housing aethernet teleport (horizontal={sourceHorizontalDistance:F1}m, distance={sourceDistance:F1}m, need <= {horizontalInteractionDistance:F1}m horizontal / {interactionDistance:F1}m distance)");
-            return true;
-        }
-
-        if (VNavmesh.Path.IsRunning())
-            VNavmesh.Path.Stop();
-
-        if (Lifestream.Enabled && Lifestream.IsBusy())
-            return true;
-
-        if (!IsLifestreamAethernetSourceReady(sourceAetheryte, out var housingShardSourceState))
-        {
-            LogHousingEntryStatus($"[VendorNavigator] Waiting for Lifestream to recognize source '{sourceAetheryte.Name.TextValue}' before housing shard '{_pendingHousingShardTeleportName}' ({housingShardSourceState}, distance {sourceDistance:F1}m)");
-            return true;
-        }
-
-        if (!CanIssueHousingEntryAction())
+        if (!PrepareAethernetSource(true, out var sourceAetheryte) || sourceAetheryte == null)
             return true;
 
         if (Lifestream.AethernetTeleport(_pendingHousingShardTeleportName))
         {
-            GatherBuddy.Log.Debug($"[VendorNavigator] Using housing shard '{_pendingHousingShardTeleportName}' ({_pendingHousingShardDistanceToVendor:F1}m from vendor, horizontal={sourceHorizontalDistance:F1}m, distance={sourceDistance:F1}m from source aetheryte '{sourceAetheryte.Name.TextValue}', kind={sourceAetheryte.ObjectKind}, baseId={sourceAetheryte.BaseId})");
+            GatherBuddy.Log.Debug($"[VendorNavigator] Using housing shard '{_pendingHousingShardTeleportName}' ({_pendingHousingShardDistanceToVendor:F1}m from vendor, source='{sourceAetheryte.Name.TextValue}')");
+            _sourceApproach.Finish();
             _pendingHousingShardTeleportName     = null;
             _pendingHousingShardDistanceToVendor = 0f;
             _lastHousingEntryActionTime          = DateTime.UtcNow;
@@ -1003,62 +946,24 @@ public class VendorNavigator
 
     private bool HandlePendingLocalAethernetTeleport()
     {
-        if (_pendingAethernetName == null || !Lifestream.Enabled)
+        if (_pendingAethernetName == null)
             return false;
 
         if (_pendingAethernetParentTerritoryId != 0
          && Dalamud.ClientState.TerritoryType != _pendingAethernetParentTerritoryId)
             return true;
 
-        if (!TryGetNearestAethernetSource(out var sourceAetheryte, out var sourceHorizontalDistance, out var sourceDistance) || sourceAetheryte == null)
-        {
-            LogHousingEntryStatus("[VendorNavigator] Waiting for a city aetheryte or shard source before local aethernet teleport");
+        if (!PrepareAethernetSource(false, out _))
             return true;
-        }
-
-        var interactionDistance = GetAethernetSourceInteractionDistance(sourceAetheryte);
-        var horizontalInteractionDistance = GetAethernetSourceHorizontalInteractionDistance(sourceAetheryte);
-        if (!IsWithinAethernetSourceInteractionRange(sourceAetheryte, sourceHorizontalDistance, sourceDistance))
-        {
-            if (VNavmesh.Path.IsRunning() || VNavmesh.SimpleMove.PathfindInProgress())
-                return true;
-
-            if (!CanIssueTeleportRequest())
-                return true;
-
-            var started = VNavmesh.SimpleMove.PathfindAndMoveTo(sourceAetheryte.Position, false);
-            if (started)
-            {
-                return true;
-            }
-
-            LogHousingEntryStatus($"[VendorNavigator] Failed to start movement toward local aetheryte source '{sourceAetheryte.Name.TextValue}' before aethernet to '{_pendingAethernetName}' (horizontal={sourceHorizontalDistance:F1}m, distance={sourceDistance:F1}m, need <= {horizontalInteractionDistance:F1}m horizontal / {interactionDistance:F1}m distance)");
-            return true;
-        }
-
-        if (VNavmesh.Path.IsRunning())
-            VNavmesh.Path.Stop();
-
-        if (Lifestream.IsBusy() || !CanIssueTeleportRequest())
-            return true;
-
-        if (!IsLifestreamAethernetSourceReady(sourceAetheryte, out var localAethernetSourceState))
-        {
-            LogHousingEntryStatus($"[VendorNavigator] Waiting for Lifestream to recognize source '{sourceAetheryte.Name.TextValue}' before aethernet to '{_pendingAethernetName}' ({localAethernetSourceState}, distance {sourceDistance:F1}m)");
-            return true;
-        }
         if (Lifestream.AethernetTeleport(_pendingAethernetName))
         {
+            _sourceApproach.Finish();
             _pendingAethernetName                = null;
             _pendingAethernetNeedsSourceApproach = false;
             _pendingAethernetParentTerritoryId   = 0;
             _stateStartTime                      = DateTime.UtcNow;
             _teleportWaitStartTime               = _stateStartTime;
             _lastTeleportWaitDiagnosticsLogTime  = DateTime.MinValue;
-        }
-        else
-        {
-            _stateStartTime = DateTime.UtcNow;
         }
 
         return true;
@@ -1086,11 +991,13 @@ public class VendorNavigator
         if (shardDistanceToPlayer <= LocalAethernetDestinationProximityThreshold)
             return false;
 
-        var sourceDistance         = AetheryteSourceInteractionDistance;
-        var sourceApproachDistance = AetheryteSourceInteractionDistance;
-        if (TryGetNearestAethernetSource(out var sourceAetheryte, out var sourceHorizontalDistance, out sourceDistance) && sourceAetheryte != null)
-            sourceApproachDistance = GetAethernetSourceApproachDistance(sourceAetheryte, sourceHorizontalDistance, sourceDistance);
-        var alreadyAtSource = sourceApproachDistance <= 2f;
+        // Without a live source, there is no trustworthy hitbox-relative shortcut estimate.
+        if (!TryGetNearestAethernetSource(out var sourceAetheryte, out var sourceHorizontalDistance, out _) || sourceAetheryte == null)
+            return false;
+        var sourceRange = GetAethernetSourceRange(sourceAetheryte, sourceHorizontalDistance);
+        if (!sourceRange.IsValid) return false;
+        var sourceApproachDistance = sourceRange.Remaining;
+        var alreadyAtSource = sourceRange.InRange;
         var estimatedInteractionCost = alreadyAtSource ? 0f : LocalAethernetEstimatedInteractionCost;
         var requiredSavings          = alreadyAtSource ? 0f : LocalAethernetMinimumSavings;
         var estimatedShortcutDistance = sourceApproachDistance + shardDistanceToVendor + estimatedInteractionCost;
@@ -1105,6 +1012,7 @@ public class VendorNavigator
 
     private void QueueLocalAethernetTeleport(string aethernetName, uint parentTerritoryId)
     {
+        ResetSourceApproach();
         _teleportAttempted                  = true;
         _pendingAethernetName               = aethernetName;
         _pendingAethernetNeedsSourceApproach = true;
@@ -1657,6 +1565,7 @@ public class VendorNavigator
 
     private void StopPathing()
     {
+        CancelSourcePath();
         if (VNavmesh.Path.IsRunning())
             VNavmesh.Path.Stop();
 
@@ -1864,26 +1773,110 @@ public class VendorNavigator
         return true;
     }
 
-    private static float GetAethernetSourceInteractionDistance(IGameObject source)
-        => source.ObjectKind == ObjectKind.Aetheryte
-            ? AetheryteSourceInteractionDistance
-            : AethernetShardInteractionDistance;
+    private static AethernetSourceRange GetAethernetSourceRange(IGameObject source, float horizontalDistance)
+        => new(source.HitboxRadius, horizontalDistance,
+            MathF.Abs((Dalamud.Objects.LocalPlayer?.Position.Y ?? float.NaN) - source.Position.Y));
 
-    private static float GetAethernetSourceHorizontalInteractionDistance(IGameObject source)
-        => source.ObjectKind == ObjectKind.Aetheryte
-            ? AetheryteSourceHorizontalInteractionDistance
-            : AethernetShardInteractionDistance;
+    private void ResetSourceApproach()
+    {
+        CancelSourcePath();
+        _sourceApproach.Reset();
+        _lastSourceActionTime = _lastSourceLogTime = DateTime.MinValue;
+        _lastSourceLog = null;
+    }
 
-    private static bool IsWithinAethernetSourceInteractionRange(IGameObject source, float horizontalDistance, float distance)
-        => horizontalDistance <= GetAethernetSourceHorizontalInteractionDistance(source)
-        && distance <= GetAethernetSourceInteractionDistance(source);
+    private bool PrepareAethernetSource(bool housing, out IGameObject? source)
+    {
+        source = null;
+        if (!Lifestream.Enabled)
+        {
+            FailAethernetSource("Lifestream unavailable during aethernet source approach");
+            return false;
+        }
+        // Lifestream owns movement while busy. Never issue competing path requests.
+        if (Lifestream.IsBusy()) return false;
+        var now = DateTime.UtcNow;
+        TryGetNearestAethernetSource(out source, out var horizontal, out _);
+        var range = source == null ? default : GetAethernetSourceRange(source, horizontal);
+        var sourceState = "no live source";
+        var recognized = source != null && IsLifestreamAethernetSourceReady(source, out sourceState);
+        var sourceId = source?.GameObjectId ?? 0;
+        if (_sourcePathObjectId != 0 && _sourcePathObjectId != sourceId) StopPathing();
+        var action = _sourceApproach.Evaluate(now, Dalamud.ClientState.TerritoryType, sourceId, range, recognized);
+        var logKey = (sourceId, action);
+        if (_lastSourceLog != logKey || now - _lastSourceLogTime >= TimeSpan.FromSeconds(2))
+        {
+            GatherBuddy.Log.Debug($"[VendorNavigator] Aethernet source {action}: '{source?.Name.TextValue ?? "missing"}'; sourceId={sourceId}; territory={Dalamud.ClientState.TerritoryType}; radius={range.Radius:F2}m; margin={AethernetSourceRange.InteractionMargin:F1}m; allowedHorizontal={range.Limit:F2}m; horizontal={range.Horizontal:F2}m; vertical={range.Vertical:F2}m; verticalLimit={range.Limit:F2}m; recognized={recognized}; {sourceState}");
+            _lastSourceLog = logKey;
+            _lastSourceLogTime = now;
+        }
+        if (action == AethernetSourceAction.Failed)
+        {
+            FailAethernetSource("Invalid source geometry or timed out approaching/recognizing aethernet source (60s approach / 10s after arrival)");
+            return false;
+        }
+        if (action == AethernetSourceAction.Stop)
+        {
+            StopPathing();
+            _sourceApproach.MarkStopped();
+            return false;
+        }
+        if (source == null) return false;
+        if (action == AethernetSourceAction.Ready)
+        {
+            // Do not allow a pending corrective path calculation to launch after handoff.
+            StopPathing();
+        }
+        if (_sourcePathTask is { } task)
+        {
+            if (!task.IsCompleted) return false;
+            if (!CanIssueTeleportRequest()) return false;
+            _sourcePathTask = null;
+            _sourcePathCancellation?.Dispose();
+            _sourcePathCancellation = null;
+            if (task.IsCompletedSuccessfully && task.Result.Count > 0)
+                VNavmesh.Path.MoveTo(task.Result, false);
+            else
+                GatherBuddy.Log.Warning($"[VendorNavigator] Source approach path failed or empty: {task.Exception?.GetBaseException().Message ?? "no route"}");
+            return false;
+        }
+        if (action == AethernetSourceAction.Wait) return false;
+        if (now - _lastSourceActionTime < TimeSpan.FromSeconds(1)
+            || (housing ? !CanIssueHousingEntryAction() : !CanIssueTeleportRequest())) return false;
+        if (action == AethernetSourceAction.Ready)
+        {
+            _lastSourceActionTime = now;
+            return true;
+        }
+        if (VNavmesh.Path.IsRunning() || VNavmesh.SimpleMove.PathfindInProgress()) return false;
+        _lastSourceActionTime = now;
+        // Own the cancellable calculation: SimpleMove can otherwise launch movement after cancellation/handoff.
+        _sourcePathCancellation = new CancellationTokenSource();
+        _sourcePathObjectId = sourceId;
+        _sourcePathTask = VNavmesh.Nav.PathfindCancelable(Dalamud.Objects.LocalPlayer!.Position,
+            source.Position, false, _sourcePathCancellation.Token);
+        _ = _sourcePathTask.ContinueWith(t => { _ = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
+        if (housing) _lastHousingEntryActionTime = now;
+        if (action == AethernetSourceAction.CorrectiveApproach) _sourceApproach.MarkCorrectiveApproachStarted();
+        return false;
+    }
 
-    private static float GetAethernetSourceApproachDistance(IGameObject source, float horizontalDistance, float distance)
-        => MathF.Max(
-            0f,
-            MathF.Max(
-                horizontalDistance - GetAethernetSourceHorizontalInteractionDistance(source),
-                distance - GetAethernetSourceInteractionDistance(source)));
+    private void CancelSourcePath()
+    {
+        _sourcePathCancellation?.Cancel();
+        _sourcePathCancellation?.Dispose();
+        _sourcePathCancellation = null;
+        _sourcePathTask = null;
+        _sourcePathObjectId = 0;
+    }
+
+    private void FailAethernetSource(string reason)
+    {
+        StopPathing();
+        _sourceApproach.Finish();
+        _state = State.Failed;
+        GatherBuddy.Log.Warning($"[VendorNavigator] {reason}; destination={_pendingAethernetName ?? _pendingHousingShardTeleportName ?? "unknown"}");
+    }
 
     private static bool IsAethernetSource(IGameObject obj)
         => obj.IsTargetable
@@ -1903,6 +1896,9 @@ public class VendorNavigator
         var sourceRecognized = source.ObjectKind == ObjectKind.EventObj
             ? activeResidentialAetheryteId != 0 || activeCustomAetheryteId != 0
             : activeAetheryteId != 0 || activeResidentialAetheryteId != 0 || activeCustomAetheryteId != 0;
+
+        // These IPCs expose active IDs, not the selected live object's identity mapping.
+        // Keep existing recognition semantics; proximity alone never authorizes a teleport.
 
         state = $"active={activeAetheryteId}, residential={activeResidentialAetheryteId}, custom={activeCustomAetheryteId}";
         return sourceRecognized;

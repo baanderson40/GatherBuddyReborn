@@ -53,6 +53,22 @@ Initial native execution supports stackable unit-output gil/GC purchases only. S
 
 Fake-port tests cover exclusive ownership (including stale owner IDs), saturating budgets, shared commitments/caps, batches beyond 99, target shrink/already-owned targets, partial outcomes, pause/resume, cancellation, mismatched/stale receipts, unsafe states, rejected submissions, and cleanup timeout/retry. Native shop callbacks, GC dialog sequencing, travel, unload cleanup, and inventory timing still require live verification. The adapter waits one second before receipt reconciliation and at least two seconds before cleanup; these delays are conservative heuristics, not proof of server settlement.
 
+## Aethernet source navigation regression
+
+Source approach now uses the live object's hitbox radius plus 3 m horizontally, with a separate vertical bound of the same size to reject wrong-floor proximity while allowing elevated origins on large objects. Zero radius means 3 m; invalid geometry fails safely. City, post-teleport city, and housing sources share the same handoff logic. Lifestream's active-source IPCs remain the final readiness check; their IDs do not provide a verified mapping to the selected live object.
+
+After arrival, allow 2 seconds for recognition, then one corrective approach toward the source. Recognition/acceptance must finish within 10 seconds of first arrival; the overall source approach is limited to 60 seconds. Drift and replacement sources do not restart the overall deadline. Path calculations are owned/cancellable, with no background continuation that can initiate movement after cancellation. Source diagnostics log on state changes and otherwise at most every 2 seconds. Existing unrelated NPC projection/fallback diagnostics are unchanged.
+
+Live verification (not covered by pure tests):
+
+1. Reload the latest Debug DLL. Reproduce the Limsa route via **The Aftcastle** from the position that previously stalled at 11.2 m. Check `[VendorNavigator] Aethernet source` logs for radius, allowed horizontal distance, actual horizontal/vertical distances, and recognition IDs. Confirm approach continues to hitbox + 3 m and the destination request succeeds without a repeated wait loop.
+2. Repeat with a small city shard and a housing/residential source. Test vertical separation to ensure another floor cannot authorize handoff from horizontal proximity alone. Confirm large-object origin height does not prevent normal use.
+3. Cancel during path calculation, ground movement, and recognition waiting. No late path or teleport may start. Pause/resume a transient run and confirm fresh source validation.
+4. Repeat quantity-2 Hardened Sap purchase: expect 2 acquired, 400 Storm Seals confirmed spent, certain accounting, successful cleanup. This is a real purchase; travel fees remain separate.
+5. If recognition remains unavailable, verify a clear bounded navigation failure and transient cleanup rather than indefinite waiting. An externally busy Lifestream retains travel ownership; the source handler does not interrupt it.
+
+Pure tests cover radius/zero/invalid values, boundary agreement, vertical rejection, grace/corrective approach, deadline preservation, missing/replaced sources, territory reset, refused handoff timeout, and terminal cancellation/reset. They do not prove native path cancellation or Lifestream behavior.
+
 ## Planning contract
 
 - Demands are total requirements, not net shortages. Repeated item demands are summed; the separate NQ/HQ inventory snapshot is consumed once.
