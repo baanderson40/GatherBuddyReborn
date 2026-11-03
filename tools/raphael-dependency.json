@@ -1,0 +1,8 @@
+{
+  "repository": "https://github.com/KonaeAkira/raphael-rs.git",
+  "tag": "v0.29.2",
+  "commit": "5dc5c4efd756391225617b901b3ec2d7c0fabd9e",
+  "toolchain": "stable-x86_64-pc-windows-msvc",
+  "target": "x86_64-pc-windows-msvc",
+  "cliVersion": "0.2.2"
+}

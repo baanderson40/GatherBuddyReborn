@@ -73,4 +73,5 @@
 	</ItemGroup>
 
 
+  <Import Project="..\build\Raphael.targets" />
 </Project>

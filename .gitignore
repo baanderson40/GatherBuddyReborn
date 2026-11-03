@@ -6,3 +6,4 @@ SecretKeys.generated.cs
 .vscode/
 /AGENTS.md
 /PLUGIN_REVIEW.md
+/.dependencies/

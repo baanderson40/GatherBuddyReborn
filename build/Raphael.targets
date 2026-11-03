@@ -1,0 +1,17 @@
+<Project>
+  <PropertyGroup>
+    <RaphaelDependencyDirectory Condition="'$(RaphaelDependencyDirectory)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\.dependencies\raphael\stage'))</RaphaelDependencyDirectory>
+    <_RaphaelDependencyReady Condition="Exists('$(RaphaelDependencyDirectory)\raphael-cli.exe') and Exists('$(RaphaelDependencyDirectory)\raphael-LICENSE.txt') and Exists('$(RaphaelDependencyDirectory)\raphael-build.json')">true</_RaphaelDependencyReady>
+  </PropertyGroup>
+
+  <!-- SDK content copying follows TargetDir/PublishDir and participates in normal Clean tracking. -->
+  <ItemGroup Condition="'$(_RaphaelDependencyReady)' == 'true'">
+    <None Include="$(RaphaelDependencyDirectory)\raphael-cli.exe;$(RaphaelDependencyDirectory)\raphael-LICENSE.txt;$(RaphaelDependencyDirectory)\raphael-build.json"
+          Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
+  <Target Name="CheckRaphaelDependency" BeforeTargets="PrepareForBuild" Condition="'$(DesignTimeBuild)' != 'true'">
+    <Warning Code="GBR001" Condition="'$(_RaphaelDependencyReady)' != 'true'"
+             Text="Raphael CLI staging is missing or incomplete. Run powershell -NoProfile -File tools/Setup-Raphael.ps1 from the repository root, then rebuild. Pure Raphael requires this separate dependency; plugin-only compilation can continue. See docs/raphael-development.md." />
+  </Target>
+</Project>
