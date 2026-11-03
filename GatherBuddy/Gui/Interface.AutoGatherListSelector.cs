@@ -303,10 +303,16 @@ public partial class Interface
                 return;
             }
 
-            if (ImGui.MenuItem("Create New List", string.Empty, false, result.Targets.Count > 0))
-                OpenCreateVendorBuyListPopup(leaf.Value, result, vendorBuyListWindow!);
+            if (vendorBuyListManager == null || vendorBuyListWindow == null)
+            {
+                ImGui.EndMenu();
+                return;
+            }
 
-            if (ImGui.BeginMenu("Add to Existing List", result.Targets.Count > 0 && vendorBuyListManager!.Lists.Count > 0))
+            if (ImGui.MenuItem("Create New List", string.Empty, false, result.Targets.Count > 0))
+                OpenCreateVendorBuyListPopup(leaf.Value, result, vendorBuyListWindow);
+
+            if (ImGui.BeginMenu("Add to Existing List", result.Targets.Count > 0 && vendorBuyListManager.Lists.Count > 0))
             {
                 foreach (var list in vendorBuyListManager.Lists.OrderByDescending(list => list.CreatedAt))
                 {

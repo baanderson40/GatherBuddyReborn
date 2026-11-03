@@ -142,7 +142,7 @@ public class Executor
         FindClosestLocation(_item);
     }
 
-    public ILocation? FindClosestLocation(IGatherable item)
+    public ILocation? FindClosestLocation(IGatherable? item)
     {
         if (item == null)
             return null;

@@ -292,9 +292,9 @@ namespace GatherBuddy.Plugin
             static AllaganTools()
             {
                 EzIPC.Init(typeof(AllaganTools), "AllaganTools");
-                Debug.Assert(ItemCountOwned != null);
-                Debug.Assert(GetCharactersOwnedByActive != null);
-                Debug.Assert(IsInitialized != null);
+                if (ItemCountOwned == null || ItemCount == null || ItemCountHQ == null
+                    || GetCharactersOwnedByActive == null || IsInitialized == null)
+                    throw new InvalidOperationException("AllaganTools IPC delegates were not initialized.");
             }
 
             internal static bool Enabled => IPCSubscriber.IsReady("InventoryTools");

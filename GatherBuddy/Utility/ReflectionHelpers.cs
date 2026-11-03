@@ -80,7 +80,7 @@ public static class ReflectionHelpers
         return TryGetDalamudPlugin(internalName, out _);
     }
 
-    internal static bool TryGetInstalledPluginEntry(string internalName, out object? pluginEntry, bool logIfMissing)
+    internal static bool TryGetInstalledPluginEntry(string internalName, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out object? pluginEntry, bool logIfMissing)
     {
         if (!TryGetInstalledPluginEntries(internalName, out var pluginEntries, logIfMissing))
         {
@@ -133,7 +133,7 @@ public static class ReflectionHelpers
         return false;
     }
 
-    private static bool TrySelectPluginEntry(List<object> pluginEntries, Predicate<object> predicate, out object? pluginEntry)
+    private static bool TrySelectPluginEntry(List<object> pluginEntries, Predicate<object> predicate, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out object? pluginEntry)
     {
         foreach (var candidate in pluginEntries)
         {

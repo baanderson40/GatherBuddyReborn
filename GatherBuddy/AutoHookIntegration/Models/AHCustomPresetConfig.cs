@@ -31,4 +31,20 @@ public class AHCustomPresetConfig
     {
         PresetName = name;
     }
+
+    public void SetIntuitionSwap(bool onGain, string presetName)
+    {
+        ExtraCfg ??= new AHExtraCfg();
+        ExtraCfg.Enabled = true;
+        if (onGain)
+        {
+            ExtraCfg.SwapPresetIntuitionGain = true;
+            ExtraCfg.PresetToSwapIntuitionGain = presetName;
+        }
+        else
+        {
+            ExtraCfg.SwapPresetIntuitionLost = true;
+            ExtraCfg.PresetToSwapIntuitionLost = presetName;
+        }
+    }
 }

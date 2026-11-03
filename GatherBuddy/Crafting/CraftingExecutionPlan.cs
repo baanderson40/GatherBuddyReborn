@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using GatherBuddy.Plugin;
 
@@ -100,6 +101,7 @@ public sealed class CraftingExecutionPlan
         return targets;
     }
 
+    [MemberNotNull(nameof(ResolvedPlan))]
     private void ApplyResolvedPlan(CraftingListPlan resolvedPlan)
     {
         Version++;

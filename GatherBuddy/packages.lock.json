@@ -2,12 +2,6 @@
   "version": 1,
   "dependencies": {
     "net10.0-windows7.0": {
-      "CSCore": {
-        "type": "Direct",
-        "requested": "[1.2.1.2, )",
-        "resolved": "1.2.1.2",
-        "contentHash": "DoQKUcdZLQawo3mOg8CvujJD9YkvTt6NtEu7S+OCo8+ySl8eCeUw4LFyL2E1OcAkPU918HZM6sUNcvIMcXWg6g=="
-      },
       "Dalamud.NET.Sdk": {
         "type": "Direct",
         "requested": "[15.0.0, )",
@@ -39,13 +33,31 @@
       },
       "MessagePack": {
         "type": "Direct",
-        "requested": "[3.1.3, )",
-        "resolved": "3.1.3",
-        "contentHash": "UiNv3fknvPzh5W+S0VV96R17RBZQQU71qgmsMnjjRZU2rtQM/XcTnOB+klT2dA6T1mxjnNKYrEm164AoXvGmYg==",
+        "requested": "[3.1.12, )",
+        "resolved": "3.1.12",
+        "contentHash": "m1QEsd59gUj82ji5tEQbZiyjV6y0F7cYfGVhil6pAlNZpyzR7ze9TucMu4lPpi8cZAV8aNl3D9/T9J1HbFz15Q==",
         "dependencies": {
-          "MessagePack.Annotations": "3.1.3",
-          "MessagePackAnalyzer": "3.1.3",
+          "MessagePack.Annotations": "3.1.12",
+          "MessagePackAnalyzer": "3.1.12",
           "Microsoft.NET.StringTools": "17.11.4"
+        }
+      },
+      "NAudio.Core": {
+        "type": "Direct",
+        "requested": "[3.3.0, )",
+        "resolved": "3.3.0",
+        "contentHash": "xU3f1/5jBTfdjauhcPbjo0O1Ow+PVTPnjMo0KbV7twkWRcoY3GnVmA3mbUXxAePtJ2eUbWgteHWfFjOAvGovLg==",
+        "dependencies": {
+          "System.Numerics.Tensors": "9.0.0"
+        }
+      },
+      "NAudio.Wasapi": {
+        "type": "Direct",
+        "requested": "[3.3.0, )",
+        "resolved": "3.3.0",
+        "contentHash": "wUFqmyrTHde79yzt68g/akvtVG9KDnOVFJ0Aawr07zlbwcGOQo/IWO/NTw9YJTuESl9WGgncZitx/Q7JWQaaBA==",
+        "dependencies": {
+          "NAudio.Core": "3.3.0"
         }
       },
       "CSVFile": {
@@ -65,13 +77,13 @@
       },
       "MessagePack.Annotations": {
         "type": "Transitive",
-        "resolved": "3.1.3",
-        "contentHash": "XTy4njgTAf6UVBKFj7c7ad5R0WVKbvAgkbYZy4f00kplzX2T3VOQ34AUke/Vn/QgQZ7ETdd34/IDWS3KBInSGA=="
+        "resolved": "3.1.12",
+        "contentHash": "LdI67sY7F3KK+JsrG02+DP1XFkowaZSoyfL2M88hjm1MOOsjf8amBLAJolV+zxoPUZf3uGbKzq1cMQD8PlpSpA=="
       },
       "MessagePackAnalyzer": {
         "type": "Transitive",
-        "resolved": "3.1.3",
-        "contentHash": "19u1oVNv2brCs5F/jma8O8CnsKMMpYwNqD0CAEDEzvqwDTAhqC9r7xHZP4stPb3APs/ryO/zVn7LvjoEHfvs7Q=="
+        "resolved": "3.1.12",
+        "contentHash": "iNSNatPh6bafRUbkQKlClExjpPpd8hiZgfZsodGf7bheIlkizGbMzsJ2mPui8jOHRe4Ky9eg5ou/fFzI7CT3fg=="
       },
       "Microsoft.Extensions.DependencyInjection": {
         "type": "Transitive",
@@ -95,6 +107,11 @@
         "type": "Transitive",
         "resolved": "1.4.3",
         "contentHash": "ZUFTqs5doO9aGrR2g0tjASSfxaMUnsxRBXCYFvDRn74XfIc0PUZ0FYRbI3Yu/4W/IFc/DBKH30OOeZ2xGqGyFQ=="
+      },
+      "System.Numerics.Tensors": {
+        "type": "Transitive",
+        "resolved": "9.0.0",
+        "contentHash": "hyJB4UlpAi19Xr9AXzu2NuagKC4lPfHObNMEAA0HmqFz2rX7wKgzeYzO/jM/eBHDhnUGFFEjk5cOoJaxqg5J4A=="
       },
       "ellicon": {
         "type": "Project"

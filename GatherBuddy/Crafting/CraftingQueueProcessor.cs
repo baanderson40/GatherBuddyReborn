@@ -831,7 +831,7 @@ public partial class CraftingQueueProcessor
         var recipe = RecipeManager.GetRecipe(recipeId);
         var itemName = recipe != null ? recipe.Value.ItemResult.Value.Name.ExtractText() : $"Recipe {recipeId}";
 
-        string failureReason = "unknown";
+        string? failureReason = "unknown";
         if (_raphaelCoordinator != null)
         {
             var request = BuildRaphaelRequestForItem(recipeItem);

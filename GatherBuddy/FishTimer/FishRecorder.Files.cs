@@ -4,7 +4,6 @@ using System.IO;
 using System.Linq;
 using GatherBuddy.Plugin;
 using GatherBuddy.Time;
-using MessagePack;
 using Newtonsoft.Json;
 
 namespace GatherBuddy.FishTimer;
@@ -119,7 +118,7 @@ public partial class FishRecorder
         ms.WriteByte(FishRecord.Version);
 
         var records = remote ? RemoteRecords : Records;
-        MessagePackSerializer.Serialize(ms, records);
+        FishRecordSerialization.Write(ms, records);
 
         return ms.ToArray();
     }
@@ -159,12 +158,12 @@ public partial class FishRecorder
                 var span = data.AsSpan()[1..];
                 try
                 {
-                    var list = MessagePackSerializer.Deserialize<List<FishRecord>>(span.ToArray());
+                    var list = FishRecordSerialization.Read(span.ToArray());
                     return list;
                 }
                 catch (Exception e)
                 {
-                    GatherBuddy.Log.Error($"{name} was unable to be deserialized using V2 logic.");
+                    GatherBuddy.Log.Error($"{name} was unable to be deserialized using V2 logic: {e}");
                     return new List<FishRecord>();
                 }
             }

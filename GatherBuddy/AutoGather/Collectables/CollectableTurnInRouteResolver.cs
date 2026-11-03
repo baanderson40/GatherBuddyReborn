@@ -23,19 +23,6 @@ public static class CollectableTurnInRouteResolver
 {
     private const string CollectablesShopLookupTag = "AllaganLib.Data.NpcShopCache.CollectablesShopIdToNpcLookup.1";
     private static readonly TimeSpan LuminaShopLookupRetryCooldown = TimeSpan.FromSeconds(2);
-    private static readonly Type[] CustomTalkScriptTypes =
-    [
-        typeof(FateShop),
-        typeof(GilShop),
-        typeof(SpecialShop),
-        typeof(GCShop),
-        typeof(FccShop),
-        typeof(InclusionShop),
-        typeof(CollectablesShop),
-        typeof(TopicSelect),
-        typeof(PreHandler),
-        typeof(CustomTalk),
-    ];
     private sealed record LuminaCollectablesLookupData(
         Dictionary<uint, HashSet<uint>> ShopLookup,
         Dictionary<uint, List<uint>> OrderedShopsByNpcId);
@@ -411,12 +398,7 @@ public static class CollectableTurnInRouteResolver
         if (scriptArg == 0)
             return false;
 
-        var typeHash = RowRef.CreateTypeHash(CustomTalkScriptTypes);
-        scriptTarget = RowRef.GetFirstValidRowOrUntyped(
-            Dalamud.GameData.Excel,
-            scriptArg,
-            CustomTalkScriptTypes,
-            typeHash,
+        scriptTarget = CustomTalkScriptLookup.Resolve(Dalamud.GameData.Excel, scriptArg,
             Dalamud.GameData.GameData.Options.DefaultExcelLanguage);
         return scriptTarget.RowId != 0;
     }

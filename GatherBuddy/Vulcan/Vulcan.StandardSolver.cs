@@ -73,7 +73,7 @@ public class StandardSolver : Solver
                 rec.Action = VulcanSkill.ImmaculateMend;
         }
 
-        if ((rec.Action is not VulcanSkill.MastersMend or VulcanSkill.ImmaculateMend) &&
+        if ((rec.Action is not (VulcanSkill.MastersMend or VulcanSkill.ImmaculateMend)) &&
             step.Quality < craft.CraftQualityMax &&
             Simulator.CanUseAction(craft, step, VulcanSkill.ByregotsBlessing) &&
             step.RemainingCP - Simulator.GetCPCost(step, rec.Action) < Simulator.GetCPCost(step, VulcanSkill.ByregotsBlessing) &&

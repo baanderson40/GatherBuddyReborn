@@ -370,6 +370,7 @@ public static class Simulator
                 Condition.Primed => ConditionFlags.Primed,
                 Condition.GoodOmen => ConditionFlags.GoodOmen,
                 Condition.Unknown => throw new NotImplementedException(),
+                _ => throw new ArgumentOutOfRangeException(nameof(condition), condition, "Unknown crafting condition."),
             };
         }
     }

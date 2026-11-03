@@ -168,10 +168,16 @@ public class RepairNPCNavigator
 
     private void StartVNavmeshNavigation()
     {
+        if (_targetNPC is not { } target)
+        {
+            GatherBuddy.Log.Warning("[RepairNPCNavigator] Repair target unavailable; navigation not started.");
+            _state = NavigationState.Failed;
+            return;
+        }
         try
         {
-            GatherBuddy.Log.Information($"[RepairNPCNavigator] Starting VNavmesh navigation to {_targetNPC!.Position}");
-            VNavmesh.SimpleMove.PathfindAndMoveTo(_targetNPC.Position, false);
+            GatherBuddy.Log.Information($"[RepairNPCNavigator] Starting VNavmesh navigation to {target.Position}");
+            VNavmesh.SimpleMove.PathfindAndMoveTo(target.Position, false);
             _state = NavigationState.Navigating;
             _stateStartTime = DateTime.UtcNow;
         }

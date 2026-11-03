@@ -26,11 +26,10 @@ public unsafe class TurninWindow(AtkUnitBase* addon) : TreeListWindowBase(addon)
                 continue;
                 
             var rawType = item->UIntValues.Count > 0 ? item->UIntValues[0] : 0;
-            var itemType = (AtkComponentTreeListItemType)(rawType & 0xF);
+            var itemType = item->Type;
             GatherBuddy.Log.Debug($"[TurninWindow] Index {i}: RawType=0x{rawType:X}, MaskedType={itemType}, Label='{Labels[i]}'");
             
-            if (itemType == AtkComponentTreeListItemType.CollapsibleGroupHeader || 
-                itemType == AtkComponentTreeListItemType.GroupHeader)
+            if ((itemType & (TreeListItemType.Group | TreeListItemType.SectionHeader)) != 0)
             {
                 GatherBuddy.Log.Debug($"[TurninWindow] Skipping group header");
                 continue;

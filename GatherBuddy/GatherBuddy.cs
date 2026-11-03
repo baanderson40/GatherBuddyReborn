@@ -300,7 +300,7 @@ public partial class GatherBuddy : IDalamudPlugin
                     // Only add offsets if player is gathering and is not flying
                     // (I've seen glitches where the flying character would gather, let's exclude those)
                     if (character->Mode == FFXIVClientStructs.FFXIV.Client.Game.Character.CharacterModes.Gathering
-                        && character->MovementState != FFXIVClientStructs.FFXIV.Client.Game.Character.MovementStateOptions.Flying)
+                        && character->MoveController.MovementState != FFXIVClientStructs.FFXIV.Client.Game.Character.MovementStateOptions.Flying)
                     {
                         var target = player.TargetObject;
                         if (target != null && target.ObjectKind == ObjectKind.GatheringPoint)

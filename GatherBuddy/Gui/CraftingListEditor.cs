@@ -43,14 +43,12 @@ public class CraftingListEditor
     private int _searchQuantity = 1;
     private Recipe? _selectedRecipe = null;
     private Dictionary<uint, string> _recipeLabels = new();
-    private bool _showMaterials = true;
     private ClippedSelectableCombo<Recipe>? _recipeCombo = null;
     private List<Recipe> _allRecipes = new();
     private List<Recipe> _keywordFilteredRecipes = new();
     private string _lastComboFilter = string.Empty;
     
     private QueueCacheSnapshot? _queueCache = null;
-    private int _cachedRecipeCount = -1;
     private int _queueGenerationVersion = 0;
     private int _selectedQueueIndex = -1;
     private bool _showPrecrafts = true;

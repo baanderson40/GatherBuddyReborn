@@ -21,19 +21,6 @@ namespace GatherBuddy.Vulcan.Vendors;
 
 public static class VendorInteractionHelper
 {
-    private static readonly Type[] CustomTalkScriptTypes =
-    [
-        typeof(FateShop),
-        typeof(GilShop),
-        typeof(SpecialShop),
-        typeof(GCShop),
-        typeof(FccShop),
-        typeof(InclusionShop),
-        typeof(CollectablesShop),
-        typeof(TopicSelect),
-        typeof(PreHandler),
-        typeof(CustomTalk),
-    ];
     private readonly record struct ShopMenuSelectionKey(uint NpcId, VendorMenuShopType ShopType, uint ShopId);
     private sealed class ShopMenuSelectionState(IReadOnlyList<int> menuIndices)
     {
@@ -854,12 +841,7 @@ public static class VendorInteractionHelper
         if (scriptArg == 0)
             return false;
 
-        var typeHash = RowRef.CreateTypeHash(CustomTalkScriptTypes);
-        scriptTarget = RowRef.GetFirstValidRowOrUntyped(
-            Dalamud.GameData.Excel,
-            scriptArg,
-            CustomTalkScriptTypes,
-            typeHash,
+        scriptTarget = CustomTalkScriptLookup.Resolve(Dalamud.GameData.Excel, scriptArg,
             Dalamud.GameData.GameData.Options.DefaultExcelLanguage);
         return scriptTarget.RowId != 0;
     }

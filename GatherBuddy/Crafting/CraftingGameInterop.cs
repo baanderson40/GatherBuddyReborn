@@ -1425,7 +1425,9 @@ public static class CraftingGameInterop
             var liveRaphaelRequest = RaphaelSolveRequest.FromCraftState(_vulcanCraftState, GatherBuddy.Config.RaphaelSolverConfig.RaphaelAllowSpecialistActions);
             GatherBuddy.Log.Debug($@"[Crafting] Live Raphael request at craft start: {liveRaphaelRequest.GetKey()}");
         }
-        _vulcanStepState = CraftingStateBuilder.BuildInitialStepState(_vulcanCraftState);
+        _vulcanStepState = _vulcanCraftState is { } initialCraft
+            ? CraftingStateBuilder.BuildInitialStepState(initialCraft)
+            : null;
         if (_vulcanCraftState != null && _vulcanStepState != null)
         {
             CraftingProcessor.OnCraftStarted(_vulcanCraftState, _vulcanStepState, _currentRecipeId.Value, false);

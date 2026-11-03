@@ -823,7 +823,10 @@ namespace GatherBuddy.AutoGather
 
                 try
                 {
-                    DoActionTasks(_currentGatherTarget.Value);
+                    if (_currentGatherTarget is { } gatherTarget)
+                        DoActionTasks(gatherTarget);
+                    else
+                        AutoStatus = "Waiting for gathering target...";
                 }
                 catch (NoGatherableItemsInNodeException)
                 {
@@ -1883,7 +1886,6 @@ namespace GatherBuddy.AutoGather
                     
                     Vector3 newPos;
                     Angle newRotation = fishingSpotData.Rotation;
-                    bool foundPos = false;
 
                     var forwardDirection = new Vector3(
                         (float)Math.Sin(Player.Rotation),
@@ -1897,7 +1899,6 @@ namespace GatherBuddy.AutoGather
                     if (meshPoint.HasValue)
                     {
                         newPos = meshPoint.Value;
-                        foundPos = true;
                         GatherBuddy.Log.Information($"[AutoGather] Moving {stepSize:F1}y forward in facing direction");
                     }
                     else
@@ -2343,7 +2344,7 @@ namespace GatherBuddy.AutoGather
             if (!string.IsNullOrEmpty(status))
                 AutoStatus = status;
             if (GatherBuddy.Config.AutoGatherConfig.HonkMode)
-                Task.Run(() => _soundHelper.StartHonkSoundTask(3));
+                _soundHelper.StartHonkSoundTask(3);
             CloseGatheringAddons();
             if (GatherBuddy.Config.AutoGatherConfig.GoHomeWhenDone)
                 EnqueueActionWithDelay(() => { GoHome(); });
@@ -2820,6 +2821,7 @@ namespace GatherBuddy.AutoGather
 
         public void Dispose()
         {
+            _soundHelper.Dispose();
             ResetFishingApproachState();
             _currentRequestedTarget = null;
             _advancedUnstuck.Dispose();

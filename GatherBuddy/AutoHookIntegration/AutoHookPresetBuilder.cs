@@ -348,8 +348,7 @@ public class AutoHookPresetBuilder
 
         ConfigureExtraCfg(preset, actualBaitId);
         
-        preset.ExtraCfg.SwapPresetIntuitionGain = true;
-        preset.ExtraCfg.PresetToSwapIntuitionGain = targetPresetName;
+        preset.SetIntuitionSwap(true, targetPresetName);
         
         ConfigureAutoCasts(preset, predators.ToArray(), gbrPreset);
         
@@ -423,8 +422,7 @@ public class AutoHookPresetBuilder
 
         ConfigureExtraCfg(preset, actualBaitId);
         
-        preset.ExtraCfg.SwapPresetIntuitionLost = true;
-        preset.ExtraCfg.PresetToSwapIntuitionLost = predatorPresetName;
+        preset.SetIntuitionSwap(false, predatorPresetName);
         
         ConfigureAutoCasts(preset, targetFish, gbrPreset);
         

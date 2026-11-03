@@ -326,7 +326,7 @@ internal static class DalamudPluginToggleHelper
         return false;
     }
 
-    private static bool TryInvokeTaskMethod(object target, string name, Type[] parameterTypes, object?[] args, out Task? operationTask)
+    private static bool TryInvokeTaskMethod(object target, string name, Type[] parameterTypes, object?[] args, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out Task? operationTask)
     {
         operationTask = null;
         var invocationResult = InvokeMethod(target, name, parameterTypes, args);

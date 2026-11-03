@@ -83,7 +83,7 @@ public class PolicyEditingTests
         VendorPurchasePolicyEditing.SetCurrencyAllowed(list.CustomPolicy, VendorCurrencyGroup.Gil, false);
         VendorPurchasePolicyEditing.SetGrandCompanyFirst(list.CustomPolicy, true);
         list.CustomPolicy.MaximumGilSpendPerRun = 1000;
-        Assert.True(global.AllowedCurrencyGroups.Contains(VendorCurrencyGroup.Gil));
+        Assert.Contains(VendorCurrencyGroup.Gil, global.AllowedCurrencyGroups);
         Assert.True(snapshot.Allows(VendorCurrencyGroup.Gil));
         Assert.Equal(VendorCurrencyGroup.Gil, snapshot.CurrencyPriority[0]);
         Assert.Null(snapshot.MaximumGilSpendPerRun);
