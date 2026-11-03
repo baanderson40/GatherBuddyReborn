@@ -60,7 +60,7 @@ public static class MaterialAcquisitionPlanner
                         if (!input.Policy.Allows(offer.CurrencyGroup)) continue;
 
                         var balance = input.CurrencyBalances.GetValueOrDefault(offer.CurrencyItemId);
-                        var reserve = input.Policy.CurrencyReservesByItemId.GetValueOrDefault(offer.CurrencyItemId);
+                        var reserve = input.Policy.GetReserve(offer.CurrencyItemId);
                         var afterReserve = Subtract(balance, reserve);
                         var available = Subtract(afterReserve, commitments.GetValueOrDefault(offer.CurrencyItemId));
                         trace?.Record("P2", "Offer", $"item={item.ItemId}; currency={offer.CurrencyItemId}; group={offer.CurrencyGroup}; priority={input.Policy.CurrencyPriority.ToList().IndexOf(offer.CurrencyGroup)}; vendor={offer.Vendor.NpcId}; shop={offer.Vendor.ShopId}; costPerTransaction={offer.CostPerTransaction}; outputPerTransaction={offer.OutputQuantityPerTransaction}; balance={balance}; reserve={reserve}; commitments={commitments.GetValueOrDefault(offer.CurrencyItemId)}; settled={input.Ledger.SettledSpending.GetValueOrDefault(offer.CurrencyItemId)}; spendable={available}");
@@ -210,7 +210,7 @@ public static class MaterialAcquisitionPlanner
     {
         var committed = commitments.GetValueOrDefault(offer.CurrencyItemId);
         var balance = input.CurrencyBalances.GetValueOrDefault(offer.CurrencyItemId);
-        var available = Subtract(Subtract(balance, input.Policy.CurrencyReservesByItemId.GetValueOrDefault(offer.CurrencyItemId)), committed);
+        var available = Subtract(Subtract(balance, input.Policy.GetReserve(offer.CurrencyItemId)), committed);
         if (available < offer.CostPerTransaction)
             return Subtract(balance, committed) >= offer.CostPerTransaction
                 ? MaterialShortageReason.ReserveReached : MaterialShortageReason.InsufficientCurrency;

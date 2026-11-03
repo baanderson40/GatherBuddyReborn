@@ -66,6 +66,37 @@ public static class CraftingGatherBridge
         => IsAcquiringMaterials && _activeExecutionPlan?.AcquisitionSessionId == session;
     
     public static AutoGatherList? GetTemporaryGatherList() => _gatherList;
+    private static RetainedGatherTargets? _retainedGatherTargets;
+    public static bool HasRetainedGatherTargets => _retainedGatherTargets != null;
+    public static bool RetainQueueGatherOnDisable => _isQueueMode && _queueProcessor != null;
+    public static void ConfirmQueueGatherHandoff()
+    {
+        _waitingForGatherComplete = false;
+        if (!GatherBuddy.AutoGather.Enabled) return;
+        var preserve = PreserveListOnDisable;
+        PreserveListOnDisable = true;
+        try { GatherBuddy.AutoGather.Enabled = false; }
+        finally { PreserveListOnDisable = preserve; }
+    }
+
+    public static bool ResumeRetainedGathering()
+    {
+        if (_retainedGatherTargets == null || _plugin == null) return false;
+        if (IsGatheringComplete()) return true;
+        _waitingForGatherComplete = true;
+        if (_gatherList == null || !_plugin.AutoGatherListsManager.Lists.Contains(_gatherList))
+        {
+            var targets = _retainedGatherTargets.ToDictionary(p => p.Key, p => checked((int)p.Value));
+            CreateGatherListForMissingIngredients(targets);
+        }
+        else
+        {
+            _gatherList.Enabled = true;
+            _plugin.AutoGatherListsManager.SetActiveItems();
+            GatherBuddy.AutoGather.Enabled = true;
+        }
+        return GatherBuddy.AutoGather.Enabled || IsGatheringComplete();
+    }
     public static CraftingExecutionPlan? GetActiveExecutionPlan()
         => _activeExecutionPlan;
 
@@ -172,6 +203,7 @@ public static class CraftingGatherBridge
                 GatherBuddy.CraftingStatusWindow?.SetQueueProcessor(null);
                 _queueProcessor = null;
                 _activeExecutionPlan = null;
+                _retainedGatherTargets = null;
                 _isQueueMode = false;
 
                 if (_ephemeralListId.HasValue)
@@ -235,6 +267,7 @@ public static class CraftingGatherBridge
             return;
         }
         _isQueueMode = true;
+        _retainedGatherTargets = null;
         _ephemeralListId = ephemeralListId;
         _activeExecutionPlan = executionPlan;
         ResetCollectablesInterruptionState();
@@ -251,6 +284,7 @@ public static class CraftingGatherBridge
     public static void CreateGatherListForMissingIngredients(Dictionary<uint, int> missing)
     {
         _waitingForGatherComplete = true;
+        _retainedGatherTargets = null;
         try
         {
             if (_plugin != null)
@@ -290,6 +324,13 @@ public static class CraftingGatherBridge
                     GatherBuddy.Log.Debug($"[CraftingGatherBridge] Item {gatherItemId} not found in gatherables or fish, skipping");
             }
 
+            var retainedTargets = new Dictionary<uint, uint>();
+            foreach (var item in _gatherList.Items)
+            {
+                var quantity = _gatherList.Quantities.TryGetValue(item, out var count) ? count : 0;
+                retainedTargets[item.ItemId] = Math.Max(retainedTargets.GetValueOrDefault(item.ItemId), quantity);
+            }
+            _retainedGatherTargets = new(retainedTargets);
             if (_gatherList.Items.Count > 0 && _plugin != null)
             {
                 _plugin.AutoGatherListsManager.AddList(_gatherList);
@@ -323,8 +364,9 @@ public static class CraftingGatherBridge
     {
         if (_isQueueMode && _queueProcessor != null)
         {
+            if (_queueProcessor.Paused || _queueProcessor.CurrentState != CraftingQueueProcessor.QueueState.WaitingForGather) return;
             _waitingForGatherComplete = false;
-            GatherBuddy.Log.Debug($"[CraftingGatherBridge] Gather complete for queue mode");
+            GatherBuddy.Log.Debug("[CraftingGatherBridge] Gather handoff requested; queue will reconcile retained targets and player readiness");
             _queueProcessor.OnGatherComplete();
             return;
         }
@@ -393,23 +435,16 @@ public static class CraftingGatherBridge
     }
 
     public static bool IsGatheringComplete()
+        => TryGetGatherCompletion(out var complete) && complete;
+
+    internal static bool TryGetGatherCompletion(out bool complete)
     {
-        if (_gatherList == null)
-            return _waitingForGatherComplete;
-
-        var allComplete = true;
-        foreach (var item in _gatherList.Items)
-        {
-            var have = GetInventoryCount(item.ItemId);
-            var needed = _gatherList.Quantities.TryGetValue(item, out var qty) ? qty : 0;
-            if (have < needed)
-            {
-                allComplete = false;
-                break;
-            }
-        }
-
-        return allComplete;
+        complete = false;
+        if (CraftingQueueProcessor.GetPlayerInventoryAvailability() != PlayerInventoryAvailability.Ready) return false;
+        if (_retainedGatherTargets == null) return true; // No proof of completion; caller handles unknown targets.
+        if (!CraftingQueueProcessor.TryCaptureCraftInventory(_retainedGatherTargets.Keys, out var inventory)) return false;
+        complete = _retainedGatherTargets.SatisfiedBy(inventory);
+        return true;
     }
 
     private static unsafe int GetInventoryCount(uint itemId)
@@ -468,7 +503,10 @@ public static class CraftingGatherBridge
         if (_queueProcessor == null
          || HasAcquisitionOwnership
          || _queueProcessor.CurrentState is CraftingQueueProcessor.QueueState.BlockedByMaterials
-             or CraftingQueueProcessor.QueueState.AcquisitionFailed or CraftingQueueProcessor.QueueState.Cancelled
+              or CraftingQueueProcessor.QueueState.AcquisitionFailed or CraftingQueueProcessor.QueueState.Cancelled
+              or CraftingQueueProcessor.QueueState.Crafting or CraftingQueueProcessor.QueueState.WaitingForCraftResult
+              or CraftingQueueProcessor.QueueState.WaitingForPlayerInventory
+              or CraftingQueueProcessor.QueueState.WaitingForTravelCompletion
          || _queueProcessor.CurrentState is CraftingQueueProcessor.QueueState.Idle or CraftingQueueProcessor.QueueState.Complete
          || GatherBuddy.CollectableManager == null
          || GatherBuddy.CollectableManager.IsRunning
@@ -752,6 +790,7 @@ public static class CraftingGatherBridge
             _queueProcessor = null;
             _activeExecutionPlan = null;
             _waitingForGatherComplete = false;
+            _retainedGatherTargets = null;
             _isQueueMode = false;
             RestoreDisabledGatherLists();
             GatherBuddy.CraftingStatusWindow?.SetQueueProcessor(null);

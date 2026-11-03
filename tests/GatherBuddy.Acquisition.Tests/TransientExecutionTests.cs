@@ -62,6 +62,22 @@ public class TransientExecutionTests
     public void UnlimitedBudgetStillProtectsReserveAndCommitments()
         => Assert.Equal(50ul, new TransientPurchaseBudget(20, 30, null).Spendable(100, 99));
 
+    [Theory]
+    [InlineData(20u)]
+    [InlineData(21u)]
+    [InlineData(22u)]
+    public void SealExecutorUsesUnifiedReserve(uint currency)
+    {
+        var policy = ResolvedVendorPurchasePolicy.Resolve(new() { Enabled = true, GrandCompanySealReserve = 1234 });
+        var allocation = new VendorPurchaseAllocation(Session, 100, 1, 1, currency, VendorCurrencyGroup.GrandCompanySeals,
+            10, VendorShopType.GrandCompanySeals, new(10, "Vendor", 20, VendorMenuShopType.GrandCompanyShop));
+        var port = new FakePort();
+        var execution = new TransientVendorExecution(port);
+        Assert.Equal(TransientVendorStartResult.Started, execution.Start(Session, policy, [allocation], new Dictionary<uint, uint> { [100] = 1 }));
+        execution.Tick(Now);
+        Assert.Equal(1234ul, Assert.Single(port.Requests).Budget.Reserve);
+    }
+
     [Fact]
     public void SuccessfulPurchaseWaitsForCleanupThenReleases()
     {

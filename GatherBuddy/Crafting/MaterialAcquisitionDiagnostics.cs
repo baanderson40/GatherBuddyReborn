@@ -23,7 +23,7 @@ public static class MaterialAcquisitionDiagnostics
             $"Vendor data={input.VendorDataStatus}; plan={plan.Status}; materials={plan.Materials.Count}; allocations={plan.Allocations.Count}.",
         };
         foreach (var currency in input.CurrencyBalances.OrderBy(pair => pair.Key))
-            lines.Add($"CURRENCY {Name(currency.Key)}: balance={currency.Value}; reserve={input.Policy.CurrencyReservesByItemId.GetValueOrDefault(currency.Key)}; committed={input.Ledger.OutstandingCommitments.GetValueOrDefault(currency.Key)}; settled={input.Ledger.SettledSpending.GetValueOrDefault(currency.Key)}; plannedSpend={plan.ProjectedSpending.GetValueOrDefault(currency.Key)}.");
+            lines.Add($"CURRENCY {Name(currency.Key)}: balance={currency.Value}; reserve={input.Policy.GetReserve(currency.Key)}; committed={input.Ledger.OutstandingCommitments.GetValueOrDefault(currency.Key)}; settled={input.Ledger.SettledSpending.GetValueOrDefault(currency.Key)}; plannedSpend={plan.ProjectedSpending.GetValueOrDefault(currency.Key)}.");
         foreach (var requirement in input.Materials.OrderBy(item => item.ItemId))
         {
             var owned = input.Inventory.GetValueOrDefault(requirement.ItemId);
@@ -66,7 +66,7 @@ public static class MaterialAcquisitionDiagnostics
             $"Plan={plan.Status}; missingMaterialTypes={missing.Count}; allocations={plan.Allocations.Count}. All quantities/spending below are planned, not executed.",
         };
         foreach (var id in relevantCurrencies.Order())
-            lines.Add($"CURRENCY {name(id)}: balance={input.CurrencyBalances.GetValueOrDefault(id)}; reserve={input.Policy.CurrencyReservesByItemId.GetValueOrDefault(id)}; committed={input.Ledger.OutstandingCommitments.GetValueOrDefault(id)}; settled={input.Ledger.SettledSpending.GetValueOrDefault(id)}; plannedSpend={plan.ProjectedSpending.GetValueOrDefault(id)}.");
+            lines.Add($"CURRENCY {name(id)}: balance={input.CurrencyBalances.GetValueOrDefault(id)}; reserve={input.Policy.GetReserve(id)}; committed={input.Ledger.OutstandingCommitments.GetValueOrDefault(id)}; settled={input.Ledger.SettledSpending.GetValueOrDefault(id)}; plannedSpend={plan.ProjectedSpending.GetValueOrDefault(id)}.");
         if (input.VendorDataStatus == VendorOfferDataStatus.Ready)
         {
             var rejections = offers.Select(offer => MaterialAcquisitionPlanner.GetOfferRejection(offer, input.Policy)).ToList();

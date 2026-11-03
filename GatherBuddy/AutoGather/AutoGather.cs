@@ -460,8 +460,13 @@ namespace GatherBuddy.AutoGather
                 
                 if (Crafting.CraftingGatherBridge.GetTemporaryGatherList() != null && !Crafting.CraftingGatherBridge.PreserveListOnDisable)
                 {
-                    GatherBuddy.Log.Debug("[AutoGather] Cleaning up temporary Vulcan gather list (user disabled AutoGather)");
-                    Crafting.CraftingGatherBridge.DeleteTemporaryGatherList();
+                    if (Crafting.CraftingGatherBridge.RetainQueueGatherOnDisable)
+                        GatherBuddy.Log.Debug("[AutoGather] AutoGather disabled; retaining Vulcan gather targets for queue reconciliation (disable cause not classified)");
+                    else
+                    {
+                        GatherBuddy.Log.Debug("[AutoGather] Cleaning up temporary Vulcan gather list after AutoGather disabled (disable cause not classified)");
+                        Crafting.CraftingGatherBridge.DeleteTemporaryGatherList();
+                    }
                 }
             }
         else

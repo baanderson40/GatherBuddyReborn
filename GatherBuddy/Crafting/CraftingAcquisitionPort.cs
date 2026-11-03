@@ -13,6 +13,8 @@ namespace GatherBuddy.Crafting;
 /// <summary>Game-thread adapter. Never reads Debug preview settings or creates saved shopping lists.</summary>
 internal sealed class CraftingAcquisitionPort(CraftingExecutionPlan executionPlan) : ICraftingAcquisitionPort
 {
+    public Func<Dictionary<uint, IngredientQualityDemand>>? RemainingRequirements { get; set; }
+    public void PrepareRetry() => executionPlan.AcquisitionRun.Retry(Service.Execution.LastResult);
     private TransientVendorPurchaseService Service => GatherBuddy.TransientVendorPurchases;
     public TransientVendorState PurchaseState => Service.Execution.State;
     public TransientVendorResult? PurchaseResult => Service.Execution.LastResult;
@@ -22,13 +24,17 @@ internal sealed class CraftingAcquisitionPort(CraftingExecutionPlan executionPla
     {
         var manager = InventoryManager.Instance();
         if (manager == null || Dalamud.Objects.LocalPlayer == null || !GenericHelpers.IsScreenReady()) return null;
-        executionPlan.RefreshFromCurrentInventory();
+        if (RemainingRequirements == null) executionPlan.RefreshFromCurrentInventory();
+        var requirements = RemainingRequirements?.Invoke() ?? executionPlan.Materials.ToDictionary(p => p.Key, p =>
+        {
+            var demand = executionPlan.IngredientDemands.GetValueOrDefault(p.Key);
+            if (demand.Total != p.Value) throw new InvalidOperationException($"Material {p.Key}: quality demand differs from total requirement.");
+            return demand;
+        });
         var inventory = new Dictionary<uint, AcquisitionInventory>();
         var demands = new List<AcquisitionMaterialDemand>();
-        foreach (var (itemId, quantity) in executionPlan.Materials)
+        foreach (var (itemId, demand) in requirements)
         {
-            var demand = executionPlan.IngredientDemands.GetValueOrDefault(itemId);
-            if (demand.Total != quantity) throw new InvalidOperationException($"Material {itemId}: quality demand differs from total requirement.");
             inventory[itemId] = new(checked((int)manager->GetInventoryItemCount(itemId, false, false, false)),
                 checked((int)manager->GetInventoryItemCount(itemId, true, false, false)));
             var rawItemId = AutoGather.Helpers.Diadem.ApprovedToRawItemIds.GetValueOrDefault(itemId, itemId);
@@ -40,7 +46,7 @@ internal sealed class CraftingAcquisitionPort(CraftingExecutionPlan executionPla
         {
             VendorShopResolver.InitializeAsync();
             if (VendorShopResolver.IsInitialized) VendorNpcLocationCache.InitializeAsync(VendorShopResolver.AllVendorNpcIds);
-            snapshot = VendorAcquisitionOfferAdapter.Capture(executionPlan.Materials.Keys);
+            snapshot = VendorAcquisitionOfferAdapter.Capture(requirements.Keys);
             var sheet = Dalamud.GameData.GetExcelSheet<Item>();
             // Do not reserve currency for offers the transient executor cannot actually execute.
             snapshot = snapshot with { Offers = snapshot.Offers.Select(offer =>
@@ -54,11 +60,16 @@ internal sealed class CraftingAcquisitionPort(CraftingExecutionPlan executionPla
             }).ToList().AsReadOnly() };
         }
         var balances = new Dictionary<uint, ulong>();
+        var currentSeals = VendorShopResolver.GetCurrentGrandCompanySealCurrencyItemId();
         foreach (var currency in snapshot.Offers.Select(o => (o.CurrencyItemId, o.CurrencyGroup)).Distinct())
+        {
+            if (currency.CurrencyGroup == VendorCurrencyGroup.GrandCompanySeals
+                && !GrandCompanySealPolicy.IsCurrentCurrency(currency.CurrencyItemId, currentSeals)) continue;
             balances[currency.CurrencyItemId] = VendorCurrencyAvailabilityResolver.Resolve(currency.CurrencyGroup, currency.CurrencyItemId, "currency").AvailableAmount;
-        var spent = Service.Execution.LastResult is { } result && result.SessionId == session
-            ? result.SettledSpending.ToDictionary() : new Dictionary<uint, ulong>();
-        return new(session, policy, demands, snapshot.Offers, inventory, balances, new(new Dictionary<uint, ulong>(), spent), snapshot.Status);
+        }
+        executionPlan.AcquisitionRun.Observe(Service.Execution.LastResult);
+        return new(session, policy, demands, snapshot.Offers, inventory, balances,
+            new(new Dictionary<uint, ulong>(), executionPlan.AcquisitionRun.SpendingSnapshot()), snapshot.Status);
     }
 
     public TransientVendorStartResult StartPurchases(MaterialAcquisitionPlanningInput input, MaterialAcquisitionPlan plan,

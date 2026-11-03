@@ -20,6 +20,8 @@ public static class VendorAcquisitionOfferAdapter
 
         var requested = itemIds.ToHashSet();
         var offers = new List<AcquisitionVendorOffer>();
+        var currentSeals = Dalamud.ClientState.IsLoggedIn && Dalamud.Objects.LocalPlayer != null
+            ? VendorShopResolver.GetCurrentGrandCompanySealCurrencyItemId() : 0;
         foreach (var entry in VendorShopResolver.GilShopEntries.Concat(VendorShopResolver.SpecialShopEntries)
                      .Concat(VendorShopResolver.GcShopEntries)
                      .Where(entry => requested.Contains(entry.ItemId)))
@@ -35,12 +37,13 @@ public static class VendorAcquisitionOfferAdapter
                 AcquisitionOfferRejectionKind? rejectionKind = supported ? null : AcquisitionOfferRejectionKind.Unsupported;
                 var access = VendorNpcLocationCache.GetLocations(vendor.NpcId).Count == 0
                     ? VendorOfferAccess.Inaccessible : VendorOfferAccess.Unknown;
-                if (entry.ShopType == VendorShopType.GrandCompanySeals
-                    && entry.CurrencyItemId != VendorShopResolver.GetCurrentGrandCompanySealCurrencyItemId())
+                if ((entry.ShopType == VendorShopType.GrandCompanySeals || entry.Group == VendorCurrencyGroup.GrandCompanySeals)
+                    && !GrandCompanySealPolicy.IsCurrentCurrency(entry.CurrencyItemId, currentSeals))
                 {
                     access = VendorOfferAccess.Inaccessible;
                     rejectionKind = AcquisitionOfferRejectionKind.WrongGrandCompany;
-                    rejection ??= "Offer belongs to a different Grand Company.";
+                    rejection ??= currentSeals == 0 ? "Current Grand Company unavailable or unaffiliated; seal purchases unavailable."
+                        : "Offer belongs to a different Grand Company.";
                 }
                 if (access == VendorOfferAccess.Inaccessible)
                 {

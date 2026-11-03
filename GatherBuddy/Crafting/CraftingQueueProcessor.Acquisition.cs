@@ -13,7 +13,7 @@ public partial class CraftingQueueProcessor
     public string AcquisitionStatus { get; private set; } = string.Empty;
     public IReadOnlyList<string> AcquisitionShortages { get; private set; } = Array.Empty<string>();
     public string AcquisitionPolicyDescription => _executionPlan?.PurchasePolicy.Enabled == true
-        ? $"Purchase policy: {_executionPlan.PurchasePolicy.Origin}; gil cap={_executionPlan.PurchasePolicy.MaximumGilSpendPerRun?.ToString() ?? "unlimited"}; reserves: {string.Join(", ", _executionPlan.PurchasePolicy.CurrencyReservesByItemId.Select(p => $"{p.Key}={p.Value}"))}"
+        ? $"Purchase policy: {_executionPlan.PurchasePolicy.Origin}; gil cap={_executionPlan.PurchasePolicy.MaximumGilSpendPerRun?.ToString() ?? "unlimited"}; GC seal reserve={_executionPlan.PurchasePolicy.GrandCompanySealReserve}; reserves: {string.Join(", ", _executionPlan.PurchasePolicy.CurrencyReservesByItemId.Select(p => $"{p.Key}={p.Value}"))}"
         : string.Empty;
     public bool IsAcquiringMaterials => _currentState is QueueState.PlanningAcquisition or QueueState.WaitingForVendorData
         or QueueState.PurchasingMaterials or QueueState.WaitingForVendorCleanup;
@@ -21,18 +21,11 @@ public partial class CraftingQueueProcessor
     private void BeginMaterialAcquisition()
     {
         if (_executionPlan == null) return;
-        if (!_executionPlan.PurchasePolicy.Enabled)
-        {
-            _currentState = QueueState.WaitingForGather;
-            StateChanged?.Invoke(_currentState);
-            CraftingGatherBridge.CreateGatherListForMissingIngredients(MaterialTargets);
-            return;
-        }
-        _acquisitionPort = new(_executionPlan);
+        _acquisitionPort ??= new(_executionPlan);
         _acquisition = new(_executionPlan.AcquisitionSessionId, _executionPlan.PurchasePolicy, _acquisitionPort, DateTime.UtcNow);
         _currentState = QueueState.PlanningAcquisition;
         AcquisitionStatus = $"Policy: {_executionPlan.PurchasePolicy.Origin}; gil purchase cap={_executionPlan.PurchasePolicy.MaximumGilSpendPerRun?.ToString() ?? "unlimited"}. Planning acquisition.";
-        GatherBuddy.Log.Information($"[Vulcan Acquisition][{_executionPlan.AcquisitionSessionId}][P4][Start] list={_executionPlan.ListId}; policy={_executionPlan.PurchasePolicy.Origin}; enabled=True; currentInventoryOnly=True; retainerRestock={_executionPlan.RetainerRestock}; debugOverrides=False");
+        GatherBuddy.Log.Information($"[Vulcan Acquisition][{_executionPlan.AcquisitionSessionId}][P4][Start] run={_executionPlan.AcquisitionRunId}; list={_executionPlan.ListId}; policy={_executionPlan.PurchasePolicy.Origin}; enabled={_executionPlan.PurchasePolicy.Enabled}; currentInventoryOnly=True; retainerRestock={_executionPlan.RetainerRestock}; debugOverrides=False");
         StateChanged?.Invoke(_currentState);
     }
 
@@ -73,28 +66,11 @@ public partial class CraftingQueueProcessor
 
     private bool ValidateAcquiredMaterials()
     {
-        if (_executionPlan == null || _acquisitionPort == null) return false;
-        try
-        {
-            var input = _acquisitionPort.Capture(_executionPlan.AcquisitionSessionId, _executionPlan.PurchasePolicy, false);
-            if (input == null)
-            { BlockAcquisition("Inventory unavailable. Recheck materials when the player is ready."); return false; }
-            var plan = MaterialAcquisitionPlanner.Plan(input);
-            if (plan.Materials.Any(m => m.DemandAfterInventory.Total > 0))
-            {
-                ReportAcquisitionShortages(plan, onlyUnresolved: false);
-                BlockAcquisition("Material shortages remain. Queue retained; acquire missing materials, then Recheck materials. Ready-recipe scheduling follows in Phase 5.");
-                return false;
-            }
-            AcquisitionShortages = Array.Empty<string>();
-            AcquisitionStatus = "Current inventory satisfies acquisition requirements; proceeding to crafting.";
-            return true;
-        }
-        catch (Exception ex)
-        {
-            BlockAcquisition($"Could not reconcile materials: {ex.Message}", QueueState.AcquisitionFailed);
-            return false;
-        }
+        // Freeze expanded intent after initial acquisition. Rebuilding from the saved
+        // list after partial crafting would resurrect completed work.
+        if (_acquisitionPort != null) _acquisitionPort.RemainingRequirements = BuildRemainingRequirements;
+        _readinessSelected = false;
+        return SelectReadyCraft();
     }
 
     public void RecheckAcquiredMaterials()
@@ -105,6 +81,7 @@ public partial class CraftingQueueProcessor
             AcquisitionStatus = "Stop other automation and close interactions before rechecking materials.";
             return;
         }
+        _missingIngredientFailures.Clear();
         if (!ValidateAcquiredMaterials()) return;
         _paused = false;
         _pauseReason = string.Empty;
@@ -113,8 +90,36 @@ public partial class CraftingQueueProcessor
         StateChanged?.Invoke(_currentState);
     }
 
+    public void RetryMaterialAcquisition()
+    {
+        if (_currentState != QueueState.BlockedByMaterials || _executionPlan == null) return;
+        if (CraftingGameInterop.CurrentState != CraftingGameInterop.CraftState.IdleNormal
+            || _acquisitionPort == null || !_acquisitionPort.CanContinue(out _))
+        {
+            AcquisitionStatus = "Close crafting/vendor interactions and stop other automation before retrying acquisition.";
+            return;
+        }
+        _acquisitionPort.RemainingRequirements = BuildRemainingRequirements;
+        try { _acquisitionPort.PrepareRetry(); }
+        catch (Exception ex)
+        {
+            BlockAcquisition($"Acquisition retry refused: {ex.Message}", QueueState.AcquisitionFailed);
+            return;
+        }
+        _missingIngredientFailures.Clear();
+        _readinessSelected = false;
+        _paused = false;
+        _pauseReason = string.Empty;
+        YesAlready.Lock();
+        BeginMaterialAcquisition();
+    }
+
     private void BlockAcquisition(string reason, QueueState state = QueueState.BlockedByMaterials)
     {
+        _preparationGate.Suspend(_runClock.Elapsed);
+        _inventoryRecovery?.Cancel();
+        _inventoryRecovery = null;
+        _resumeGatherAfterInventory = false;
         AcquisitionStatus = reason;
         _currentState = state;
         _tasks.Clear();

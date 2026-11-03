@@ -46,7 +46,8 @@ public class PolicyEditingTests
         Assert.False(policy.Enabled);
         Assert.Equal(0ul, policy.MaximumGilSpendPerRun);
         Assert.Equal(500ul, policy.CurrencyReservesByItemId[1]);
-        Assert.Equal(400ul, policy.CurrencyReservesByItemId[20]);
+        Assert.Equal(400ul, policy.GrandCompanySealReserve);
+        Assert.False(policy.CurrencyReservesByItemId.ContainsKey(20));
         Assert.Equal(ulong.MaxValue, policy.CurrencyReservesByItemId[999]);
     }
 

@@ -203,7 +203,7 @@ public sealed class TransientVendorExecution
                 remainingCap = remainingCap > otherCommitments ? remainingCap - otherCommitments : 0;
                 maximum = Math.Min(maximum, remainingCap);
             }
-            var budget = new TransientPurchaseBudget(_policy!.CurrencyReservesByItemId.GetValueOrDefault(current.CurrencyItemId), otherCommitments, maximum);
+            var budget = new TransientPurchaseBudget(_policy!.GetReserve(current.CurrencyItemId), otherCommitments, maximum);
             _activeRequested = quantity;
             var start = _port.TryStart(SessionId, current, quantity, target, budget, out var startReason);
             Record("Request", $"allocation={current.AllocationId}; item={current.ItemId}; quantity={quantity}; otherCommitments={otherCommitments}; maximumSpend={maximum}; result={start}; reason={startReason}");

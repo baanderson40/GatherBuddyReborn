@@ -177,7 +177,7 @@ public sealed class TransientVendorPurchaseService : ITransientVendorPort, IDisp
         if (allocation.ShopType == VendorShopType.GrandCompanySeals)
         {
             var state = PlayerState.Instance();
-            if (state == null || VendorShopResolver.GetCurrentGrandCompanySealCurrencyItemId() != allocation.CurrencyItemId)
+            if (state == null || !GrandCompanySealPolicy.IsCurrentCurrency(allocation.CurrencyItemId, VendorShopResolver.GetCurrentGrandCompanySealCurrencyItemId()))
             {
                 reason = "Wrong Grand Company or player data unavailable";
                 return TransientPurchaseStart.Skipped;

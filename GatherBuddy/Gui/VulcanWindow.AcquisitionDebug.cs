@@ -124,7 +124,9 @@ public partial class VulcanWindow
             var currencies = offerSnapshot.Offers.Select(offer => (offer.CurrencyItemId, offer.CurrencyGroup))
                 .Concat(new[] { (1u, VendorCurrencyGroup.Gil),
                     (VendorShopResolver.GetCurrentGrandCompanySealCurrencyItemId(), VendorCurrencyGroup.GrandCompanySeals) })
-                .Where(currency => currency.Item1 != 0).Distinct().OrderBy(currency => currency.Item1);
+                .Where(currency => currency.Item1 != 0 && (currency.Item2 != VendorCurrencyGroup.GrandCompanySeals
+                    || GrandCompanySealPolicy.IsCurrentCurrency(currency.Item1, VendorShopResolver.GetCurrentGrandCompanySealCurrencyItemId())))
+                .Distinct().OrderBy(currency => currency.Item1);
             var itemSheet = Dalamud.GameData.GetExcelSheet<Item>();
             string ItemName(uint id) => itemSheet != null && itemSheet.TryGetRow(id, out var item) ? item.Name.ExtractText() : "Item";
             Dalamud.Log.Information($"{prefix} List={list.Name.Replace('\r', ' ').Replace('\n', ' ')} [{list.ID}]; temporaryPolicy={_acquisitionPreviewTemporaryPolicy}; preferVendors={_acquisitionPreviewPreferVendors}; currentGC={VendorShopResolver.GetCurrentGrandCompanyId()}.");
@@ -178,8 +180,7 @@ public partial class VulcanWindow
         if (_acquisitionPreviewGil) policy.AllowedCurrencyGroups.Add(VendorCurrencyGroup.Gil);
         if (_acquisitionPreviewSeals) policy.AllowedCurrencyGroups.Add(VendorCurrencyGroup.GrandCompanySeals);
         policy.CurrencyReservesByItemId[1] = (ulong)_acquisitionPreviewGilReserve;
-        var sealsId = VendorShopResolver.GetCurrentGrandCompanySealCurrencyItemId();
-        if (sealsId != 0) policy.CurrencyReservesByItemId[sealsId] = (ulong)_acquisitionPreviewSealReserve;
+        policy.GrandCompanySealReserve = (ulong)_acquisitionPreviewSealReserve;
         return ResolvedVendorPurchasePolicy.Resolve(null,
             new() { Mode = VendorPurchaseOverrideMode.Custom, CustomPolicy = policy }, trace, temporary: true);
     }

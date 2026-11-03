@@ -84,8 +84,8 @@ public class PolicyTests
         Assert.Equal(list.Mode, copy.Mode);
         Assert.Equal(list.CustomPolicy.CurrencyPriority, copy.CustomPolicy.CurrencyPriority);
         Assert.Equal(list.CustomPolicy.AllowedCurrencyGroups, copy.CustomPolicy.AllowedCurrencyGroups);
-        Assert.Equal(10ul, copy.CustomPolicy.CurrencyReservesByItemId[20]);
-        Assert.Equal(30ul, copy.CustomPolicy.CurrencyReservesByItemId[21]);
+        Assert.Equal(30ul, copy.CustomPolicy.GrandCompanySealReserve);
+        Assert.Empty(copy.CustomPolicy.CurrencyReservesByItemId);
         Assert.Equal((ulong?)0, copy.CustomPolicy.MaximumGilSpendPerRun);
     }
 

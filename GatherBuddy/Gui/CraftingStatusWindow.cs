@@ -114,6 +114,11 @@ public class CraftingStatusWindow : Window
         }
         if (currentState == CraftingQueueProcessor.QueueState.BlockedByMaterials
             && ImGui.Button("Recheck materials (no purchases)")) _queueProcessor.RecheckAcquiredMaterials();
+        if (currentState == CraftingQueueProcessor.QueueState.BlockedByMaterials)
+        {
+            ImGui.SameLine();
+            if (ImGui.Button("Retry acquisition")) _queueProcessor.RetryMaterialAcquisition();
+        }
 
         if (_queueProcessor.Paused && !string.IsNullOrWhiteSpace(_queueProcessor.PauseReason))
         {
@@ -305,6 +310,9 @@ public class CraftingStatusWindow : Window
             CraftingQueueProcessor.QueueState.WaitingForRaphaelSolution => "Solving with Raphael",
             CraftingQueueProcessor.QueueState.ReadyForCraft => "Ready to Craft",
             CraftingQueueProcessor.QueueState.Crafting => "Crafting",
+            CraftingQueueProcessor.QueueState.WaitingForCraftResult => "Confirming Craft Output",
+            CraftingQueueProcessor.QueueState.WaitingForPlayerInventory => "Waiting for Player / Inventory",
+            CraftingQueueProcessor.QueueState.WaitingForTravelCompletion => "Waiting for Travel / Preparation Readiness",
             CraftingQueueProcessor.QueueState.Complete => "Complete",
             _ => "Unknown"
         };

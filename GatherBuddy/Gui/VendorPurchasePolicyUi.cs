@@ -94,10 +94,22 @@ internal static class VendorPurchasePolicyUi
         if (!gil && !seals) ImGui.TextWrapped("No supported purchase currency allowed; materials will fall back to gathering or shortage reporting.");
 
         changed |= DrawReserve(policy, "Gil reserve", 1);
-        ImGui.TextUnformatted("GC seal reserves (each currency is protected separately)");
-        changed |= DrawReserve(policy, "Storm Seal reserve", 20);
-        changed |= DrawReserve(policy, "Serpent Seal reserve", 21);
-        changed |= DrawReserve(policy, "Flame Seal reserve", 22);
+        // Normalize legacy settings before editing, including explicit zero handling.
+        changed |= policy.Normalize();
+        var sealReserve = policy.GrandCompanySealReserve ?? 0;
+        if (DrawAmount(policy, "GC seal reserve", ref sealReserve))
+        { policy.GrandCompanySealReserve = sealReserve; changed = true; }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("One reserve follows your current Grand Company. Other-GC seals cannot fund automatic purchases. Changes apply to the next run.");
+        var currentSeals = Dalamud.ClientState.IsLoggedIn && Dalamud.Objects.LocalPlayer != null
+            ? VendorShopResolver.GetCurrentGrandCompanySealCurrencyItemId() : 0;
+        ImGui.TextWrapped(currentSeals switch
+        {
+            20 => "Current GC: Maelstrom — Storm Seals",
+            21 => "Current GC: Order of the Twin Adder — Serpent Seals",
+            22 => "Current GC: Immortal Flames — Flame Seals",
+            _ => "Current GC unavailable or unaffiliated. Seal purchases unavailable; reserve remains editable.",
+        });
 
         var limited = policy.MaximumGilSpendPerRun.HasValue;
         if (ImGui.Checkbox("Limit gil purchases per run", ref limited))

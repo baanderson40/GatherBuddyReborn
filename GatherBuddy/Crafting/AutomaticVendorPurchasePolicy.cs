@@ -34,6 +34,8 @@ public sealed class AutomaticVendorPurchasePolicy
     public List<VendorCurrencyGroup> CurrencyPriority { get; set; } = [VendorCurrencyGroup.Gil, VendorCurrencyGroup.GrandCompanySeals];
     [JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace)]
     public Dictionary<uint, ulong> CurrencyReservesByItemId { get; set; } = new();
+    // Null only until legacy reserves have been normalized. Explicit zero must win.
+    public ulong? GrandCompanySealReserve { get; set; }
     // Null means unlimited; zero forbids gil spending.
     public ulong? MaximumGilSpendPerRun { get; set; }
 
@@ -45,6 +47,9 @@ public sealed class AutomaticVendorPurchasePolicy
         _loadDiagnostics = trace.Events;
         _omittedLoadDiagnostics = trace.DroppedEvents;
     }
+
+    [OnSerializing]
+    private void OnSerializing(StreamingContext context) => Normalize();
 
     public bool Normalize(AcquisitionTrace? trace = null, string path = "Policy")
     {
@@ -64,10 +69,17 @@ public sealed class AutomaticVendorPurchasePolicy
                 priority.Add(group);
                 trace?.Record("P1", "Normalize", $"field={path}.CurrencyPriority action=AppendAllowedCurrency value={group}");
             }
-        var reserves = (CurrencyReservesByItemId ?? new()).Where(pair => pair.Key != 0).ToDictionary();
+        var legacy = (CurrencyReservesByItemId ?? new()).Where(pair => GrandCompanySealPolicy.IsSealCurrency(pair.Key)).ToList();
+        var migrate = !GrandCompanySealReserve.HasValue;
+        if (migrate)
+            GrandCompanySealReserve = legacy.Count == 0 ? 0 : legacy.Max(pair => pair.Value);
+        if (legacy.Count > 0)
+            trace?.Record("P1", "MigrateSealReserve", $"path={path}; unifiedReserve={GrandCompanySealReserve}; source={(migrate ? "maximum legacy reserve" : "explicit unified reserve")}; removedLegacyEntries={legacy.Count}",
+                legacy.Select(pair => pair.Value).Distinct().Count() > 1 ? AcquisitionTraceLevel.Warning : AcquisitionTraceLevel.Debug);
+        var reserves = (CurrencyReservesByItemId ?? new()).Where(pair => pair.Key != 0 && !GrandCompanySealPolicy.IsSealCurrency(pair.Key)).ToDictionary();
         var changed = AllowedCurrencyGroups == null || !AllowedCurrencyGroups.SequenceEqual(allowed)
             || CurrencyPriority == null || !CurrencyPriority.SequenceEqual(priority)
-            || CurrencyReservesByItemId == null || CurrencyReservesByItemId.Count != reserves.Count;
+            || CurrencyReservesByItemId == null || CurrencyReservesByItemId.Count != reserves.Count || migrate;
         AllowedCurrencyGroups = allowed;
         CurrencyPriority = priority;
         CurrencyReservesByItemId = reserves;
@@ -108,6 +120,7 @@ public sealed class AutomaticVendorPurchasePolicy
             AllowedCurrencyGroups = AllowedCurrencyGroups == null ? null! : new(AllowedCurrencyGroups),
             CurrencyPriority = CurrencyPriority == null ? null! : new(CurrencyPriority),
             CurrencyReservesByItemId = CurrencyReservesByItemId == null ? null! : new(CurrencyReservesByItemId),
+            GrandCompanySealReserve = GrandCompanySealReserve,
             MaximumGilSpendPerRun = MaximumGilSpendPerRun,
         };
         copy.Normalize(trace, path);
@@ -176,6 +189,9 @@ public sealed class ResolvedVendorPurchasePolicy
     public IReadOnlyList<VendorCurrencyGroup> AllowedCurrencyGroups { get; }
     public IReadOnlyList<VendorCurrencyGroup> CurrencyPriority { get; }
     public IReadOnlyDictionary<uint, ulong> CurrencyReservesByItemId { get; }
+    public ulong GrandCompanySealReserve { get; }
+    public ulong GetReserve(uint currencyItemId) => GrandCompanySealPolicy.IsSealCurrency(currencyItemId)
+        ? GrandCompanySealReserve : CurrencyReservesByItemId.GetValueOrDefault(currencyItemId);
     public ulong? MaximumGilSpendPerRun { get; }
     public VendorPurchasePolicyOrigin Origin { get; }
 
@@ -185,6 +201,7 @@ public sealed class ResolvedVendorPurchasePolicy
         AllowedCurrencyGroups = policy.AllowedCurrencyGroups.AsReadOnly();
         CurrencyPriority = policy.CurrencyPriority.AsReadOnly();
         CurrencyReservesByItemId = new ReadOnlyDictionary<uint, ulong>(policy.CurrencyReservesByItemId);
+        GrandCompanySealReserve = policy.GrandCompanySealReserve ?? 0;
         MaximumGilSpendPerRun = policy.MaximumGilSpendPerRun;
         Origin = origin;
     }
@@ -206,10 +223,20 @@ public sealed class ResolvedVendorPurchasePolicy
         trace?.Record("P1", "Resolve", $"temporary={temporary}; globalEnabled={global?.Enabled ?? false}; listMode={settings?.Mode.ToString() ?? "Inherit (no list)"}; origin={origin}; enabled={resolved.Enabled}");
         trace?.Record("P1", "Snapshot", $"detached=True; allowed={string.Join(",", resolved.AllowedCurrencyGroups)}; priority={string.Join("->", resolved.CurrencyPriority)}; gilCap={resolved.MaximumGilSpendPerRun?.ToString() ?? "unlimited"}");
         if (trace != null)
+        {
+            trace.Record("P1", "Reserve", $"currency=current-GC seals; protected={resolved.GrandCompanySealReserve}");
             foreach (var reserve in resolved.CurrencyReservesByItemId.OrderBy(pair => pair.Key))
                 trace.Record("P1", "Reserve", $"currency={reserve.Key}; protected={reserve.Value}");
+        }
         return resolved;
     }
 
     public bool Allows(VendorCurrencyGroup group) => Enabled && AllowedCurrencyGroups.Contains(group);
+}
+
+public static class GrandCompanySealPolicy
+{
+    public static bool IsSealCurrency(uint currencyItemId) => currencyItemId is 20 or 21 or 22;
+    public static bool IsCurrentCurrency(uint currencyItemId, uint currentCurrencyItemId)
+        => IsSealCurrency(currencyItemId) && currencyItemId == currentCurrencyItemId;
 }

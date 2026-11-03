@@ -16,7 +16,9 @@ public sealed class CraftingExecutionPlan
     public bool SkipIfEnough { get; }
     public bool SkipFinalIfEnough { get; }
     public bool RetainerRestock { get; }
-    public Guid AcquisitionSessionId { get; } = Guid.NewGuid();
+    internal CraftingAcquisitionRun AcquisitionRun { get; } = new();
+    public Guid AcquisitionRunId => AcquisitionRun.RunId;
+    public Guid AcquisitionSessionId => AcquisitionRun.SessionId;
     public ResolvedVendorPurchasePolicy PurchasePolicy { get; }
     public CraftingListPlan ResolvedPlan { get; private set; }
 
@@ -63,6 +65,7 @@ public sealed class CraftingExecutionPlan
 
     public bool MatchesList(int listId)
         => ListId == listId;
+
 
     public void RefreshForRetainerWithdrawal()
     {

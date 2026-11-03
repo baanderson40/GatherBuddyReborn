@@ -70,7 +70,7 @@ public partial class VulcanWindow
         var unitCost = selected.ExpectedCurrencyCost / selected.TransactionCount;
         var maximum = checked(unitCost * (uint)_transientTestQuantity);
         var limit = selected.CurrencyItemId == 1 ? 1000ul : 500ul;
-        ImGui.TextWrapped($"Captured policy: {input.Policy.Origin}; currency reserve={input.Policy.CurrencyReservesByItemId.GetValueOrDefault(selected.CurrencyItemId)}; gil purchase cap={input.Policy.MaximumGilSpendPerRun?.ToString() ?? "unlimited"}. Preview control edits do not change this snapshot; run preview again to refresh it.");
+        ImGui.TextWrapped($"Captured policy: {input.Policy.Origin}; currency reserve={input.Policy.GetReserve(selected.CurrencyItemId)}; gil purchase cap={input.Policy.MaximumGilSpendPerRun?.ToString() ?? "unlimited"}. Preview control edits do not change this snapshot; run preview again to refresh it.");
         ImGui.TextWrapped($"Authorize at most {_transientTestQuantity}x item {selected.ItemId}; maximum purchase cost {maximum} of currency {selected.CurrencyItemId}; vendor {selected.Vendor.Name} [{selected.Vendor.NpcId}], shop {selected.Vendor.ShopId}. Effective policy reserves/caps still apply.");
         ImGui.Checkbox("I authorize this real purchase and vendor travel", ref _transientTestConfirmed);
         if (maximum > limit) ImGui.TextWrapped($"Cost exceeds debug test limit ({limit}); choose a smaller/cheaper test.");
