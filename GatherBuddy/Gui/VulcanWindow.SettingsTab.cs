@@ -38,6 +38,8 @@ public partial class VulcanWindow
             if (!tabOpen)
                 return;
 
+            VendorPurchasePolicyUi.DrawGlobal();
+
             var coordinator = GatherBuddy.RaphaelSolveCoordinator;
             var raphaelConfig = GatherBuddy.Config.RaphaelSolverConfig;
 

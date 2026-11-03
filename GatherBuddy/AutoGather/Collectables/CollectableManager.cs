@@ -86,7 +86,8 @@ public unsafe class CollectableManager : IDisposable
 
     public bool Start(CollectableRunSource source = CollectableRunSource.Manual, bool returnHomeAfterCompletion = false)
     {
-        if (GatherBuddy.VendorPurchaseManager?.AutomationLease.Owner.HasValue == true)
+        if (GatherBuddy.VendorPurchaseManager?.AutomationLease.Owner.HasValue == true
+            || global::GatherBuddy.Crafting.CraftingGatherBridge.HasAcquisitionOwnership)
         {
             GatherBuddy.Log.Warning("[Collectables] Stop transient vendor execution before starting collectable automation.");
             return false;

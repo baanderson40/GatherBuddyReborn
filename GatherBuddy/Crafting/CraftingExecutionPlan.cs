@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using GatherBuddy.Plugin;
@@ -15,6 +16,8 @@ public sealed class CraftingExecutionPlan
     public bool SkipIfEnough { get; }
     public bool SkipFinalIfEnough { get; }
     public bool RetainerRestock { get; }
+    public Guid AcquisitionSessionId { get; } = Guid.NewGuid();
+    public ResolvedVendorPurchasePolicy PurchasePolicy { get; }
     public CraftingListPlan ResolvedPlan { get; private set; }
 
     internal List<CraftingListItem> Queue { get; private set; } = [];
@@ -44,6 +47,7 @@ public sealed class CraftingExecutionPlan
         SkipIfEnough = planningSnapshot.SkipIfEnough;
         SkipFinalIfEnough = planningSnapshot.SkipFinalIfEnough;
         RetainerRestock = planningSnapshot.RetainerRestock;
+        PurchasePolicy = ResolvedVendorPurchasePolicy.Resolve(GatherBuddy.Config.AutomaticVendorPurchases, planningSnapshot.VendorPurchases);
         ApplyResolvedPlan(resolvedPlan);
     }
 

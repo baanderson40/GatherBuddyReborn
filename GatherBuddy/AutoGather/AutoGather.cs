@@ -391,7 +391,8 @@ namespace GatherBuddy.AutoGather
             get => _enabled;
             set
             {
-                if (value && GatherBuddy.VendorPurchaseManager?.AutomationLease.Owner.HasValue == true)
+                if (value && (GatherBuddy.VendorPurchaseManager?.AutomationLease.Owner.HasValue == true
+                    || global::GatherBuddy.Crafting.CraftingGatherBridge.HasAcquisitionOwnership))
                 {
                     Communicator.PrintError("[GatherBuddyReborn] Stop transient vendor execution before starting AutoGather.");
                     return;

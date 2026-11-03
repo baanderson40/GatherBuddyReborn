@@ -349,6 +349,7 @@ public partial class GatherBuddy : IDalamudPlugin
             Dalamud.PluginInterface.UiBuilder.OpenConfigUi -= Interface.Toggle;
             Dalamud.PluginInterface.UiBuilder.OpenMainUi -= Interface.Toggle;
         }
+        Crafting.CraftingGatherBridge.StopQueue();
         CraftingGameInterop.Dispose();
         TransientVendorPurchases?.Dispose();
         FishRecorder?.Dispose();

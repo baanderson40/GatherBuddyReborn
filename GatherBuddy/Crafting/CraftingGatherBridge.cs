@@ -58,6 +58,12 @@ public static class CraftingGatherBridge
     
     public static uint RecipeToCraft => _recipeIdToCraft;
     public static bool WaitingForGatherComplete => _waitingForGatherComplete;
+    public static bool IsAcquiringMaterials => _isQueueMode && _queueProcessor?.IsAcquiringMaterials == true;
+    public static bool HasAcquisitionOwnership => IsAcquiringMaterials || (_activeExecutionPlan?.PurchasePolicy.Enabled == true
+        && _queueProcessor?.CurrentState is CraftingQueueProcessor.QueueState.NavigatingToRetainerBell
+            or CraftingQueueProcessor.QueueState.WithdrawingFromRetainer);
+    public static bool IsAcquiringMaterialsFor(Guid session)
+        => IsAcquiringMaterials && _activeExecutionPlan?.AcquisitionSessionId == session;
     
     public static AutoGatherList? GetTemporaryGatherList() => _gatherList;
     public static CraftingExecutionPlan? GetActiveExecutionPlan()
@@ -200,9 +206,17 @@ public static class CraftingGatherBridge
 
     public static void StartGatherAndCraft(uint recipeId, Dictionary<uint, int> missing)
     {
-        if (GatherBuddy.VendorPurchaseManager.AutomationLease.Owner.HasValue)
+        if (ResolvedVendorPurchasePolicy.Resolve(GatherBuddy.Config.AutomaticVendorPurchases).Enabled)
         {
-            Communicator.PrintError("[GatherBuddyReborn] Stop transient vendor execution before starting Gather + Craft.");
+            var list = new CraftingListDefinition { ID = -1, Name = "Quick Gather + Craft", Recipes = [new(recipeId, 1)] };
+            StartQueueCraftAndGather(CraftingExecutionPlan.Create(list));
+            return;
+        }
+        if (GatherBuddy.VendorPurchaseManager.AutomationLease.Owner.HasValue || _activeExecutionPlan != null
+            || GatherBuddy.VendorPurchaseManager.IsRunning || GatherBuddy.VendorBuyListManager.IsBusy
+            || GatherBuddy.VendorNavigator.IsActive || GatherBuddy.AutoGather.Enabled || GatherBuddy.CollectableManager.IsRunning)
+        {
+            Communicator.PrintError("[GatherBuddyReborn] Stop existing crafting, gathering, shopping, or collectable automation before starting Gather + Craft.");
             return;
         }
         _isQueueMode = false;
@@ -213,9 +227,11 @@ public static class CraftingGatherBridge
     
     public static void StartQueueCraftAndGather(CraftingExecutionPlan executionPlan, CraftingListConsumableSettings? listConsumables = null, int? ephemeralListId = null)
     {
-        if (GatherBuddy.VendorPurchaseManager.AutomationLease.Owner.HasValue)
+        if (GatherBuddy.VendorPurchaseManager.AutomationLease.Owner.HasValue || _activeExecutionPlan != null
+            || GatherBuddy.VendorPurchaseManager.IsRunning || GatherBuddy.VendorBuyListManager.IsBusy
+            || GatherBuddy.VendorNavigator.IsActive || GatherBuddy.AutoGather.Enabled || GatherBuddy.CollectableManager.IsRunning)
         {
-            Communicator.PrintError("[GatherBuddyReborn] Stop transient vendor execution before starting Gather + Craft.");
+            Communicator.PrintError("[GatherBuddyReborn] Stop existing crafting, gathering, shopping, or collectable automation before starting Gather + Craft.");
             return;
         }
         _isQueueMode = true;
@@ -225,19 +241,16 @@ public static class CraftingGatherBridge
         _lastCollectablesHardFailLog = DateTime.MinValue;
         _queueProcessor = new CraftingQueueProcessor();
         _queueProcessor.QueueCompleted += OnQueueCompleted;
-        _waitingForGatherComplete = true;
+        _waitingForGatherComplete = false;
         GatherBuddy.Log.Information($"[CraftingGatherBridge] Starting queue automation with {executionPlan.QueueView.Count} recipes, retainerRestock={executionPlan.RetainerRestock}");
         _queueProcessor.StartQueue(executionPlan, listConsumables, GatherBuddy.RaphaelSolveCoordinator);
-        var hasRetainerWork = executionPlan.RetainerRestock && AllaganTools.Enabled
-            && (executionPlan.Materials.Count > 0 || executionPlan.RetainerConsumedCraftables.Count > 0);
-        if (!hasRetainerWork)
-            CreateGatherListForMissingIngredients(executionPlan.Materials);
 
         GatherBuddy.CraftingStatusWindow?.SetQueueProcessor(_queueProcessor);
     }
     
     public static void CreateGatherListForMissingIngredients(Dictionary<uint, int> missing)
     {
+        _waitingForGatherComplete = true;
         try
         {
             if (_plugin != null)
@@ -453,6 +466,9 @@ public static class CraftingGatherBridge
     private static void TryStartCollectablesInterruption()
     {
         if (_queueProcessor == null
+         || HasAcquisitionOwnership
+         || _queueProcessor.CurrentState is CraftingQueueProcessor.QueueState.BlockedByMaterials
+             or CraftingQueueProcessor.QueueState.AcquisitionFailed or CraftingQueueProcessor.QueueState.Cancelled
          || _queueProcessor.CurrentState is CraftingQueueProcessor.QueueState.Idle or CraftingQueueProcessor.QueueState.Complete
          || GatherBuddy.CollectableManager == null
          || GatherBuddy.CollectableManager.IsRunning
@@ -735,6 +751,7 @@ public static class CraftingGatherBridge
             _queueProcessor.Reset();
             _queueProcessor = null;
             _activeExecutionPlan = null;
+            _waitingForGatherComplete = false;
             _isQueueMode = false;
             RestoreDisabledGatherLists();
             GatherBuddy.CraftingStatusWindow?.SetQueueProcessor(null);

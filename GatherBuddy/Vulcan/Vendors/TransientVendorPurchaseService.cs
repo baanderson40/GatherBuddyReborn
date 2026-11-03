@@ -27,6 +27,7 @@ public sealed class TransientVendorPurchaseService : ITransientVendorPort, IDisp
     private Guid _loggedSession;
     private int _loggedEvents;
     private bool _loggedSummary;
+    private Guid? _craftingSession;
     public TransientVendorExecution Execution { get; }
 
     public TransientVendorPurchaseService(VendorPurchaseManager manager)
@@ -34,6 +35,17 @@ public sealed class TransientVendorPurchaseService : ITransientVendorPort, IDisp
         _manager = manager;
         Execution = new(this);
         _manager.PurchaseFinished += OnPurchaseFinished;
+    }
+
+    public TransientVendorStartResult StartForCrafting(Guid session, ResolvedVendorPurchasePolicy policy,
+        IEnumerable<VendorPurchaseAllocation> allocations, IDictionary<uint, uint> inventoryTargets)
+    {
+        if (Execution.IsBusy) return TransientVendorStartResult.Busy;
+        if (!CraftingGatherBridge.IsAcquiringMaterialsFor(session)) return TransientVendorStartResult.Unavailable;
+        _craftingSession = session;
+        var start = Execution.Start(session, policy, allocations, inventoryTargets);
+        if (start != TransientVendorStartResult.Started) _craftingSession = null;
+        return start;
     }
 
     public void Update()
@@ -79,7 +91,8 @@ public sealed class TransientVendorPurchaseService : ITransientVendorPort, IDisp
         }
         try
         {
-            if (VNavmesh.Path.IsRunning() || Lifestream.Enabled && Lifestream.IsBusy())
+            if (VNavmesh.Path.IsRunning() || VNavmesh.SimpleMove.PathfindInProgress() || VNavmesh.Nav.PathfindInProgress()
+                || Lifestream.Enabled && Lifestream.IsBusy())
             {
                 reason = "Other movement/travel is active.";
                 return false;
@@ -102,8 +115,9 @@ public sealed class TransientVendorPurchaseService : ITransientVendorPort, IDisp
             reason = "Player logged out, in combat, crafting, or gathering; transient purchasing cannot continue.";
             return false;
         }
+        var owningCraftRun = _craftingSession is { } session && CraftingGatherBridge.IsAcquiringMaterialsFor(session);
         if (GatherBuddy.AutoGather?.Enabled == true || GatherBuddy.CollectableManager?.IsRunning == true
-            || CraftingGatherBridge.GetActiveExecutionPlan() != null)
+            || (CraftingGatherBridge.GetActiveExecutionPlan() != null || _craftingSession.HasValue) && !owningCraftRun)
         {
             reason = "Another gathering/crafting/collectable run is active.";
             return false;
@@ -256,6 +270,7 @@ public sealed class TransientVendorPurchaseService : ITransientVendorPort, IDisp
         if (_active != null || _manager.IsRunning || !VendorInteractionHelper.IsReadyToLeaveVendor())
             throw new InvalidOperationException("Cannot release transient ownership before purchase and interaction cleanup.");
         _manager.AutomationLease.Release(sessionId);
+        _craftingSession = null;
     }
     public void Dispose()
     {

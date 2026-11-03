@@ -106,6 +106,14 @@ public class CraftingStatusWindow : Window
 
         ImGui.Text($"State: {GetStateDisplayName(currentState)}");
         ImGui.Text($"Progress: {Math.Min(currentIndex + 1, totalCount)} / {totalCount}");
+        if (!string.IsNullOrEmpty(_queueProcessor.AcquisitionStatus))
+        {
+            ImGui.TextWrapped(_queueProcessor.AcquisitionPolicyDescription);
+            ImGui.TextWrapped(_queueProcessor.AcquisitionStatus);
+            foreach (var shortage in _queueProcessor.AcquisitionShortages) ImGui.TextWrapped(shortage);
+        }
+        if (currentState == CraftingQueueProcessor.QueueState.BlockedByMaterials
+            && ImGui.Button("Recheck materials (no purchases)")) _queueProcessor.RecheckAcquiredMaterials();
 
         if (_queueProcessor.Paused && !string.IsNullOrWhiteSpace(_queueProcessor.PauseReason))
         {
@@ -284,6 +292,13 @@ public class CraftingStatusWindow : Window
             CraftingQueueProcessor.QueueState.Idle => "Idle",
             CraftingQueueProcessor.QueueState.NavigatingToRetainerBell => "Navigating to Retainer Bell",
             CraftingQueueProcessor.QueueState.WaitingForGather => "Gathering Materials",
+            CraftingQueueProcessor.QueueState.PlanningAcquisition => "Planning Material Acquisition",
+            CraftingQueueProcessor.QueueState.WaitingForVendorData => "Waiting for Vendor Data / Availability",
+            CraftingQueueProcessor.QueueState.PurchasingMaterials => "Purchasing Materials",
+            CraftingQueueProcessor.QueueState.WaitingForVendorCleanup => "Waiting for Vendor Cleanup",
+            CraftingQueueProcessor.QueueState.BlockedByMaterials => "Blocked by Material Shortages",
+            CraftingQueueProcessor.QueueState.AcquisitionFailed => "Material Acquisition Failed",
+            CraftingQueueProcessor.QueueState.Cancelled => "Cancelled",
             CraftingQueueProcessor.QueueState.WaitingForJobSwitch => "Switching Job",
             CraftingQueueProcessor.QueueState.Repairing => "Repairing Equipment",
             CraftingQueueProcessor.QueueState.ExtractingMateria => "Extracting Materia",

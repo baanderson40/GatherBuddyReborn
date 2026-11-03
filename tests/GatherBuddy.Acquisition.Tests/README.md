@@ -46,7 +46,7 @@ The preview button causes no purchases, navigation, withdrawals, saved shopping-
 3. Under **LIVE transient purchase test**, choose one allocation and quantity **1**. The UI permits at most five items and 1,000 gil or 500 GC seals per test. A policy with a lower cap/reserve still takes precedence.
 4. Record item count and currency balance. Check **I authorize this real purchase and vendor travel**, then click **Execute confirmed single-allocation test** once.
 5. Wait for **Finished**. Compare actual item/currency changes with acquired quantity and confirmed spending. Check `accounting certain=True` and `cleanup succeeded=True`. Inspect `/xllog`, filter `[Vulcan Acquisition]`, enable Debug for P3 events. The debug authorization and all P3 events identify the live session separately from the source preview.
-6. Verify the saved shopping list's selection, entries, and settings are unchanged. Gather + Craft must not start automatically: pipeline hookup is Phase 4.
+6. Verify the saved shopping list's selection, entries, and settings are unchanged. This standalone Debug test must not start Gather + Craft automatically; the integrated pipeline uses its own run/session and persisted policy.
 7. Test pause/resume while travelling, then cancellation before submission, before testing either around purchase confirmation. A submitted transaction may still settle. Unknown accounting stops further purchases; reconcile inventory/currency manually before another test. Cleanup timeout retains ownership and reports `CleanupBlocked`; close vendor dialogs and wait for cleanup rather than attempting to start another run.
 
 Initial native execution supports stackable unit-output gil/GC purchases only. Special exchanges remain preview-only; housing, equipment, nonstackable materials, unsupported routes/offers, full inventory, changed prices, and wrong GC/rank are rejected or skipped. Purchases revalidate the exact offer rather than switching currency/vendor. Each request submits at most one existing-engine batch; partial results return to the coordinator before any further request. Inventory increase and currency decrease must match; unrelated manual inventory/spending changes can deliberately cause an accounting failure.
@@ -68,6 +68,41 @@ Live verification (not covered by pure tests):
 5. If recognition remains unavailable, verify a clear bounded navigation failure and transient cleanup rather than indefinite waiting. An externally busy Lifestream retains travel ownership; the source handler does not interrupt it.
 
 Pure tests cover radius/zero/invalid values, boundary agreement, vertical rejection, grace/corrective approach, deadline preservation, missing/replaced sources, territory reset, refused handoff timeout, and terminal cancellation/reset. They do not prove native path cancellation or Lifestream behavior.
+
+## Phase 4 integrated acquisition
+
+Gather + Craft queue entry points now share one acquisition stage after actual retainer withdrawal, or directly when withdrawal is disabled/unavailable. Saved-list actions, recipe-browser queue actions, and `/vulcan craft` use this path. Direct craft-only actions remain direct. The legacy single-recipe Gather + Craft entry also uses the queue path when automatic purchases are enabled.
+
+The effective global/list purchase policy is snapshotted with the execution plan. Default policy remains disabled. Temporary Debug preview controls never authorize normal purchases. Configure normal execution under **Vulcan → Settings → Automatic Vendor Purchases**: enable purchases, allow gil/current-GC seals, choose their relative priority, set reserves, and optionally limit gil spending per run. Limits remain editable while disabled so protections can be set before authorizing spending. Use low spending caps and protected balances for testing.
+
+For a saved crafting list, click **Automatic Vendor Purchases...** in the list editor's footer near **Start Gather/Crafting**. Choose **Use global settings**, **Disabled**, or **Custom settings**. Custom policies have their own enable toggle and the same controls; selecting Custom alone does not enable a fresh custom policy. A Disabled list override takes precedence over global enablement. Changes save automatically for future runs; active/paused runs keep their original snapshot. Quick recipe runs inherit global settings.
+
+Amounts accept unsigned whole numbers without truncating to 32-bit values; invalid/negative/overflow input shows an error and keeps the saved value. An unchecked gil limit means unlimited; zero means no gil purchases. GC reserves are separate for Storm/Serpent/Flame seal currency IDs. The controls preserve unrelated currency groups, priority entries, and reserves already present in configuration, but integrated execution remains gil/GC-only. Policy editing/parsing helpers are linked into tests; actual widget layout, persistence through the plugin host, and popup interaction need live verification.
+
+**An enabled persisted policy authorizes real spending when Gather + Craft starts, without the Debug confirmation checkbox.** Teleport fees remain additional gil costs outside purchase reserves/caps. Start near an inexpensive supported vendor for initial tests. Special exchanges, equipment, housing items, and nonstackable materials are excluded from integrated purchase planning rather than reserving money for offers the executor cannot execute.
+
+Execution order:
+
+1. Withdraw actual retainer materials, if configured; rebuild from bag inventory even after an aborted/partial withdrawal.
+2. Plan from total leaf demands and split NQ/HQ bag counts. Wait at most 30 seconds for vendor data or purchase availability. Missing native inventory fails safely rather than being treated as zero owned.
+3. Run one exact transient batch under the crafting session's ownership. Pausing allows submitted work to settle; cancellation never authorizes a later gathering/crafting transition. Existing shared-engine safeguards still apply.
+4. Wait for terminal receipt/cleanup. Uncertain accounting or cleanup fails the acquisition stage. An ordinary, safely settled purchase failure can fall back to gathering. No automatic repeated vendor-route retries occur.
+5. Capture current inventory again with further purchases disabled. Generate absolute NQ gathering targets as current NQ count plus the quality-compatible remaining gather quantity; do not subtract inventory twice. Mandatory HQ remains unresolved.
+6. Report non-gatherable shortages once and continue unrelated gathering. After gathering, refresh requirements/inventory before entering crafting. Known remaining shortages retain the queue in **Blocked by Material Shortages**, never Complete. **Recheck materials (no purchases)** supports manual acquisition without automatically repeating vendor routes.
+
+The status window shows acquisition stage, effective policy/cap/reserves, vendor execution status, and shortages. Console events use `[Vulcan Acquisition]`, the crafting session ID, and `P4`; owned purchases use the same session ID in P3. Unrelated shopping, gathering, and collectable starts are rejected during acquisition. Existing activity must be stopped before starting a new Gather + Craft run. Stop/unload cancels owned transient work; its service retains vendor ownership until safe cleanup, even after the queue detaches.
+
+Phase boundary: readiness scheduling around blocked recipes and acquisition retry are Phase 5. This phase safely blocks crafting when acquisition still has shortages rather than trying to select independent ready recipes. An ingredient preparation failure during enabled integrated execution retains remaining intent as a failure instead of applying the legacy skip-on-repeated-missing-material behavior. Stop and resolve that failure before restarting; pre-craft material rechecking must not rebuild an already partly executed queue.
+
+Live verification still required:
+
+- Feature disabled: compare existing no-retainer/retainer behavior; confirm no purchases and no Debug-policy leakage.
+- Small saved list and quick recipe with inexpensive gil/GC materials: verify planning → purchasing → cleanup → gathering → crafting. Repeat with retainer restocking off and on, including a partial/aborted withdrawal and a withdrawal covering everything.
+- Tight reserve/cap: verify exact spending, residual gathering, and a non-gatherable shortage retained as Blocked. Add missing material manually, then Recheck; no extra purchase or completed-recipe repetition should occur.
+- Pause/resume and Stop during vendor-data waiting, travel, submitted purchase, cleanup, and gathering. Confirm no late stage advance or unrelated automation takeover. Check saved shopping lists and restored gathering-list state.
+- Confirm special-exchange-only materials produce fallback/shortage rather than a claimed acquisition. Independent ready-craft scheduling is not an acceptance criterion for Phase 4.
+
+Linked-source fake-port tests cover post-withdrawal inventory, owned materials, shared/split targets, cleanup ordering, fresh reconciliation, partial/failing purchases, NQ/HQ semantics, continued gathering with non-gatherable shortages, bounded waits, disabled policy, ownership availability, stale results, pause/resume, and cancellation. Native queue/bridge entry wiring, retainer UI, source navigation, and full crafting transitions require in-game testing; compilation and pure tests do not verify those boundaries.
 
 ## Planning contract
 

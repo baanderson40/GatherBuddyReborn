@@ -12,7 +12,7 @@ using Lumina.Excel.Sheets;
 
 namespace GatherBuddy.Crafting;
 
-public class CraftingQueueProcessor
+public partial class CraftingQueueProcessor
 {
     private static readonly List<CraftingListItem> EmptyQueue = [];
     private static readonly Dictionary<uint, int> EmptyCounts = [];
@@ -29,7 +29,14 @@ public class CraftingQueueProcessor
         WaitingForRaphaelSolution,
         ReadyForCraft,
         Crafting,
-        Complete
+        Complete,
+        PlanningAcquisition,
+        WaitingForVendorData,
+        PurchasingMaterials,
+        WaitingForVendorCleanup,
+        BlockedByMaterials,
+        AcquisitionFailed,
+        Cancelled
     }
 
     private QueueState _currentState = QueueState.Idle;
@@ -122,7 +129,7 @@ public class CraftingQueueProcessor
         }
         else
         {
-            _currentState = QueueState.WaitingForGather;
+            BeginMaterialAcquisition();
         }
         GatherBuddy.Log.Information($"[CraftingQueueProcessor] Starting queue with {QueueItems.Count} recipes");
         StateChanged?.Invoke(_currentState);
@@ -138,6 +145,7 @@ public class CraftingQueueProcessor
     {
         if (_currentState != QueueState.WaitingForGather)
             return;
+        if (_executionPlan?.PurchasePolicy.Enabled == true && !ValidateAcquiredMaterials()) return;
 
         GatherBuddy.Log.Debug($"[CraftingQueueProcessor] Gather complete, moving to job check");
         YesAlready.Lock();
@@ -155,6 +163,11 @@ public class CraftingQueueProcessor
         }
 
         ProcessTasks();
+        if (IsAcquiringMaterials)
+        {
+            UpdateMaterialAcquisition();
+            return;
+        }
         
         switch (_currentState)
         {
@@ -224,11 +237,13 @@ public class CraftingQueueProcessor
     {
         while (_tasks.Count > 0)
         {
-            var result = _tasks[0]();
+            var task = _tasks[0];
+            var result = task();
             switch (result)
             {
                 case CraftingTasks.TaskResult.Done:
-                    _tasks.RemoveAt(0);
+                    // A state transition can clear/replace tasks while retaining a blocked queue.
+                    if (_tasks.Count > 0 && ReferenceEquals(_tasks[0], task)) _tasks.RemoveAt(0);
                     break;
                 case CraftingTasks.TaskResult.Retry:
                     return;
@@ -777,6 +792,12 @@ public class CraftingQueueProcessor
             _ => "RecipeNote ingredient assignment",
         };
 
+        if (_executionPlan?.PurchasePolicy.Enabled == true)
+        {
+            BlockAcquisition($"Missing materials for {itemName}: {failure.Details}. Remaining crafts retained; stop and restart after resolving materials.", QueueState.AcquisitionFailed);
+            return true;
+        }
+
         if (priorFailures == 0)
         {
             _missingIngredientFailures[failure.RecipeId] = 1;
@@ -871,6 +892,11 @@ public class CraftingQueueProcessor
 
     private void CompleteQueue()
     {
+        if (_executionPlan?.PurchasePolicy.Enabled == true && _currentQueueIndex < QueueItems.Count)
+        {
+            BlockAcquisition("Queue stopped before all requested crafts completed. Remaining intent retained.", QueueState.AcquisitionFailed);
+            return;
+        }
         GatherBuddy.Log.Information($"[CraftingQueueProcessor] Queue complete!");
         YesAlready.Unlock();
         GatherBuddy.AutoGather.Enabled = false;
@@ -1249,28 +1275,10 @@ public class CraftingQueueProcessor
         });
     }
 
-    private unsafe void TransitionFromRetainerWithdrawComplete()
+    private void TransitionFromRetainerWithdrawComplete()
     {
         RebuildQueueAndMaterialsFromCurrentInventory();
-        GatherBuddy.Log.Debug("[CraftingQueueProcessor] Computing remaining materials after retainer withdrawal");
-
-        int stillGatherCount = 0;
-        var inventoryMgr = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
-        foreach (var (itemId, totalNeeded) in MaterialTargets)
-        {
-            int inBag = 0;
-            if (inventoryMgr != null)
-                inBag = (int)(inventoryMgr->GetInventoryItemCount(itemId, false, false, false)
-                            + inventoryMgr->GetInventoryItemCount(itemId, true,  false, false));
-            if (inBag < totalNeeded)
-                stillGatherCount++;
-        }
-
-        GatherBuddy.Log.Information($"[CraftingQueueProcessor] After retainer withdrawal: {stillGatherCount} item(s) still need gathering");
-
-        _currentState = QueueState.WaitingForGather;
-        StateChanged?.Invoke(_currentState);
-        CraftingGatherBridge.CreateGatherListForMissingIngredients(MaterialTargets);
+        BeginMaterialAcquisition();
     }
     private void RebuildQueueAndMaterialsFromCurrentInventory()
     {
@@ -1398,6 +1406,7 @@ public class CraftingQueueProcessor
         GatherBuddy.Log.Information("[CraftingQueueProcessor] Pausing queue");
         _paused = true;
         _pauseReason = reason ?? string.Empty;
+        _acquisition?.Pause(DateTime.UtcNow);
         if (_currentState == QueueState.NavigatingToRetainerBell)
         {
             GatherBuddy.Log.Debug("[CraftingQueueProcessor] Pausing retainer bell navigation");
@@ -1405,7 +1414,7 @@ public class CraftingQueueProcessor
             _retainerBellNavigator = null;
         }
         _tasks.Clear();
-        YesAlready.Unlock();
+        if (!IsAcquiringMaterials || !GatherBuddy.VendorPurchaseManager.HasSubmittedBatch) YesAlready.Unlock();
         
         if (_currentState == QueueState.WaitingForGather)
         {
@@ -1430,6 +1439,9 @@ public class CraftingQueueProcessor
         _paused = false;
         _pauseReason = string.Empty;
         YesAlready.Lock();
+
+        _acquisition?.Resume(DateTime.UtcNow);
+        if (IsAcquiringMaterials) return;
 
         if (_currentState == QueueState.NavigatingToRetainerBell)
         {
@@ -1474,6 +1486,18 @@ public class CraftingQueueProcessor
 
     public void Stop()
     {
+        if (_executionPlan?.PurchasePolicy.Enabled == true)
+        {
+            _acquisition?.Cancel();
+            _tasks.Clear();
+            _retainerBellNavigator?.Stop();
+            GatherBuddy.AutoGather.Enabled = false;
+            CraftingGatherBridge.DeleteTemporaryGatherList();
+            YesAlready.Unlock();
+            _currentState = QueueState.Cancelled;
+            StateChanged?.Invoke(_currentState);
+            return;
+        }
         GatherBuddy.Log.Information("[CraftingQueueProcessor] Stopping queue");
         _paused = false;
         _pauseReason = string.Empty;
@@ -1508,6 +1532,11 @@ public class CraftingQueueProcessor
     
     public void Reset()
     {
+        _acquisition?.Cancel();
+        _acquisition = null;
+        _acquisitionPort = null;
+        AcquisitionStatus = string.Empty;
+        AcquisitionShortages = Array.Empty<string>();
         YesAlready.Unlock();
         _executionPlan = null;
         _currentQueueIndex = 0;

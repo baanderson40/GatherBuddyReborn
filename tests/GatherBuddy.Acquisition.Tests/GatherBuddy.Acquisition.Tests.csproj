@@ -15,8 +15,10 @@
   <!-- Test the actual pure production sources without loading Dalamud or native game services. -->
   <ItemGroup>
     <Compile Include="../../GatherBuddy/Crafting/AutomaticVendorPurchasePolicy.cs" Link="Production/AutomaticVendorPurchasePolicy.cs" />
+    <Compile Include="../../GatherBuddy/Crafting/VendorPurchasePolicyEditing.cs" Link="Production/VendorPurchasePolicyEditing.cs" />
     <Compile Include="../../GatherBuddy/Crafting/AcquisitionTrace.cs" Link="Production/AcquisitionTrace.cs" />
     <Compile Include="../../GatherBuddy/Crafting/TransientVendorExecution.cs" Link="Production/TransientVendorExecution.cs" />
+    <Compile Include="../../GatherBuddy/Crafting/CraftingAcquisitionCoordinator.cs" Link="Production/CraftingAcquisitionCoordinator.cs" />
     <Compile Include="../../GatherBuddy/Vulcan/Vendors/VendorAutomationLease.cs" Link="Production/VendorAutomationLease.cs" />
     <Compile Include="../../GatherBuddy/Vulcan/Vendors/AethernetSourceApproach.cs" Link="Production/AethernetSourceApproach.cs" />
     <Compile Include="../../GatherBuddy/Crafting/MaterialAcquisitionModels.cs" Link="Production/MaterialAcquisitionModels.cs" />
