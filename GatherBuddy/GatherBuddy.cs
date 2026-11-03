@@ -154,6 +154,7 @@ public partial class GatherBuddy : IDalamudPlugin
             TransientVendorPurchases = new Vulcan.Vendors.TransientVendorPurchaseService(VendorPurchaseManager);
             CraftingGameInterop.Initialize();
             CraftingGatherBridge.Initialize(this);
+            Crafting.GearsetStatsReader.ResetDiagnostics();
             CraftingGameInterop.CraftFinished += (recipe, cancelled) => CraftingGatherBridge.OnCraftFinished(recipe, cancelled);
             
             Task.Run(() =>

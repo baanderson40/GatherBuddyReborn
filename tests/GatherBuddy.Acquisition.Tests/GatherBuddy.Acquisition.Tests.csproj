@@ -14,6 +14,7 @@
   </ItemGroup>
   <!-- Test the actual pure production sources without loading Dalamud or native game services. -->
   <ItemGroup>
+    <Compile Include="../../GatherBuddy/Utility/DiagnosticThrottle.cs" Link="Production/DiagnosticThrottle.cs" />
     <Compile Include="../../GatherBuddy/Crafting/AutomaticVendorPurchasePolicy.cs" Link="Production/AutomaticVendorPurchasePolicy.cs" />
     <Compile Include="../../GatherBuddy/Crafting/VendorPurchasePolicyEditing.cs" Link="Production/VendorPurchasePolicyEditing.cs" />
     <Compile Include="../../GatherBuddy/Crafting/AcquisitionTrace.cs" Link="Production/AcquisitionTrace.cs" />

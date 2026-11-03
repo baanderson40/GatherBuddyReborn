@@ -11,6 +11,7 @@ using GatherBuddy.Plugin;
 using Lumina.Excel.Sheets;
 using Newtonsoft.Json;
 using GatherBuddy.Vulcan;
+using GatherBuddy.Utility;
 
 namespace GatherBuddy.Crafting;
 
@@ -23,6 +24,7 @@ public class RaphaelSolveCoordinator
     private Queue<RaphaelSolveRequest> _urgentQueue = new();
     private Queue<RaphaelSolveRequest> _backgroundQueue = new();
     private int _activeSolveCount = 0;
+    private readonly DiagnosticThrottle<string> _missingCliDiagnostics = new(TimeSpan.MaxValue, capacity: 8, comparer: StringComparer.OrdinalIgnoreCase);
 
     private sealed class SolveTask
     {
@@ -635,30 +637,34 @@ public class RaphaelSolveCoordinator
         Process? process = null;
         Task<string>? outputTask = null;
         Task<string>? errorTask = null;
-        GatherBuddy.Log.Information($"[RaphaelSolveCoordinator] Executing Raphael solve for recipe {request.RecipeId} (key: {key})");
 
         try
         {
             var raphaelPath = GetRaphaelCliPath();
-            GatherBuddy.Log.Debug($"[RaphaelSolveCoordinator] Raphael executable path: {raphaelPath}");
             
             if (string.IsNullOrEmpty(raphaelPath))
             {
                 cacheEntry.IsFailed = true;
                 cacheEntry.FailureReason = "raphael-cli.exe path is empty";
                 _cachedSolutions[key] = cacheEntry;
-                GatherBuddy.Log.Error("[RaphaelSolveCoordinator] FAIL: raphael-cli.exe path could not be resolved - plugin directory is unavailable");
+                if (_missingCliDiagnostics.TryLog("<unresolved plugin directory>", "Unavailable", out _))
+                    GatherBuddy.Log.Error("[RaphaelSolveCoordinator] FAIL: raphael-cli.exe path could not be resolved - plugin directory is unavailable. Repeated dependency errors suppressed until recovery; solve failures remain recorded.");
                 return;
             }
+            _missingCliDiagnostics.Forget("<unresolved plugin directory>");
             
             if (!File.Exists(raphaelPath))
             {
                 cacheEntry.IsFailed = true;
                 cacheEntry.FailureReason = $"raphael-cli.exe not found at {raphaelPath}";
                 _cachedSolutions[key] = cacheEntry;
-                GatherBuddy.Log.Error($"[RaphaelSolveCoordinator] FAIL: raphael-cli.exe not found at {raphaelPath}. Ensure the plugin was downloaded/updated with the latest version.");
+                if (_missingCliDiagnostics.TryLog(raphaelPath, "Missing", out _))
+                    GatherBuddy.Log.Error($"[RaphaelSolveCoordinator] FAIL: raphael-cli.exe not found at {raphaelPath}. Run tools/Setup-Raphael.ps1, rebuild, and reload the plugin. Repeated dependency errors suppressed until recovery; solve failures remain recorded.");
                 return;
             }
+            _missingCliDiagnostics.Forget(raphaelPath);
+            GatherBuddy.Log.Information($"[RaphaelSolveCoordinator] Executing Raphael solve for recipe {request.RecipeId} (key: {key})");
+            GatherBuddy.Log.Debug($"[RaphaelSolveCoordinator] Raphael executable path: {raphaelPath}");
 
             var args = BuildRaphaelArguments(request);
             GatherBuddy.Log.Debug($"[RaphaelSolveCoordinator] Raphael arguments: {args}");

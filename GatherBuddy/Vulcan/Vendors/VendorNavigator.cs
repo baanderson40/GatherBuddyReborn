@@ -555,10 +555,7 @@ public class VendorNavigator
     private bool                     _attemptedHousingShardTeleport;
     private uint                     _forcedHousingEntryOriginTerritoryId;
     private bool                     _awaitingForcedHousingOriginExit;
-    private string?                  _lastApproachDiagnosticsSummary;
-    private DateTime                 _lastApproachDiagnosticsLogTime;
-    private string?                  _lastFallbackDiagnosticsSummary;
-    private DateTime                 _lastFallbackDiagnosticsLogTime;
+    private readonly DiagnosticThrottle<(ulong Npc, string Category)> _navigationDiagnostics = new(TimeSpan.FromSeconds(VendorApproachDiagnosticsCooldown), capacity: 64);
     private DateTime                 _forceGroundApproachUntil;
     private Vector3                  _lastGroundProgressPosition;
     private float                    _lastGroundProgressDistance = float.MaxValue;
@@ -694,8 +691,7 @@ public class VendorNavigator
         _attemptedHousingShardTeleport       = false;
         _forcedHousingEntryOriginTerritoryId = 0;
         _awaitingForcedHousingOriginExit     = false;
-        _lastApproachDiagnosticsSummary      = null;
-        _lastApproachDiagnosticsLogTime      = DateTime.MinValue;
+        _navigationDiagnostics.Clear();
         _forceGroundApproachUntil            = DateTime.MinValue;
         _lastGroundProgressPosition          = Vector3.Zero;
         _lastGroundProgressDistance          = float.MaxValue;
@@ -1332,11 +1328,12 @@ public class VendorNavigator
 
         if (_usingLiveNpcDestination != usingLiveNpc)
         {
-            GatherBuddy.Log.Debug(usingLiveNpc
-                ? $"[VendorNavigator] Switching to direct live NPC navigation for {_target!.NpcName} using {navigationReason} at {destination}"
-                : liveNpc != null
-                    ? $"[VendorNavigator] Using {navigationReason} for {_target!.NpcName} while the live NPC destination is unavailable (npc={liveNpc.Position}, rotation={liveNpc.Rotation:F2})"
-                    : $"[VendorNavigator] Live NPC object unavailable for {_target!.NpcName}, falling back to cached location");
+            if (_navigationDiagnostics.TryLog((liveNpc?.GameObjectId ?? 0, "DestinationMode"), usingLiveNpc ? navigationReason : "Unavailable", out var suppressed))
+                GatherBuddy.Log.Debug((usingLiveNpc
+                    ? $"[VendorNavigator] Switching to direct live NPC navigation for {_target!.NpcName} using {navigationReason} at {destination}"
+                    : liveNpc != null
+                        ? $"[VendorNavigator] Using {navigationReason} for {_target!.NpcName} while the live NPC destination is unavailable (npc={liveNpc.Position}, rotation={liveNpc.Rotation:F2})"
+                        : $"[VendorNavigator] Live NPC object unavailable for {_target!.NpcName}, falling back to cached location") + DiagnosticThrottle.Suffix(suppressed));
         }
 
         return destination;
@@ -2133,9 +2130,8 @@ public class VendorNavigator
         }
         if (!snapped.HasValue)
         {
-            LogLiveNpcFallbackDiagnostics(
-                $"missing|{liveNpc.Position}",
-                $@"[VendorNavigator] Failed to find a live NPC fallback projection for {_target?.NpcName ?? "vendor"} at {liveNpc.Position}, using the live NPC position instead");
+            if (_navigationDiagnostics.TryLog((liveNpc.GameObjectId, "MissingProjection"), "Missing", out var suppressed))
+                GatherBuddy.Log.Debug($"[VendorNavigator] Failed to find a live NPC fallback projection for {_target?.NpcName ?? "vendor"} at {liveNpc.Position}, using the live NPC position instead{DiagnosticThrottle.Suffix(suppressed)}");
             return liveNpc.Position;
         }
         var snappedPosition = snapped.Value;
@@ -2143,25 +2139,16 @@ public class VendorNavigator
         var horizontalDrift = GetHorizontalDistance(snappedPosition, liveNpc.Position);
         if (verticalDrift <= VendorApproachMaxVerticalDrift && horizontalDrift <= VendorStagingMaxHorizontalDrift)
         {
+            _navigationDiagnostics.Forget((liveNpc.GameObjectId, "MissingProjection"));
+            _navigationDiagnostics.Forget((liveNpc.GameObjectId, "PointOnFloor"));
+            _navigationDiagnostics.Forget((liveNpc.GameObjectId, "NearestPoint"));
             usesProjectedDestination = true;
             return snappedPosition;
         }
 
-        LogLiveNpcFallbackDiagnostics(
-            $"{snapSource}|{snappedPosition}|{liveNpc.Position}|{horizontalDrift:F1}|{verticalDrift:F1}",
-            $@"[VendorNavigator] Rejecting {snapSource} live NPC fallback {snappedPosition} for {_target?.NpcName ?? "vendor"} because it drifted {horizontalDrift:F1}m horizontally and {verticalDrift:F1}m vertically from {liveNpc.Position}, using the live NPC position instead");
+        if (_navigationDiagnostics.TryLog((liveNpc.GameObjectId, snapSource), "Rejected", out var rejectedRepeats))
+            GatherBuddy.Log.Debug($"[VendorNavigator] Rejecting {snapSource} live NPC fallback {snappedPosition} for {_target?.NpcName ?? "vendor"} because it drifted {horizontalDrift:F1}m horizontally and {verticalDrift:F1}m vertically from {liveNpc.Position}, using the live NPC position instead{DiagnosticThrottle.Suffix(rejectedRepeats)}");
         return liveNpc.Position;
-    }
-
-    private void LogLiveNpcFallbackDiagnostics(string summary, string message)
-    {
-        if (summary == _lastFallbackDiagnosticsSummary
-         && (DateTime.UtcNow - _lastFallbackDiagnosticsLogTime).TotalSeconds < VendorApproachDiagnosticsCooldown)
-            return;
-
-        _lastFallbackDiagnosticsSummary = summary;
-        _lastFallbackDiagnosticsLogTime = DateTime.UtcNow;
-        GatherBuddy.Log.Debug(message);
     }
 
     private bool ShouldUseCloseRangeLiveNpcApproach(IGameObject? liveNpc, bool usingLiveNpc)
@@ -2199,7 +2186,7 @@ public class VendorNavigator
             navigationReason = preferPlayerSide
                 ? "ground vendor staging point"
                 : "safe vendor staging point";
-            LogApproachDiagnostics(liveNpc, navigationReason, [outerRingDiagnostics]);
+            LogApproachDiagnostics(liveNpc, "Staging", navigationReason, outerRingDiagnostics);
             return true;
         }
         var closeMinimumDistance = MathF.Max(liveNpc.HitboxRadius + VendorApproachMinimumStandOff, 1.5f);
@@ -2208,12 +2195,12 @@ public class VendorNavigator
         if (found)
         {
             navigationReason = "close vendor staging point";
-            LogApproachDiagnostics(liveNpc, navigationReason, [$"outer ring: {outerRingDiagnostics}", $"close ring: {closeRingDiagnostics}"]);
+            LogApproachDiagnostics(liveNpc, "Staging", navigationReason, outerRingDiagnostics, closeRingDiagnostics);
             return true;
         }
 
         navigationReason = "live NPC position fallback";
-        LogApproachDiagnostics(liveNpc, navigationReason, [$"outer ring: {outerRingDiagnostics}", $"close ring: {closeRingDiagnostics}"]);
+        LogApproachDiagnostics(liveNpc, "Staging", navigationReason, outerRingDiagnostics, closeRingDiagnostics);
         return false;
     }
 
@@ -2226,12 +2213,12 @@ public class VendorNavigator
         if (found)
         {
             navigationReason = "live NPC final approach point";
-            LogApproachDiagnostics(liveNpc, navigationReason, [diagnosticsSummary]);
+            LogApproachDiagnostics(liveNpc, "FinalApproach", navigationReason, diagnosticsSummary);
             return true;
         }
 
         navigationReason = "live NPC position fallback";
-        LogApproachDiagnostics(liveNpc, navigationReason, [diagnosticsSummary]);
+        LogApproachDiagnostics(liveNpc, "FinalApproach", navigationReason, diagnosticsSummary);
         return false;
     }
 
@@ -2244,12 +2231,12 @@ public class VendorNavigator
         if (found)
         {
             navigationReason = "close vendor approach point";
-            LogApproachDiagnostics(liveNpc, navigationReason, [diagnosticsSummary]);
+            LogApproachDiagnostics(liveNpc, "CloseApproach", navigationReason, diagnosticsSummary);
             return true;
         }
 
         navigationReason = "live NPC position fallback";
-        LogApproachDiagnostics(liveNpc, navigationReason, [$"close approach: {diagnosticsSummary}"]);
+        LogApproachDiagnostics(liveNpc, "CloseApproach", navigationReason, diagnosticsSummary);
         return false;
     }
 
@@ -2269,22 +2256,39 @@ public class VendorNavigator
             .ToArray();
     }
 
-    private void LogApproachDiagnostics(IGameObject liveNpc, string navigationReason, IReadOnlyList<string> diagnostics)
+    private readonly record struct ProjectionFailure(string Kind, Vector3 Candidate, Vector3 Projected = default,
+        Vector3 Npc = default, float Value = 0, float Limit = 0, string? Error = null)
     {
-        if (diagnostics.Count == 0 || _target == null)
-            return;
-
-        var summary = $"{navigationReason}|{string.Join("; ", diagnostics)}";
-        if (summary == _lastApproachDiagnosticsSummary
-         && (DateTime.UtcNow - _lastApproachDiagnosticsLogTime).TotalSeconds < VendorApproachDiagnosticsCooldown)
-            return;
-
-        _lastApproachDiagnosticsSummary = summary;
-        _lastApproachDiagnosticsLogTime = DateTime.UtcNow;
-        GatherBuddy.Log.Debug($"[VendorNavigator] {navigationReason} for {_target.NpcName} after {string.Join("; ", diagnostics)} (npc={liveNpc.Position}, rotation={liveNpc.Rotation:F2})");
+        public override string ToString() => Kind switch
+        {
+            "NoFloor" => $"no floor projection (candidate={Candidate})",
+            "HorizontalDrift" => $"horizontalDrift={Value:F2}>{Limit:F2} (candidate={Candidate}, projected={Projected})",
+            "VerticalDrift" => $"verticalDrift={Value:F2}>{Limit:F2} (candidate={Candidate}, projected={Projected}, npc={Npc})",
+            "TooFar" => $"npcDistance={Value:F2}>{Limit:F2} (candidate={Candidate}, projected={Projected}, npc={Npc})",
+            "TooClose" => $"npcDistance={Value:F2}<{Limit:F2} (candidate={Candidate}, projected={Projected}, npc={Npc})",
+            "Exception" => $"projection exception for {Candidate}: {Error}",
+            _ => string.Empty,
+        };
     }
 
-    private bool TryFindVendorApproachDestination(IGameObject liveNpc, IReadOnlyList<float> distances, float minimumDistance, float maximumDistance, float maximumDrift, bool preferPlayerSide, out Vector3 destination, out string diagnosticsSummary)
+    private readonly record struct ApproachDiagnostics(bool Selected, Vector3 Candidate, float Distance, float ForwardDot,
+        int Valid, int Rejected, ProjectionFailure? FirstFailure)
+    {
+        public override string ToString() => Selected
+            ? $"selected={Candidate}, npcDistance={Distance:F1}, forwardDot={ForwardDot:F2}, valid={Valid}, rejected={Rejected}"
+            : Rejected > 0 ? $"projectionFailures={Rejected} (first: {FirstFailure})" : "no valid approach candidates";
+    }
+
+    private void LogApproachDiagnostics(IGameObject liveNpc, string category, string navigationReason,
+        ApproachDiagnostics first, ApproachDiagnostics? second = null)
+    {
+        if (_target == null || !_navigationDiagnostics.TryLog((liveNpc.GameObjectId, category), navigationReason, out var suppressed)) return;
+        // Format coordinates/failure details only when admitted. Alternating phases have independent windows.
+        var detail = second.HasValue ? $"outer ring: {first}; close ring: {second.Value}" : first.ToString();
+        GatherBuddy.Log.Debug($"[VendorNavigator] {navigationReason} [{category}] for {_target.NpcName} after {detail} (npc={liveNpc.Position}, rotation={liveNpc.Rotation:F2}){DiagnosticThrottle.Suffix(suppressed)}");
+    }
+
+    private bool TryFindVendorApproachDestination(IGameObject liveNpc, IReadOnlyList<float> distances, float minimumDistance, float maximumDistance, float maximumDrift, bool preferPlayerSide, out Vector3 destination, out ApproachDiagnostics diagnosticsSummary)
     {
         var npcPosition = liveNpc.Position;
         var forward     = GetFacingDirection(liveNpc.Rotation);
@@ -2295,7 +2299,7 @@ public class VendorNavigator
         var bestCandidate  = Vector3.Zero;
         var validCandidates = 0;
         var projectionFailures = 0;
-        string? firstProjectionFailure = null;
+        ProjectionFailure? firstProjectionFailure = null;
 
         foreach (var distance in distances)
         {
@@ -2330,24 +2334,19 @@ public class VendorNavigator
         if (bestScore > float.NegativeInfinity)
         {
             destination = bestCandidate;
-            diagnosticsSummary = $"selected={bestCandidate}, npcDistance={bestDistance:F1}, forwardDot={bestForwardDot:F2}, valid={validCandidates}, rejected={projectionFailures}";
+            diagnosticsSummary = new(true, bestCandidate, bestDistance, bestForwardDot, validCandidates, projectionFailures, firstProjectionFailure);
             return true;
         }
 
         destination = default;
-        diagnosticsSummary = SummarizeApproachFailures(projectionFailures, firstProjectionFailure);
+        diagnosticsSummary = new(false, default, 0, 0, validCandidates, projectionFailures, firstProjectionFailure);
         return false;
     }
 
-    private static string SummarizeApproachFailures(int projectionFailureCount, string? firstProjectionFailure)
-        => projectionFailureCount > 0
-            ? $"projectionFailures={projectionFailureCount} (first: {firstProjectionFailure})"
-            : "no valid approach candidates";
-
-    private bool TryProjectVendorApproachCandidate(Vector3 candidate, Vector3 npcPosition, float minimumDistance, float maximumDistance, float maximumDrift, out Vector3 projected, out string failureReason)
+    private bool TryProjectVendorApproachCandidate(Vector3 candidate, Vector3 npcPosition, float minimumDistance, float maximumDistance, float maximumDrift, out Vector3 projected, out ProjectionFailure failureReason)
     {
         projected     = default;
-        failureReason = string.Empty;
+        failureReason = default;
 
         try
         {
@@ -2358,33 +2357,33 @@ public class VendorNavigator
             snapped ??= VNavmesh.Query.Mesh.NearestPoint(candidate, VendorApproachMeshSearchRadius, VendorApproachFloorSearchHeight);
             if (!snapped.HasValue)
             {
-                failureReason = $"no floor projection (candidate={candidate})";
+                failureReason = new("NoFloor", candidate);
                 return false;
             }
 
             var horizontalDrift = GetHorizontalDistance(snapped.Value, candidate);
             if (horizontalDrift > maximumDrift)
             {
-                failureReason = $"horizontalDrift={horizontalDrift:F2}>{maximumDrift:F2} (candidate={candidate}, projected={snapped.Value})";
+                failureReason = new("HorizontalDrift", candidate, snapped.Value, npcPosition, horizontalDrift, maximumDrift);
                 return false;
             }
 
             var verticalDrift = MathF.Abs(snapped.Value.Y - npcPosition.Y);
             if (verticalDrift > VendorApproachMaxVerticalDrift)
             {
-                failureReason = $"verticalDrift={verticalDrift:F2}>{VendorApproachMaxVerticalDrift:F2} (candidate={candidate}, projected={snapped.Value}, npc={npcPosition})";
+                failureReason = new("VerticalDrift", candidate, snapped.Value, npcPosition, verticalDrift, VendorApproachMaxVerticalDrift);
                 return false;
             }
 
             var interactionDistance = GetHorizontalDistance(snapped.Value, npcPosition);
             if (interactionDistance > maximumDistance)
             {
-                failureReason = $"npcDistance={interactionDistance:F2}>{maximumDistance:F2} (candidate={candidate}, projected={snapped.Value}, npc={npcPosition})";
+                failureReason = new("TooFar", candidate, snapped.Value, npcPosition, interactionDistance, maximumDistance);
                 return false;
             }
             if (interactionDistance < minimumDistance)
             {
-                failureReason = $"npcDistance={interactionDistance:F2}<{minimumDistance:F2} (candidate={candidate}, projected={snapped.Value}, npc={npcPosition})";
+                failureReason = new("TooClose", candidate, snapped.Value, npcPosition, interactionDistance, minimumDistance);
                 return false;
             }
 
@@ -2393,7 +2392,7 @@ public class VendorNavigator
         }
         catch (Exception ex)
         {
-            failureReason = $"projection exception for {candidate}: {ex.Message}";
+            failureReason = new("Exception", candidate, Error: ex.Message);
             return false;
         }
     }

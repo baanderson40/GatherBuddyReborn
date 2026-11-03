@@ -7,6 +7,8 @@ using static FFXIVClientStructs.FFXIV.Client.Game.InventoryType;
 using Lumina.Excel;
 using Lumina.Excel.Sheets;
 using GatherBuddy.Vulcan;
+using GatherBuddy.Utility;
+using Math = System.Math;
 
 namespace GatherBuddy.Crafting;
 
@@ -24,6 +26,8 @@ public static unsafe class GearsetStatsReader
     private const int SpecialistSlotIndex = 13;
     private const int BaseCp = 180;
     private const int MaxEquipSlotCategoryId = 22;
+    private static readonly DiagnosticThrottle<(uint Item, uint Stat, int Slot, string Kind)> CapDiagnostics = new(TimeSpan.FromSeconds(30));
+    public static void ResetDiagnostics() => CapDiagnostics.Clear();
 
     public static string RefreshGearsetFromCurrentEquipped(uint jobId)
     {
@@ -269,7 +273,8 @@ public static unsafe class GearsetStatsReader
         var slotCategoryId = (int)item.EquipSlotCategory.RowId;
         if (slotCategoryId <= 0 || slotCategoryId > MaxEquipSlotCategoryId)
         {
-            GatherBuddy.Log.Debug($"[GearsetStatsReader] Missing slot cap data for item {item.RowId} and stat {paramId}: slot category {slotCategoryId} is out of range.");
+            if (CapDiagnostics.TryLog((item.RowId, paramId, slotCategoryId, "SlotOutOfRange"), "UncappedFallback", out var suppressed))
+                GatherBuddy.Log.Debug($"[GearsetStatsReader] Missing slot cap data for item {item.RowId} and stat {paramId}: slot category {slotCategoryId} is out of range. Using existing uncapped stat fallback.{DiagnosticThrottle.Suffix(suppressed)}");
             return false;
         }
 
@@ -283,20 +288,25 @@ public static unsafe class GearsetStatsReader
         var baseParamSheet = Dalamud.GameData.GetExcelSheet<RawRow>(name: "BaseParam");
         if (baseParamSheet == null)
         {
-            GatherBuddy.Log.Debug($"[GearsetStatsReader] Missing BaseParam sheet while calculating cap for item {item.RowId} and stat {paramId}.");
+            if (CapDiagnostics.TryLog((item.RowId, paramId, slotCategoryId, "MissingSheet"), "UncappedFallback", out var suppressed))
+                GatherBuddy.Log.Debug($"[GearsetStatsReader] Missing BaseParam sheet while calculating cap for item {item.RowId} and stat {paramId}. Using existing uncapped stat fallback.{DiagnosticThrottle.Suffix(suppressed)}");
             return false;
         }
 
         if (!baseParamSheet.TryGetRow(paramId, out var baseParamRow))
         {
-            GatherBuddy.Log.Debug($"[GearsetStatsReader] Missing BaseParam row {paramId} while calculating cap for item {item.RowId}.");
+            if (CapDiagnostics.TryLog((item.RowId, paramId, slotCategoryId, "MissingRow"), "UncappedFallback", out var suppressed))
+                GatherBuddy.Log.Debug($"[GearsetStatsReader] Missing BaseParam row {paramId} while calculating cap for item {item.RowId}. Using existing uncapped stat fallback.{DiagnosticThrottle.Suffix(suppressed)}");
             return false;
         }
 
         var slotModifier = baseParamRow.ReadInt16Column(slotCategoryId + 3);
         if (slotModifier <= 0)
         {
-            GatherBuddy.Log.Debug($"[GearsetStatsReader] Missing slot modifier for item {item.RowId}, stat {paramId}, slot category {slotCategoryId}.");
+            // Soul crystals (including 10339/10343) have fixed base bonuses and no materia slots.
+            // Keep the existing base+meld fallback, including for other missing-cap cases; only deduplicate diagnostics.
+            if (CapDiagnostics.TryLog((item.RowId, paramId, slotCategoryId, "MissingModifier"), "UncappedFallback", out var suppressed))
+                GatherBuddy.Log.Debug($"[GearsetStatsReader] Missing slot modifier for item {item.RowId}, stat {paramId}, slot category {slotCategoryId}. Using existing uncapped stat fallback.{DiagnosticThrottle.Suffix(suppressed)}");
             return false;
         }
 
