@@ -73,6 +73,7 @@ public partial class CraftingQueueProcessor
     public QueueState CurrentState => _currentState;
     public int CurrentQueueIndex => _currentQueueIndex;
     public int QueueCount => QueueItems.Count;
+    public CraftingQueueProgress Progress => CraftingQueueProgress.Capture(QueueItems, _currentQueueIndex, static item => item.Options.Skipping);
     public IReadOnlyList<CraftingListItem> Queue => QueueItems;
     public CraftingListItem? CurrentRecipeItem => _currentQueueIndex < QueueItems.Count ? QueueItems[_currentQueueIndex] : null;
     public bool Paused => _paused;

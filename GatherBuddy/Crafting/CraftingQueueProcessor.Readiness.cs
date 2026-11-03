@@ -145,6 +145,7 @@ public partial class CraftingQueueProcessor
     private void UpdateCraftResult()
     {
         int confirmed;
+        int observedOutputCount;
         try
         {
             if (!TryCaptureCraftInventory(new[] { _resultItemId }, out var inventory))
@@ -153,7 +154,8 @@ public partial class CraftingQueueProcessor
                 return;
             }
             var owned = inventory[_resultItemId];
-            confirmed = CraftReadiness.ConfirmedCrafts(_resultBefore, checked(owned.NQ + owned.HQ),
+            observedOutputCount = checked(owned.NQ + owned.HQ);
+            confirmed = CraftReadiness.ConfirmedCrafts(_resultBefore, observedOutputCount,
                 _resultOutputQuantity, _resultRequested);
         }
         catch (Exception ex)
@@ -164,7 +166,11 @@ public partial class CraftingQueueProcessor
         var attempted = _lastCraftWasQuickSynth && _resultReported > 0
             ? Math.Min(_resultRequested, _resultReported) : _resultRequested;
         if (confirmed < attempted && _runClock.Elapsed < _resultDeadline) return;
+        var recipeId = CurrentRecipeItem?.RecipeId ?? 0;
+        var previousIndex = _currentQueueIndex;
         _currentQueueIndex += confirmed;
+        var progress = Progress;
+        GatherBuddy.Log.Debug($"[Vulcan Crafting][{_executionPlan?.AcquisitionRunId}][Result] recipe={recipeId}; outputItem={_resultItemId}; before={_resultBefore}; after={observedOutputCount}; yield={_resultOutputQuantity}; requested={_resultRequested}; attempted={attempted}; confirmed={confirmed}; cancelled={_resultCancelled}; index={previousIndex}->{_currentQueueIndex}; confirmedTotal={progress.ConfirmedCrafts}; explicitlySkipped={progress.ExplicitSkips}; remaining={progress.RemainingCrafts}");
         _readinessSelected = false;
         _jobSwitchGuard.Reset();
         if (confirmed > 0) _missingIngredientFailures.Clear();

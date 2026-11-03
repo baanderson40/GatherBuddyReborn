@@ -97,7 +97,6 @@ public class CraftingStatusWindow : Window
 
         var currentState = _queueProcessor.CurrentState;
         var currentIndex = _queueProcessor.CurrentQueueIndex;
-        var totalCount = _queueProcessor.QueueCount;
         var currentItem = _queueProcessor.CurrentRecipeItem;
 
         ImGui.TextColored(new System.Numerics.Vector4(0.0f, 1.0f, 0.8f, 1.0f), "Crafting Queue Active");
@@ -105,19 +104,29 @@ public class CraftingStatusWindow : Window
         ImGui.Spacing();
 
         ImGui.Text($"State: {GetStateDisplayName(currentState)}");
-        ImGui.Text($"Progress: {Math.Min(currentIndex + 1, totalCount)} / {totalCount}");
+        var progress = _queueProcessor.Progress;
+        ImGui.Text($"Confirmed crafts: {progress.ConfirmedCrafts} / {progress.RequestedCrafts}");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Counts expanded craft entries, not output item units. Only inventory-confirmed output advances successful crafts; explicit skips are excluded.");
+        ImGui.Text($"Remaining crafts: {progress.RemainingCrafts}; explicitly skipped: {progress.ExplicitSkips}");
         if (!string.IsNullOrEmpty(_queueProcessor.AcquisitionStatus))
         {
             ImGui.TextWrapped(_queueProcessor.AcquisitionPolicyDescription);
             ImGui.TextWrapped(_queueProcessor.AcquisitionStatus);
+            if (_queueProcessor.AcquisitionShortages.Count > 0)
+                ImGui.TextDisabled("Last reconciled shortages (use Recheck after changing inventory):");
             foreach (var shortage in _queueProcessor.AcquisitionShortages) ImGui.TextWrapped(shortage);
         }
-        if (currentState == CraftingQueueProcessor.QueueState.BlockedByMaterials
-            && ImGui.Button("Recheck materials (no purchases)")) _queueProcessor.RecheckAcquiredMaterials();
         if (currentState == CraftingQueueProcessor.QueueState.BlockedByMaterials)
         {
+            ImGui.TextWrapped("Remaining work is retained. Add materials and Recheck without purchases, or explicitly Retry acquisition under the captured run policy.");
+            if (ImGui.Button("Recheck materials (no purchases)")) _queueProcessor.RecheckAcquiredMaterials();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Re-read current inventory and select ready recipes. Does not start purchases or gathering.");
             ImGui.SameLine();
             if (ImGui.Button("Retry acquisition")) _queueProcessor.RetryMaterialAcquisition();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("May spend gil/current-GC seals allowed by the captured policy, then gather remaining supported materials. Earlier purchase spending still counts toward the run cap. Close crafting/vendor interactions first.");
         }
 
         if (_queueProcessor.Paused && !string.IsNullOrWhiteSpace(_queueProcessor.PauseReason))
@@ -165,19 +174,27 @@ public class CraftingStatusWindow : Window
         }
         else
         {
-            ImGui.TextDisabled(_queueProcessor.Paused ? "Queue is paused." : "Queue is processing...");
+            var retainedStop = currentState is CraftingQueueProcessor.QueueState.BlockedByMaterials
+                or CraftingQueueProcessor.QueueState.AcquisitionFailed or CraftingQueueProcessor.QueueState.Cancelled;
+            ImGui.TextDisabled(currentState switch
+            {
+                CraftingQueueProcessor.QueueState.BlockedByMaterials => "Queue blocked; remaining work retained.",
+                CraftingQueueProcessor.QueueState.AcquisitionFailed => "Automation failed; work retained. Inspect the error, then Stop before restarting.",
+                CraftingQueueProcessor.QueueState.Cancelled => "Queue cancelled; no new automation authorized.",
+                _ => _queueProcessor.Paused ? "Queue is paused." : "Queue is processing...",
+            });
             ImGui.Spacing();
             ImGui.Separator();
             ImGui.Spacing();
             
-            if (!_queueProcessor.Paused)
+            if (!retainedStop && !_queueProcessor.Paused)
             {
                 if (ImGui.Button("Pause"))
                 {
                     _queueProcessor.Pause();
                 }
             }
-            else
+            else if (!retainedStop)
             {
                 if (ImGui.Button("Resume"))
                 {
@@ -185,7 +202,7 @@ public class CraftingStatusWindow : Window
                 }
             }
             
-            ImGui.SameLine();
+            if (!retainedStop) ImGui.SameLine();
             if (ImGui.Button("Stop"))
             {
                 CraftingGatherBridge.StopQueue();
