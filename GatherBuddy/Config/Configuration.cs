@@ -83,6 +83,7 @@ public partial class Configuration : IPluginConfiguration
     public VulcanMateriaConfig VulcanMateriaConfig { get; set; } = new();
     public VulcanRetainerBellConfig VulcanRetainerBellConfig { get; set; } = new();
     public int VulcanExecutionDelayMs { get; set; } = 300;
+    public Marketboard.MarketboardPreferences MarketboardPreferences { get; set; } = new();
     public bool VulcanContextMenuEntries { get; set; } = true;
     public bool ShowRecipeBrowserTooltips { get; set; } = true;
     public ModifiableHotkey VulcanRecipesTabHotkey { get; set; } = new();

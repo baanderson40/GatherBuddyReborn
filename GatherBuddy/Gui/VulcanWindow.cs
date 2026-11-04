@@ -116,7 +116,10 @@ public partial class VulcanWindow : Window, IDisposable
     {
         OpenToMarketboard();
         _mbSelectedItemId   = itemId;
-        _mbDetailLastItemId = 0;
+        _mbLookupKey = null;
+        _mbShowRecent = true;
+        _mbSearch = string.Empty;
+        _mbResultsDirty = true;
     }
     public void OpenToRecipes()
     {

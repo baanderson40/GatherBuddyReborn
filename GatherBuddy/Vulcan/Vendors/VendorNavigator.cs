@@ -576,6 +576,7 @@ public class VendorNavigator
 
     public void StartNavigation(VendorNpcLocation target, bool continueCurrentVendorInteraction = false, Guid? ownerSessionId = null)
     {
+        if (!Marketboard.MarketboardTravelIntegration.CanStartAutomation()) return;
         if (GatherBuddy.AutoRetainerIntegration?.Coordinator.BlocksAutomation == true) return;
         if (!GatherBuddy.VendorPurchaseManager.AutomationLease.Allows(ownerSessionId)) return;
         if (ownerSessionId == null && Crafting.CraftingGatherBridge.HasAcquisitionOwnership) return;

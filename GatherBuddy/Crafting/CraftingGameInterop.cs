@@ -248,6 +248,7 @@ public static class CraftingGameInterop
     
     public static void StartCraft(Recipe recipe, uint quantity, bool useQuickSynthesis = false)
     {
+        if (!Marketboard.MarketboardTravelIntegration.CanStartAutomation()) return;
         if (GatherBuddy.AutoRetainerIntegration?.Coordinator.YieldRequested == true) return;
         if (recipe.RowId == 0)
             return;

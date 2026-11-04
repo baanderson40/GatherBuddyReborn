@@ -71,6 +71,8 @@ public sealed class TransientVendorPurchaseService : ITransientVendorPort, IDisp
 
     public bool TryAcquire(Guid sessionId, out string reason)
     {
+        if (GatherBuddy.MarketboardTravel?.Coordinator.BlocksAutomation == true)
+        { reason = "Finish/recover Marketboard travel first."; return false; }
         if (_disposed) { reason = "Transient service disposed"; return false; }
         if (!IsSafe(out reason)) return false;
         if (Dalamud.Objects.LocalPlayer == null || !GenericHelpers.IsScreenReady())

@@ -98,6 +98,8 @@ public partial class CraftingQueueProcessor
 
     public void StartQueue(CraftingExecutionPlan executionPlan, CraftingListConsumableSettings? listConsumables = null, RaphaelSolveCoordinator? raphaelCoordinator = null)
     {
+        if (GatherBuddy.MarketboardTravel?.Coordinator.BlocksAutomation == true)
+            throw new InvalidOperationException("Finish/recover Marketboard travel before starting another queue.");
         if (GatherBuddy.AutoRetainerIntegration?.Coordinator.YieldRequested == true)
             throw new InvalidOperationException("Finish/recover the AutoRetainer handoff before starting another queue.");
         YesAlready.Lock();

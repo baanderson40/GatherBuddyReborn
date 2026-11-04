@@ -15,6 +15,10 @@
   <!-- Test the actual pure production sources without loading Dalamud or native game services. -->
   <ItemGroup>
     <Compile Include="../../GatherBuddy/Utility/DiagnosticThrottle.cs" Link="Production/DiagnosticThrottle.cs" />
+    <Compile Include="../../GatherBuddy/Marketboard/MarketboardModels.cs" Link="Production/MarketboardModels.cs" />
+    <Compile Include="../../GatherBuddy/Marketboard/MarketLookupCoordinator.cs" Link="Production/MarketLookupCoordinator.cs" />
+    <Compile Include="../../GatherBuddy/Marketboard/MarketboardTravelCoordinator.cs" Link="Production/MarketboardTravelCoordinator.cs" />
+    <Compile Include="../../GatherBuddy/Marketboard/UniversalisService.cs" Link="Production/UniversalisService.cs" />
     <Compile Include="../../GatherBuddy/Automation/AutoRetainerCoordinator.cs" Link="Production/AutoRetainerCoordinator.cs" />
     <Compile Include="../../GatherBuddy/Automation/AutoRetainerReadiness.cs" Link="Production/AutoRetainerReadiness.cs" />
     <Compile Include="../../GatherBuddy/Crafting/CraftReadiness.cs" Link="Production/CraftReadiness.cs" />

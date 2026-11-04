@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
-using System.Threading;
 using System.Threading.Tasks;
 using Lumina.Excel.Sheets;
 
@@ -11,288 +10,142 @@ namespace GatherBuddy.Marketboard;
 
 public sealed class MarketboardService : IDisposable
 {
-    private const int CacheExpiryMinutes = 15;
-    private const int MaxHistoryItems    = 100;
-    private const string HistoryFile     = "mb_history.json";
-
+    private const int MaxHistoryItems = 100;
+    private const string HistoryFile = "mb_history.json";
     private sealed record PersistedEntry(uint ItemId, string Name, uint IconId);
+    private readonly UniversalisService _universalis = new();
+    private readonly MarketLookupCoordinator _lookups;
+    private readonly List<uint> _history = new();
+    private readonly Dictionary<uint, MarketCatalogItem> _catalog = new();
+    private readonly Dictionary<uint, PersistedEntry> _legacy = new();
+    private bool _catalogReady;
+    private DateTime _nextCatalogAttempt;
+    private bool _disposed;
+    private bool _historyWritable = true;
+    private MarketHome? _home;
+    public string? CatalogError { get; private set; }
+    public string? HistoryWarning { get; private set; }
+    public MarketboardPreferences Preferences => GatherBuddy.Config.MarketboardPreferences ??= new();
 
-    private readonly object              _lock        = new();
-    private readonly UniversalisService  _universalis = new();
-
-    public MarketboardService() => LoadHistory();
-    private readonly Dictionary<(uint, string), (MarketItemData Data, DateTime FetchedAt)> _cache    = new();
-    private readonly Dictionary<uint, string>                                              _names    = new();
-    private readonly Dictionary<uint, uint>                                                _icons    = new();
-    private readonly List<uint>                                                            _history  = new();
-    private readonly HashSet<(uint, string)>                                               _pending  = new();
-    private readonly HashSet<(uint, string)>                                               _errors   = new();
-    private          CancellationTokenSource                                               _cts      = new();
-
-    public bool IsPending(uint itemId, string scope) { lock (_lock) return _pending.Contains((itemId, scope)); }
-    public bool HasError(uint itemId,  string scope) { lock (_lock) return _errors.Contains((itemId, scope));  }
-
-    public MarketItemData? GetCached(uint itemId, string scope)
+    public MarketboardService()
     {
-        lock (_lock)
-            return _cache.TryGetValue((itemId, scope), out var e) ? e.Data : null;
+        _lookups = new MarketLookupCoordinator(_universalis, onFailure: (item, target, error) =>
+            GatherBuddy.Log.Warning($"[Marketboard] Lookup failed for {item.Name} ({item.ItemId}), {target.Name}: {error.Message}"));
+        LoadHistory();
     }
 
-    public DateTime GetFetchTime(uint itemId, string scope)
+    // These entry points and the catalog run on the framework/UI thread. Only the
+    // managed coordinator and HTTP adapter run in the background.
+    private bool EnsureCatalog()
     {
-        lock (_lock)
-            return _cache.TryGetValue((itemId, scope), out var e) ? e.FetchedAt : DateTime.MinValue;
+        if (_catalogReady) return true;
+        if (DateTime.UtcNow < _nextCatalogAttempt) return false;
+        _nextCatalogAttempt = DateTime.UtcNow.AddSeconds(5);
+        try
+        {
+            var sheet = Dalamud.GameData.GetExcelSheet<Item>();
+            if (sheet == null) { CatalogError = "Item data is not available yet."; return false; }
+            foreach (var item in sheet)
+            {
+                if (!MarketSearch.IsMarketable(item.IsUntradable, item.ItemSearchCategory.RowId)) continue;
+                var name = item.Name.ExtractText();
+                if (string.IsNullOrWhiteSpace(name)) continue;
+                _catalog[item.RowId] = new(item.RowId, name, item.Icon, item.CanBeHq);
+            }
+            _catalogReady = true;
+            CatalogError = null;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            CatalogError = "Could not load marketable items.";
+            GatherBuddy.Log.Warning($"[Marketboard] Item index failed: {ex.Message}");
+            return false;
+        }
     }
+
+    public IReadOnlyList<MarketCatalogItem> Search(string text)
+        => EnsureCatalog() ? MarketSearch.Find(_catalog.Values, text) : Array.Empty<MarketCatalogItem>();
+
+    public MarketCatalogItem? GetItem(uint itemId)
+        => EnsureCatalog() && _catalog.TryGetValue(itemId, out var item) ? item : null;
 
     public string GetItemName(uint itemId)
-    {
-        lock (_lock)
-            return _names.TryGetValue(itemId, out var n) ? n : $"Item #{itemId}";
-    }
+        => GetItem(itemId)?.Name ?? (_legacy.TryGetValue(itemId, out var entry) ? entry.Name : $"Item #{itemId}");
 
     public uint GetItemIcon(uint itemId)
+        => GetItem(itemId)?.IconId ?? (_legacy.TryGetValue(itemId, out var entry) ? entry.IconId : 0);
+
+    public MarketHome? GetHome()
     {
-        lock (_lock)
-            return _icons.TryGetValue(itemId, out var icon) ? icon : 0;
+        var worldId = Dalamud.Objects.LocalPlayer?.HomeWorld.RowId ?? 0;
+        if (worldId == 0) { _home = null; return null; }
+        if (_home?.WorldId == worldId) return _home;
+        var sheet = Dalamud.GameData.GetExcelSheet<World>();
+        if (sheet?.TryGetRow(worldId, out var world) != true) return null;
+        var dc = world.DataCenter.ValueNullable?.Name.ExtractText();
+        if (string.IsNullOrEmpty(dc)) return null;
+        var worlds = sheet.Where(w => w.IsPublic && w.DataCenter.RowId == world.DataCenter.RowId)
+            .Select(w => new MarketWorld(w.RowId, w.Name.ExtractText())).Where(w => !string.IsNullOrEmpty(w.Name)).ToArray();
+        return _home = new(worldId, dc, worlds);
     }
 
-    public List<uint> GetHistorySnapshot()
+    public MarketScope? GetSelectedScope()
     {
-        lock (_lock) return new List<uint>(_history);
+        var scope = MarketScope.Resolve(Preferences.ScopeId, GetHome());
+        if (scope != null && Preferences.ScopeId != scope.Id) SelectScope(scope);
+        return scope;
+    }
+
+    public void SelectScope(MarketScope scope)
+    {
+        Preferences.ScopeId = scope.Id;
+        GatherBuddy.Config.Save();
     }
 
     public void QueueLookup(uint itemId, string itemName, uint iconId = 0)
-        => QueueLookup(itemId, itemName, iconId, GetDataCenter());
-
-    public void QueueLookup(uint itemId, string itemName, uint iconId, string scope)
     {
-        lock (_lock)
-        {
-            _names[itemId] = itemName;
-            if (iconId > 0) _icons[itemId] = iconId;
-
-            if (_cache.TryGetValue((itemId, scope), out var cached) &&
-                (DateTime.UtcNow - cached.FetchedAt).TotalMinutes < CacheExpiryMinutes)
-            {
-                MoveToFront(itemId);
-                return;
-            }
-
-            if (_pending.Contains((itemId, scope))) return;
-
-            _pending.Add((itemId, scope));
-            _errors.Remove((itemId, scope));
-            MoveToFront(itemId);
-        }
-
-        var canBeHq = false;
-        try
-        {
-            var itemSheet = Dalamud.GameData.GetExcelSheet<Item>();
-            if (itemSheet?.TryGetRow(itemId, out var lumItem) == true)
-                canBeHq = lumItem.CanBeHq;
-        }
-        catch { }
-
-        var ct = _cts.Token;
-        Task.Run(async () =>
-        {
-            try
-            {
-                List<MarketItemData> results;
-                if (canBeHq)
-                {
-                    var nqRes = await _universalis.GetMarketDataAsync(scope, new[] { itemId }, 10, ct, false);
-                    await Task.Delay(300, ct);
-                    var hqRes = await _universalis.GetMarketDataAsync(scope, new[] { itemId }, 10, ct, true);
-                    var nqData = nqRes.FirstOrDefault(r => r.ItemId == itemId);
-                    var hqData = hqRes.FirstOrDefault(r => r.ItemId == itemId);
-                    var base_ = nqData ?? hqData;
-                    if (base_ != null)
-                    {
-                        var merged = new MarketItemData
-                        {
-                            ItemId   = base_.ItemId,
-                            MinPrice = base_.MinPrice,
-                            Listings = (nqData?.Listings ?? new())
-                                       .Concat(hqData?.Listings ?? new())
-                                       .ToList(),
-                        };
-                        results = new List<MarketItemData> { merged };
-                    }
-                    else
-                    {
-                        results = new List<MarketItemData>();
-                    }
-                }
-                else
-                {
-                    results = await _universalis.GetMarketDataAsync(scope, new[] { itemId }, 20, ct);
-                }
-                var data = results.FirstOrDefault(r => r.ItemId == itemId);
-
-                lock (_lock)
-                {
-                    _pending.Remove((itemId, scope));
-                    if (data != null)
-                    {
-                        data.ItemName = itemName;
-                        if (_icons.TryGetValue(itemId, out var icon)) data.IconId = icon;
-                        _cache[(itemId, scope)] = (data, DateTime.UtcNow);
-                    }
-                    else
-                    {
-                        _errors.Add((itemId, scope));
-                    }
-                }
-            }
-            catch (OperationCanceledException) { }
-            catch (Exception ex)
-            {
-                lock (_lock)
-                {
-                    _pending.Remove((itemId, scope));
-                    _errors.Add((itemId, scope));
-                }
-                GatherBuddy.Log.Warning($"[Marketboard] Lookup failed for {itemName} ({itemId}): {ex.Message}");
-            }
-        }, ct);
+        if (_disposed) return;
+        var item = GetItem(itemId);
+        if (item == null) return; // UI explains non-marketable items; never queries API for them.
+        Remember(item);
+        var scope = GetSelectedScope();
+        if (scope != null) _lookups.Request(item, scope);
     }
 
-    public void ForceRefresh(uint itemId, string scope)
+    public void Request(uint itemId, MarketScope scope, bool force = false, bool failedOnly = false)
     {
-        lock (_lock) _cache.Remove((itemId, scope));
-        var name = GetItemName(itemId);
-        var icon = GetItemIcon(itemId);
-        QueueLookup(itemId, name, icon, scope);
+        if (_disposed || GetItem(itemId) is not { } item) return;
+        Remember(item);
+        _lookups.Request(item, scope, force, failedOnly);
     }
 
-    public void RefreshAll()
+    public IReadOnlyList<MarketTargetStatus> Snapshot(uint itemId, MarketScope scope) => _lookups.Snapshot(itemId, scope);
+    public IReadOnlyList<uint> GetHistorySnapshot() => _history.ToArray();
+
+    private void Remember(MarketCatalogItem item)
     {
-        var dc = GetDataCenter();
-        List<uint>   ids;
-        List<string> names;
-        List<uint>   icons;
-
-        lock (_lock)
-        {
-            ids   = new List<uint>(_history);
-            names = ids.Select(id => _names.TryGetValue(id, out var n) ? n : string.Empty).ToList();
-            icons = ids.Select(id => _icons.TryGetValue(id, out var ic) ? ic : 0u).ToList();
-            foreach (var id in ids) _cache.Remove((id, dc));
-        }
-
-        for (var i = 0; i < ids.Count; i++)
-            QueueLookup(ids[i], names[i], icons[i], dc);
+        _history.Remove(item.ItemId);
+        _history.Insert(0, item.ItemId);
+        if (_history.Count > MaxHistoryItems) _history.RemoveAt(_history.Count - 1);
+        _legacy[item.ItemId] = new(item.ItemId, item.Name, item.IconId);
+        SaveHistory();
     }
 
     public void RemoveFromHistory(uint itemId)
     {
-        lock (_lock)
-        {
-            _history.Remove(itemId);
-            _names.Remove(itemId);
-            _icons.Remove(itemId);
-            var cacheKeys = _cache.Keys.Where(k => k.Item1 == itemId).ToList();
-            foreach (var k in cacheKeys) _cache.Remove(k);
-            var errKeys = _errors.Where(k => k.Item1 == itemId).ToList();
-            foreach (var k in errKeys) _errors.Remove(k);
-        }
-    }
-
-    public void Clear()
-    {
-        lock (_lock)
-        {
-            _cache.Clear();
-            _history.Clear();
-            _errors.Clear();
-        }
-    }
-
-    public List<string> GetOtherDcs()
-    {
-        var result = new List<string>();
-        var homeDc = GetDataCenter();
-        try
-        {
-            var dcSheet = Dalamud.GameData.GetExcelSheet<WorldDCGroupType>();
-            if (dcSheet == null) return result;
-            foreach (var dc in dcSheet)
-            {
-                if (dc.IsCloud) continue;
-                if (dc.Region.RowId < 1 || dc.Region.RowId > 4) continue;
-                var name = dc.Name.ExtractText();
-                if (!string.IsNullOrEmpty(name) && name != homeDc)
-                    result.Add(name);
-            }
-            result.Sort();
-        }
-        catch (Exception ex)
-        {
-            GatherBuddy.Log.Warning($"[Marketboard] Other DCs query failed: {ex.Message}");
-        }
-        return result;
-    }
-
-    public List<string> GetDcWorlds()
-    {
-        var result = new List<string>();
-        try
-        {
-            var worldId = Dalamud.Objects.LocalPlayer?.HomeWorld.RowId ?? 0u;
-            if (worldId == 0) return result;
-
-            var worldSheet = Dalamud.GameData.GetExcelSheet<World>();
-            if (worldSheet == null) return result;
-            if (!worldSheet.TryGetRow(worldId, out var homeWorld)) return result;
-
-            var dcId = homeWorld.DataCenter.RowId;
-            foreach (var world in worldSheet)
-            {
-                if (world.DataCenter.RowId == dcId && world.IsPublic)
-                {
-                    var name = world.Name.ExtractText();
-                    if (!string.IsNullOrEmpty(name))
-                        result.Add(name);
-                }
-            }
-            result.Sort();
-        }
-        catch (Exception ex)
-        {
-            GatherBuddy.Log.Warning($"[Marketboard] DC world list failed: {ex.Message}");
-        }
-        return result;
-    }
-
-    public string GetDataCenter()
-    {
-        try
-        {
-            var worldId = Dalamud.Objects.LocalPlayer?.HomeWorld.RowId ?? 0u;
-            if (worldId == 0) return "Aether";
-            var worldSheet = Dalamud.GameData.GetExcelSheet<World>();
-            if (worldSheet?.TryGetRow(worldId, out var world) == true)
-            {
-                var dc = world.DataCenter.ValueNullable?.Name.ExtractText();
-                if (!string.IsNullOrEmpty(dc)) return dc;
-            }
-            return "Aether";
-        }
-        catch (Exception ex)
-        {
-            GatherBuddy.Log.Warning($"[Marketboard] DC resolution failed: {ex.Message}");
-            return "Aether";
-        }
-    }
-
-    private void MoveToFront(uint itemId)
-    {
         _history.Remove(itemId);
-        _history.Insert(0, itemId);
-        if (_history.Count > MaxHistoryItems)
-            _history.RemoveAt(_history.Count - 1);
+        _lookups.Forget(itemId);
+        SaveHistory();
+    }
+
+    public void ClearHistory()
+    {
+        _historyWritable = true; // Explicitly confirmed Clear may replace unreadable history.
+        HistoryWarning = null;
+        _history.Clear();
+        _lookups.Clear();
+        SaveHistory();
     }
 
     private void LoadHistory()
@@ -303,51 +156,41 @@ public sealed class MarketboardService : IDisposable
             if (!File.Exists(path)) return;
             var entries = JsonSerializer.Deserialize<List<PersistedEntry>>(File.ReadAllText(path));
             if (entries == null) return;
-            lock (_lock)
+            foreach (var entry in entries)
             {
-                foreach (var e in entries)
-                {
-                    if (e.ItemId == 0) continue;
-                    _names[e.ItemId] = e.Name;
-                    if (e.IconId > 0) _icons[e.ItemId] = e.IconId;
-                    if (!_history.Contains(e.ItemId)) _history.Add(e.ItemId);
-                }
+                if (entry.ItemId == 0 || _history.Contains(entry.ItemId) || _history.Count >= MaxHistoryItems) continue;
+                _legacy[entry.ItemId] = entry with { Name = string.IsNullOrWhiteSpace(entry.Name) ? $"Item #{entry.ItemId}" : entry.Name };
+                _history.Add(entry.ItemId);
             }
         }
         catch (Exception ex)
         {
+            _historyWritable = false;
+            HistoryWarning = "Existing history could not be read. Original file preserved; new history will not be saved unless you explicitly Clear History.";
             GatherBuddy.Log.Warning($"[Marketboard] Failed to load history: {ex.Message}");
         }
     }
 
     private void SaveHistory()
     {
+        if (!_historyWritable) return;
         try
         {
-            List<PersistedEntry> entries;
-            lock (_lock)
-            {
-                entries = _history
-                    .Select(id => new PersistedEntry(
-                        id,
-                        _names.TryGetValue(id, out var n) ? n : string.Empty,
-                        _icons.TryGetValue(id, out var ic) ? ic : 0u))
-                    .ToList();
-            }
+            var entries = _history.Select(id => _legacy.TryGetValue(id, out var entry) ? entry : new PersistedEntry(id, GetItemName(id), GetItemIcon(id)));
             var path = Path.Combine(Dalamud.PluginInterface.GetPluginConfigDirectory(), HistoryFile);
-            File.WriteAllText(path, JsonSerializer.Serialize(entries));
+            var temporary = path + ".tmp";
+            File.WriteAllText(temporary, JsonSerializer.Serialize(entries));
+            File.Move(temporary, path, overwrite: true);
         }
-        catch (Exception ex)
-        {
-            GatherBuddy.Log.Warning($"[Marketboard] Failed to save history: {ex.Message}");
-        }
+        catch (Exception ex) { GatherBuddy.Log.Warning($"[Marketboard] Failed to save history: {ex.Message}"); }
     }
 
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
         SaveHistory();
-        _cts.Cancel();
-        _cts.Dispose();
-        _universalis.Dispose();
+        _lookups.Dispose();
+        _ = _lookups.WhenIdleAsync().ContinueWith(_ => _universalis.Dispose(), TaskScheduler.Default);
     }
 }

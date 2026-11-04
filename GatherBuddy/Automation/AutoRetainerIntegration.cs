@@ -34,7 +34,8 @@ public sealed class AutoRetainerIntegration : IAutoRetainerCoordinationPort, IDi
     public AutoRetainerProcessingMode Mode => GatherBuddy.Config.AutoGatherConfig.AutoRetainerMode;
     public string? ActiveOwner => CraftingGatherBridge.AutoRetainerOwner
         ?? (GatherBuddy.AutoGather.Enabled ? $"AutoGather:{GatherBuddy.AutoGather.AutomationRunId}" : null);
-    public bool CanRequestHandoff => CraftingGatherBridge.AutoRetainerQueue?.Paused != true;
+    public bool CanRequestHandoff => GatherBuddy.MarketboardTravel?.Coordinator.BlocksAutomation != true
+        && CraftingGatherBridge.AutoRetainerQueue?.Paused != true;
     public bool DeferForTimedNode => GatherBuddy.AutoGather.Enabled && GatherBuddy.AutoGather.DeferAutoRetainerForTimedNode;
     public AutoRetainerCharacter? Character => Dalamud.Objects.LocalPlayer is { } player && Dalamud.PlayerState.ContentId != 0
         ? new(Dalamud.PlayerState.ContentId, $"{player.Name}@{player.HomeWorld.Value.Name}") : null;
@@ -87,6 +88,7 @@ public sealed class AutoRetainerIntegration : IAutoRetainerCoordinationPort, IDi
 
     public bool CanStartAutomation()
     {
+        if (!Marketboard.MarketboardTravelIntegration.CanStartAutomation()) return false;
         if (Coordinator.YieldRequested)
         {
             Communicator.PrintError(Coordinator.IsStopping
@@ -276,6 +278,7 @@ public sealed class AutoRetainerIntegration : IAutoRetainerCoordinationPort, IDi
     public void Update()
     {
         if (_disposed) return;
+        if (GatherBuddy.MarketboardTravel?.Coordinator.BlocksAutomation == true) return;
         Coordinator.Tick(_clock.Elapsed);
         if (Coordinator.YieldRequested && GatherBuddy.AutoGather.Enabled)
             GatherBuddy.AutoGather.SetAutoRetainerStatus(Coordinator.Status);

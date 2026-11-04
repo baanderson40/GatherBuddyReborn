@@ -392,6 +392,11 @@ public sealed partial class VendorBuyListManager : IDisposable
 
     public StartResult Start(Guid? listId = null, VendorPurchaseConstraints? purchaseConstraints = null)
     {
+        if (GatherBuddy.MarketboardTravel?.Coordinator.BlocksAutomation == true)
+        {
+            _statusText = "Finish/recover Marketboard travel before starting a vendor list.";
+            return StartResult.WaitingForPreviousInteraction;
+        }
         if (GatherBuddy.AutoRetainerIntegration?.Coordinator.YieldRequested == true)
         {
             _statusText = "Finish/recover AutoRetainer handoff before starting a vendor list.";

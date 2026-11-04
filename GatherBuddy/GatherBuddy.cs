@@ -85,6 +85,7 @@ public partial class GatherBuddy : IDalamudPlugin
     internal static Gui.NativeItemTooltipBridge? NativeItemTooltipBridge { get; private set; }
     public static ControllerSupportManager?      ControllerSupport      { get; private set; }
     public static MarketboardService?             MarketboardService     { get; private set; }
+    public static MarketboardTravelIntegration? MarketboardTravel { get; private set; }
     public static Vulcan.Vendors.VendorNavigator  VendorNavigator        { get; private set; } = null!;
     public static Vulcan.Vendors.VendorPurchaseManager VendorPurchaseManager { get; private set; } = null!;
     public static Vulcan.Vendors.VendorBuyListManager VendorBuyListManager { get; private set; } = null!;
@@ -177,6 +178,7 @@ public partial class GatherBuddy : IDalamudPlugin
             BiteTimerService = new AutoHookIntegration.BiteTimerService(pluginInterface.ConfigDirectory.FullName);
             AutoGather   = new AutoGather.AutoGather(this);
             AutoRetainerIntegration = new Automation.AutoRetainerIntegration();
+            MarketboardTravel = new MarketboardTravelIntegration();
             CollectableManager = new AutoGather.Collectables.CollectableManager(Dalamud.Framework, Dalamud.Conditions, Config);
             global::GatherBuddy.AutoGather.Collectables.CollectableInventoryHelper.InitializeAsync();
             CraftingGatherBridge.BindCollectableManager(CollectableManager);
@@ -318,6 +320,8 @@ public partial class GatherBuddy : IDalamudPlugin
 
         try
         {
+            MarketboardTravel?.Update();
+            if (MarketboardTravel?.Coordinator.BlocksAutomation == true) return;
             AutoRetainerIntegration?.Update();
             if (AutoRetainerIntegration?.Coordinator.BlocksAutomation == true)
                 return;
@@ -346,6 +350,7 @@ public partial class GatherBuddy : IDalamudPlugin
     void IDisposable.Dispose()
     {
         AutoRetainerIntegration?.Dispose();
+        MarketboardTravel?.Dispose();
         Config?.SaveIfDirty(force: true);
         MarketboardService?.Dispose();
         RaphaelSolveCoordinator?.Save();
