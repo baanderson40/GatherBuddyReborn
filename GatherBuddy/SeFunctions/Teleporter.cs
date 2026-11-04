@@ -1,41 +1,34 @@
-using FFXIVClientStructs.FFXIV.Client.Game.Control;
+using System;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using GatherBuddy.Plugin;
+using GatherBuddy.Utility;
 
 namespace GatherBuddy.SeFunctions;
 
 public static unsafe class Teleporter
 {
+    private static readonly DiagnosticThrottle<string> ReadinessMessages = new(TimeSpan.FromSeconds(10));
+
     public static bool IsAttuned(uint aetheryte)
     {
-        var teleport = Telepo.Instance();
-        if (teleport == null)
-        {
-            GatherBuddy.Log.Error("Could not check attunement: Telepo is missing.");
-            return false;
-        }
-
-        if (Control.Instance()->LocalPlayer == null)
-            return true;
-
-        teleport->UpdateAetheryteList();
-
-        var endPtr = teleport->TeleportList.Last;
-        for (var it = teleport->TeleportList.First; it != endPtr; ++it)
-        {
-            if (it->AetheryteId == aetheryte)
-                return true;
-        }
-
+        if (!TeleportData.TryGetCachedCosts(out var costs) || costs == null) return false;
+        if (costs.ContainsKey(aetheryte)) return true;
+        TeleportData.RequestRefresh(); // UI queries schedule a bounded framework retry, never native work on the draw thread.
         return false;
     }
 
     public static bool Teleport(uint aetheryte)
     {
-        if (IsAttuned(aetheryte))
+        if (!TeleportData.IsReady || !TeleportData.TryGetCosts(out var costs, forceRefresh: true) || costs == null)
         {
-            Telepo.Instance()->Teleport(aetheryte, 0);
-            return true;
+            ReportNotReady();
+            return false;
+        }
+        if (costs.ContainsKey(aetheryte))
+        {
+            var teleport = Telepo.Instance();
+            if (teleport == null) { ReportNotReady(); return false; }
+            return teleport->Teleport(aetheryte, 0);
         }
 
         Communicator.PrintError("Could not teleport to ",
@@ -44,9 +37,18 @@ public static unsafe class Teleporter
         return false;
     }
 
-    // Teleport without checking for attunement. Use at own risk.
+    // Skips attunement only, never player/native readiness.
     public static void TeleportUnchecked(uint aetheryte)
     {
-        Telepo.Instance()->Teleport(aetheryte, 0);
+        if (!TeleportData.IsReady) { ReportNotReady(); return; }
+        var teleport = Telepo.Instance();
+        if (teleport == null) { ReportNotReady(); return; }
+        teleport->Teleport(aetheryte, 0);
+    }
+
+    private static void ReportNotReady()
+    {
+        if (ReadinessMessages.TryLog("teleport", "not ready", out _))
+            Communicator.PrintError("Teleport temporarily unavailable; wait for stable player readiness and retry.");
     }
 }

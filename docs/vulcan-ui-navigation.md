@@ -28,6 +28,15 @@ remaining queue entries, and the existing crafting-time estimate. Material/AR
 recovery remains available. Purchase-policy summaries and the duplicate Action
 Delay slider are removed; the existing global slider remains in Settings → General.
 
+The header's item belongs to its phase: Purchasing uses the active vendor request
+only when its session and lease match this queue; otherwise it reads Purchasing
+materials. Gathering uses the queue-owned live gathering target, otherwise
+Gathering materials. Recipe names are limited to job switching, Raphael solving,
+craft preparation/synthesis, and output confirmation. Other phases do not append
+the next recipe. Details labels it Next queued recipe outside crafting phases
+(or Parked recipe during AR handoff). This is presentation only: no sourcing,
+purchase policy, inventory accounting, or queue execution changes.
+
 ## Verification
 
 Managed tests cover main-tab order, contiguous controller indices, immutable

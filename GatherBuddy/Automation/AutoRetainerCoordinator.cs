@@ -118,6 +118,10 @@ public sealed class AutoRetainerCoordinator
                     SetState(AutoRetainerHandoffState.Failed, "Character changed outside owned handoff; return to original character before recovery");
                     return;
                 }
+                // Priority inspection is informational, but adapters must not reach
+                // scheduler/native helpers before the original player is ready.
+                if (_port.Character is not { ContentId: not 0 } || !_port.CharacterReady)
+                { Status = "Waiting for player readiness before AutoRetainer monitoring"; return; }
                 if (!_port.CanRequestHandoff || now < _nextPoll) return;
                 _nextPoll = now + TimeSpan.FromSeconds(2);
                 _port.VerifyAvailable();

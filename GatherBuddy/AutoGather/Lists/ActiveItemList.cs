@@ -1,7 +1,8 @@
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Utility;
 using ElliLib.Extensions;
-using FFXIVClientStructs.FFXIV.Client.Game.UI;
+using GatherBuddy.Automation;
+using GatherBuddy.SeFunctions;
 using GatherBuddy.AutoGather.Extensions;
 using GatherBuddy.AutoGather.Helpers;
 using GatherBuddy.Classes;
@@ -25,7 +26,8 @@ namespace GatherBuddy.AutoGather.Lists
         private readonly List<GatherTarget>                      _gatherableItems    = [];
         private readonly AutoGatherListsManager                  _listsManager;
         private readonly AutoGather                              _autoGather;
-        private readonly Dictionary<uint, int>                   _teleportationCosts = [];
+        private IReadOnlyDictionary<uint, int>                   _teleportationCosts = new Dictionary<uint, int>();
+        private readonly TimedNodeDeferralSnapshot               _timedPriority = new();
         private readonly Dictionary<GatheringNode, TimeInterval> _visitedTimedNodes  = [];
         private          TimeStamp                               _lastUpdateTime     = TimeStamp.MinValue;
         private          uint                                    _lastTerritoryId;
@@ -85,12 +87,28 @@ namespace GatherBuddy.AutoGather.Lists
         /// <returns>The next item to gather. </returns>
         public GatherTarget GetNextOrDefault()
         {
-            if (IsUpdateNeeded())
-                DoUpdate();
+            if (!TeleportData.IsReady)
+            {
+                _forceUpdateUnconditionally = true;
+                _timedPriority.Invalidate();
+                return _currentItem = default;
+            }
+            if (IsUpdateNeeded() && !DoUpdate()) return _currentItem = default;
 
-            return _currentItem = _gatherableItems
+            _currentItem = _gatherableItems
                 .FirstOrDefault(x => x.Time.InRange(_lastUpdateTime) && NeedsGathering(x));
+            if (TeleportData.ReadyContext is { } context)
+                _timedPriority.Publish(context, _lastUpdateTime.TotalEorzeaHours(),
+                    _currentItem.Node is { NodeType: NodeType.Legendary or NodeType.Unspoiled } timed
+                    && !_visitedTimedNodes.ContainsKey(timed));
+            return _currentItem;
         }
+
+        // Never calls GetNextOrDefault/CurrentOrDefault/NeedsGathering: AR polling
+        // reads only the result of an already-completed normal scheduler update.
+        internal bool TryReadTimedNodeDeferral(out bool defer)
+            => _timedPriority.TryRead(TeleportData.ReadyContext, AutoGather.AdjustedServerTime.TotalEorzeaHours(),
+                _activeItemsChanged || _forceUpdateUnconditionally, out defer);
 
         /// <summary>
         /// Returns next timed item that is not up yet
@@ -409,8 +427,7 @@ namespace GatherBuddy.AutoGather.Lists
                     .ThenBy(x => GetHorizontalSquaredDistanceToPlayer(x.Location));
             }
 
-            _gatherableItems.Clear();
-
+            GatherTarget[] replacement;
             if (Diadem.IsInside)
             {
                 var frontDiadem = true;
@@ -421,12 +438,14 @@ namespace GatherBuddy.AutoGather.Lists
                     .Select(x => (Target: x, Priority: GetDiademPriority(x, ref frontDiadem, ref frontUmbral)))
                     .OrderBy(x => x.Priority)
                     .Select(x => x.Target);
-                _gatherableItems.AddRange(ApplyFishPriorityOrdering(targetsDiadem, adjustedServerTime));
+                replacement = ApplyFishPriorityOrdering(targetsDiadem, adjustedServerTime).ToArray();
             }
             else
             {
-                _gatherableItems.AddRange(ApplyFishPriorityOrdering(targets, adjustedServerTime));
+                replacement = ApplyFishPriorityOrdering(targets, adjustedServerTime).ToArray();
             }
+            _gatherableItems.Clear();
+            _gatherableItems.AddRange(replacement);
             LogFishPriorityOrder(adjustedServerTime);
 
             GatherBuddy.Log.Verbose($"Gatherable items: ({_gatherableItems.Count}): {string.Join(", ", _gatherableItems.Select(x => x.Item.Name))}.");
@@ -571,22 +590,11 @@ namespace GatherBuddy.AutoGather.Lists
         /// <summary>
         /// Stores teleportation costs in the dictionary.
         /// </summary>
-        private unsafe void UpdateTeleportationCosts()
+        private bool TryUpdateTeleportationCosts()
         {
-            _teleportationCosts.Clear();
-
-            var telepo = Telepo.Instance();
-            if (telepo == null)
-                return;
-
-            telepo->UpdateAetheryteList();
-            _teleportationCosts.EnsureCapacity(telepo->TeleportList.Count);
-
-            for (var i = 0; i < telepo->TeleportList.Count; i++)
-            {
-                var entry = telepo->TeleportList[i];
-                _teleportationCosts[entry.AetheryteId] = (int)entry.GilCost;
-            }
+            if (!TeleportData.TryGetCosts(out var replacement) || replacement == null) return false;
+            _teleportationCosts = replacement;
+            return true;
         }
 
         /// <summary>
@@ -625,14 +633,20 @@ namespace GatherBuddy.AutoGather.Lists
         /// <summary>
         /// Updates the active item list, teleportation costs, and clears expired visited nodes.
         /// </summary>
-        private void DoUpdate()
+        private bool DoUpdate()
         {
+            _timedPriority.Invalidate();
+            // Do not consume dirty/time/territory markers when native data must be
+            // deferred. The exact same territory remains eligible for retry.
+            if (!TryUpdateTeleportationCosts()) return false;
             var territoryId        = Dalamud.ClientState.TerritoryType;
             var weatherId          = Diadem.IsInside ? EnhancedCurrentWeather.GetCurrentWeatherId() : 0;
             var adjustedServerTime = AutoGather.AdjustedServerTime;
             var eorzeaHour         = adjustedServerTime.TotalEorzeaHours();
             var lastTerritoryId    = _lastTerritoryId;
             var lastWeatherId      = _lastWeatherId;
+            var lastUpdateTime     = _lastUpdateTime;
+            var lastJob            = _lastJob;
             var lastEorzeaHour     = _lastUpdateTime.TotalEorzeaHours();
             var currentJob = Player.Job switch
             {
@@ -649,16 +663,23 @@ namespace GatherBuddy.AutoGather.Lists
             _lastWeatherId      = weatherId;
             _lastJob            = currentJob;
 
-            if (territoryId != lastTerritoryId)
-                UpdateTeleportationCosts();
-
             if (lastWeatherId != weatherId)
                 _consumedCloudedNode = false;
 
             if (eorzeaHour != lastEorzeaHour)
                 RemoveExpiredVisited(adjustedServerTime);
 
-            UpdateItemsToGather();
+            try { UpdateItemsToGather(); }
+            catch
+            {
+                _forceUpdateUnconditionally = true;
+                _lastTerritoryId = lastTerritoryId;
+                _lastWeatherId = lastWeatherId;
+                _lastUpdateTime = lastUpdateTime;
+                _lastJob = lastJob;
+                throw; // Keep managed failures retryable; do not swallow native access violations.
+            }
+            return true;
         }
 
         IEnumerator IEnumerable.GetEnumerator()
@@ -673,8 +694,8 @@ namespace GatherBuddy.AutoGather.Lists
             _lastUpdateTime = TimeStamp.MinValue;
             _gatherableItems.Clear();
             _gatherableItems.TrimExcess();
-            _teleportationCosts.Clear();
-            _teleportationCosts.TrimExcess();
+            _teleportationCosts = new Dictionary<uint, int>();
+            _timedPriority.Invalidate();
         }
 
         private int GetDiademPriority(in GatherTarget target, ref bool frontDiadem, ref bool frontUmbral)

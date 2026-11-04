@@ -18,10 +18,10 @@ public partial class AutoGather
             // Relogging from Diadem is not supported. Do not mutate saved settings.
             if (Dalamud.ClientState.TerritoryType == Diadem.Territory.Id) return true;
             if (!GatherBuddy.Config.AutoGatherConfig.AutoRetainerDelayForTimedNodes) return false;
-            if (_currentGatherTarget?.Node?.NodeType is NodeType.Legendary or NodeType.Unspoiled) return true;
-            var next = _activeItemList.GetNextOrDefault();
-            return next != default && next.Node?.NodeType is NodeType.Legendary or NodeType.Unspoiled
-                && next.Time.InRange(AdjustedServerTime) && !_activeItemList.DebugVisitedTimedLocations.ContainsKey(next.Node);
+            if (!_activeItemList.TryReadTimedNodeDeferral(out var nextDefer)) return true;
+            if (_currentGatherTarget is { } current && current.Node is { NodeType: NodeType.Legendary or NodeType.Unspoiled } timed
+                && current.Time.InRange(AdjustedServerTime) && !_activeItemList.DebugVisitedTimedLocations.ContainsKey(timed)) return true;
+            return nextDefer;
         }
     }
 

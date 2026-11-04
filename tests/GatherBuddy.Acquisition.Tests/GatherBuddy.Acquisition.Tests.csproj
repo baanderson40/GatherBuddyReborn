@@ -21,6 +21,7 @@
     <Compile Include="../../GatherBuddy/Marketboard/UniversalisService.cs" Link="Production/UniversalisService.cs" />
     <Compile Include="../../GatherBuddy/Automation/AutoRetainerCoordinator.cs" Link="Production/AutoRetainerCoordinator.cs" />
     <Compile Include="../../GatherBuddy/Automation/AutoRetainerReadiness.cs" Link="Production/AutoRetainerReadiness.cs" />
+    <Compile Include="../../GatherBuddy/Automation/TeleportReadiness.cs" Link="Production/TeleportReadiness.cs" />
     <Compile Include="../../GatherBuddy/Crafting/CraftReadiness.cs" Link="Production/CraftReadiness.cs" />
     <Compile Include="../../GatherBuddy/Crafting/CraftingAcquisitionRun.cs" Link="Production/CraftingAcquisitionRun.cs" />
     <Compile Include="../../GatherBuddy/Crafting/InventoryRecovery.cs" Link="Production/InventoryRecovery.cs" />

@@ -110,6 +110,11 @@ public sealed class VendorPurchaseManager : IDisposable
     public bool IsRunning
         => _state != State.Idle && _request != null;
 
+    // Presentation only. Never expose a different run's or standalone purchase as
+    // this crafting queue's current acquisition target.
+    public string? GetActiveItemNameForSession(Guid sessionId)
+        => IsRunning && _ownerSessionId == sessionId && AutomationLease.Owner == sessionId ? _request?.ItemName : null;
+
     public string StatusText
         => _statusText;
 

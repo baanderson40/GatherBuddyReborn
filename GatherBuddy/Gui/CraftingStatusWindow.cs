@@ -109,9 +109,14 @@ public class CraftingStatusWindow : Window
         if (currentItem != null
          && Dalamud.GameData.GetExcelSheet<Lumina.Excel.Sheets.Recipe>().TryGetRow(currentItem.RecipeId, out var recipe))
             recipeName = recipe.ItemResult.Value.Name.ExtractText();
+        var gatherItemName = currentState == CraftingQueueProcessor.QueueState.WaitingForGather
+            && ReferenceEquals(_queueProcessor, CraftingGatherBridge.AutoRetainerQueue)
+            && GatherBuddy.AutoGather.CurrentRequestedTarget is { } target
+                ? target.Name[GatherBuddy.Language] : null;
 
         ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.0f, 1.0f, 0.8f, 1.0f));
-        ImGui.TextWrapped(CraftingStatusPresentation.GetHeader(currentState, _queueProcessor.Paused, handoff?.State, recipeName));
+        ImGui.TextWrapped(CraftingStatusPresentation.GetHeader(currentState, _queueProcessor.Paused, handoff?.State,
+            recipeName, _queueProcessor.ActivePurchaseItemName, gatherItemName));
         ImGui.PopStyleColor();
         if (handoff != null && ImGui.IsItemHovered())
             ImGui.SetTooltip(handoff.Status);
@@ -203,8 +208,10 @@ public class CraftingStatusWindow : Window
             if (currentItem != null)
             {
                 var recipeProgress = CraftingStatusPresentation.GetRecipeProgress(_queueProcessor.Queue, currentIndex, currentItem.RecipeId);
-                ImGui.TextWrapped($"{(handoff != null ? "Parked recipe" : "Current recipe")}: {recipeProgress.ConfirmedCrafts} / {recipeProgress.RequestedCrafts} crafts confirmed");
-                if (handoff != null && recipeName != null) ImGui.TextWrapped(recipeName);
+                var recipePhase = CraftingStatusPresentation.IsRecipePhase(currentState);
+                var label = handoff != null ? "Parked recipe" : recipePhase ? "Current recipe" : "Next queued recipe";
+                ImGui.TextWrapped($"{label}: {recipeProgress.ConfirmedCrafts} / {recipeProgress.RequestedCrafts} crafts confirmed");
+                if ((handoff != null || !recipePhase) && recipeName != null) ImGui.TextWrapped(recipeName);
             }
             ImGui.Text($"Queue entries remaining: {Math.Max(0, _queueProcessor.QueueCount - currentIndex)}");
             if (handoff == null && ShouldShowRemainingEstimate(currentState))

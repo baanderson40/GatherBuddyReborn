@@ -11,6 +11,8 @@ public partial class CraftingQueueProcessor
     private CraftingAcquisitionCoordinator? _acquisition;
     private CraftingAcquisitionPort? _acquisitionPort;
     public string AcquisitionStatus { get; private set; } = string.Empty;
+    public string? ActivePurchaseItemName => _currentState == QueueState.PurchasingMaterials && _executionPlan != null
+        ? GatherBuddy.VendorPurchaseManager?.GetActiveItemNameForSession(_executionPlan.AcquisitionSessionId) : null;
     public IReadOnlyList<string> AcquisitionShortages { get; private set; } = Array.Empty<string>();
     public string AcquisitionPolicyDescription => _executionPlan?.PurchasePolicy.Enabled == true
         ? $"Purchase policy: {_executionPlan.PurchasePolicy.Origin}; gil cap={_executionPlan.PurchasePolicy.MaximumGilSpendPerRun?.ToString() ?? "unlimited"}; GC seal reserve={_executionPlan.PurchasePolicy.GrandCompanySealReserve}; reserves: {string.Join(", ", _executionPlan.PurchasePolicy.CurrencyReservesByItemId.Select(p => $"{p.Key}={p.Value}"))}"

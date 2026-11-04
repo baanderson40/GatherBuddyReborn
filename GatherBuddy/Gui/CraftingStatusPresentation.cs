@@ -8,7 +8,7 @@ namespace GatherBuddy.Gui;
 internal static class CraftingStatusPresentation
 {
     public static string GetHeader(CraftingQueueProcessor.QueueState state, bool paused,
-        AutoRetainerHandoffState? handoff, string? recipeName)
+        AutoRetainerHandoffState? handoff, string? recipeName, string? purchaseItemName = null, string? gatherItemName = null)
     {
         if (handoff != null)
             return "AutoRetainer · " + (handoff switch
@@ -23,16 +23,32 @@ internal static class CraftingStatusPresentation
                 AutoRetainerHandoffState.Failed => "Recovery required",
                 _ => "Waiting",
             });
-        var phase = paused ? "Paused" : GetStateDisplayName(state);
-        return string.IsNullOrWhiteSpace(recipeName) || state == CraftingQueueProcessor.QueueState.Complete
-            ? phase : $"{phase} · {recipeName}";
+        var subject = state switch
+        {
+            CraftingQueueProcessor.QueueState.PurchasingMaterials => purchaseItemName,
+            CraftingQueueProcessor.QueueState.WaitingForGather => gatherItemName,
+            _ => IsRecipePhase(state) ? recipeName : null,
+        };
+        var phase = GetStateDisplayName(state);
+        if (state == CraftingQueueProcessor.QueueState.PurchasingMaterials && string.IsNullOrWhiteSpace(subject)) phase = "Purchasing materials";
+        if (state == CraftingQueueProcessor.QueueState.WaitingForGather && string.IsNullOrWhiteSpace(subject)) phase = "Gathering materials";
+        if (paused) phase = IsRecipePhase(state) ? "Paused" : $"Paused · {phase}";
+        return string.IsNullOrWhiteSpace(subject) ? phase : $"{phase} · {subject}";
     }
+
+    public static bool IsRecipePhase(CraftingQueueProcessor.QueueState state)
+        => state is CraftingQueueProcessor.QueueState.WaitingForJobSwitch
+            or CraftingQueueProcessor.QueueState.WaitingForRaphaelSolution
+            or CraftingQueueProcessor.QueueState.ReadyForCraft
+            or CraftingQueueProcessor.QueueState.Crafting
+            or CraftingQueueProcessor.QueueState.WaitingForCraftResult;
 
     private static string GetStateDisplayName(CraftingQueueProcessor.QueueState state)
         => state switch
         {
             CraftingQueueProcessor.QueueState.Idle => "Idle",
             CraftingQueueProcessor.QueueState.NavigatingToRetainerBell => "Retainer restock",
+            CraftingQueueProcessor.QueueState.WithdrawingFromRetainer => "Withdrawing materials",
             CraftingQueueProcessor.QueueState.WaitingForGather => "Gathering",
             CraftingQueueProcessor.QueueState.PlanningAcquisition => "Planning materials",
             CraftingQueueProcessor.QueueState.WaitingForVendorData => "Waiting for vendor data",

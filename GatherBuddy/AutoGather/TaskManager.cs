@@ -14,6 +14,7 @@ public class TaskManager : IDisposable
     private readonly List<TaskItem> _immediateTasks = new();
     private TaskItem? _currentTask;
     private long _abortAt;
+    private readonly Automation.ReadinessTaskPause _readinessPause = new();
 
     public int MaxTasks { get; private set; }
     public int TimeLimitMS { get; set; } = 10000;
@@ -56,7 +57,11 @@ public class TaskManager : IDisposable
         }
     }
 
-    public void Step() => Tick(null!);
+    public void Step()
+    {
+        if (_framework.IsInFrameworkUpdateThread) Tick(_framework);
+        else _ = _framework.RunOnFrameworkThread(() => Tick(_framework));
+    }
 
     #region Enqueue
 
@@ -265,8 +270,14 @@ public class TaskManager : IDisposable
 
     #endregion
 
-    private void Tick(IFramework _)
+    private void Tick(IFramework framework)
     {
+        // Keep queued native actions intact across login/zoning. A deferred
+        // Teleport must not be consumed as a completed Action during this window.
+        var playerReady = SeFunctions.TeleportData.IsReady && SeFunctions.TeleportData.TryGetCosts(out _);
+        var pausedMilliseconds = _readinessPause.Observe(playerReady, Environment.TickCount64);
+        if (!playerReady) return;
+        if (_currentTask != null) _abortAt += pausedMilliseconds;
         if (GatherBuddy.AutoRetainerIntegration?.Coordinator.BlocksAutomation == true) return;
         if (_currentTask == null)
         {

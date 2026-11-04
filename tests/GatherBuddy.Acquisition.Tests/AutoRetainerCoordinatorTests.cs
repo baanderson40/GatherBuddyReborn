@@ -11,7 +11,9 @@ public class AutoRetainerCoordinatorTests
         public AutoRetainerProcessingMode Mode { get; set; }
         public string? ActiveOwner { get; set; } = "Vulcan:run1";
         public bool CanRequestHandoff { get; set; } = true;
-        public bool DeferForTimedNode { get; set; }
+        private bool _deferForTimedNode;
+        public int TimedNodeReads;
+        public bool DeferForTimedNode { get { TimedNodeReads++; return _deferForTimedNode; } set => _deferForTimedNode = value; }
         public AutoRetainerCharacter? Character { get; set; } = new(42, "Original@World");
         public bool CharacterReady { get; set; } = true;
         public bool MultiModeEnabled { get; set; }
@@ -48,6 +50,38 @@ public class AutoRetainerCoordinatorTests
         public bool TryFinishCancellation(out string reason) { reason = "Retainer menu still closing"; return CancellationClean; }
         public void Release(bool resume) { Releases++; Resumed = resume; }
         public void Log(string message) { }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void UnreadyMonitoringNeverReadsTimedNodePriority(bool missingCharacter)
+    {
+        var port = new Port { CharacterReady = false, Character = missingCharacter ? null : new(42, "Original@World") };
+        var coordinator = new AutoRetainerCoordinator(port);
+        coordinator.Tick(TimeSpan.Zero);
+        coordinator.Tick(TimeSpan.FromSeconds(2));
+        Assert.Equal(0, port.TimedNodeReads);
+        Assert.Equal(0, port.Starts);
+        Assert.Equal(AutoRetainerHandoffState.Monitoring, coordinator.State);
+        port.Character = new(42, "Original@World");
+        port.CharacterReady = true;
+        coordinator.Tick(TimeSpan.FromSeconds(3));
+        Assert.Equal(1, port.TimedNodeReads);
+        Assert.Equal(1, port.Starts);
+    }
+
+    [Fact]
+    public void ReadinessLossAfterMonitoringPollPreventsFurtherPriorityReads()
+    {
+        var port = new Port { Work = null };
+        var coordinator = new AutoRetainerCoordinator(port);
+        coordinator.Tick(TimeSpan.Zero);
+        Assert.Equal(1, port.TimedNodeReads);
+        port.CharacterReady = false;
+        coordinator.Tick(TimeSpan.FromSeconds(2));
+        Assert.Equal(1, port.TimedNodeReads);
+        Assert.Equal(0, port.Starts);
     }
 
     [Theory]

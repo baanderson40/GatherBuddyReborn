@@ -35,7 +35,8 @@ public sealed class AutoRetainerIntegration : IAutoRetainerCoordinationPort, IDi
     public string? ActiveOwner => CraftingGatherBridge.AutoRetainerOwner
         ?? (GatherBuddy.AutoGather.Enabled ? $"AutoGather:{GatherBuddy.AutoGather.AutomationRunId}" : null);
     public bool CanRequestHandoff => GatherBuddy.MarketboardTravel?.Coordinator.BlocksAutomation != true
-        && CraftingGatherBridge.AutoRetainerQueue?.Paused != true;
+        && CraftingGatherBridge.AutoRetainerQueue?.Paused != true
+        && SeFunctions.TeleportData.IsReady;
     public bool DeferForTimedNode => GatherBuddy.AutoGather.Enabled && GatherBuddy.AutoGather.DeferAutoRetainerForTimedNode;
     public AutoRetainerCharacter? Character => Dalamud.Objects.LocalPlayer is { } player && Dalamud.PlayerState.ContentId != 0
         ? new(Dalamud.PlayerState.ContentId, $"{player.Name}@{player.HomeWorld.Value.Name}") : null;

@@ -283,6 +283,7 @@ public partial class GatherBuddy : IDalamudPlugin
     private unsafe void Update(IFramework framework)
     {
         Config.SaveIfDirty();
+        SeFunctions.TeleportData.Update();
         var prev = LastObjectsLength;
         LastObjectsLength = Dalamud.Objects.Length;
         //Scan objects every 5 secons or when the number of objects change
@@ -325,6 +326,7 @@ public partial class GatherBuddy : IDalamudPlugin
             AutoRetainerIntegration?.Update();
             if (AutoRetainerIntegration?.Coordinator.BlocksAutomation == true)
                 return;
+            if (!SeFunctions.TeleportData.TryGetCosts(out _)) return;
             CraftingGameInterop.Update();
             CraftingGatherBridge.Update();
             VendorNavigator.Update();
