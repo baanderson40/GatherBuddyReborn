@@ -102,6 +102,10 @@ public partial class CraftingQueueProcessor
             throw new InvalidOperationException("Finish/recover Marketboard travel before starting another queue.");
         if (GatherBuddy.AutoRetainerIntegration?.Coordinator.YieldRequested == true)
             throw new InvalidOperationException("Finish/recover the AutoRetainer handoff before starting another queue.");
+        if (RetainerBellNavigator.HasOutstanding)
+            throw new InvalidOperationException("Wait for previous Vulcan bell movement to settle.");
+        if (GatherBuddy.AutoRetainerIntegration?.Withdrawal.Owner.HasValue == true)
+            throw new InvalidOperationException("Wait for previous Vulcan bell cleanup before starting another queue.");
         YesAlready.Lock();
         _executionPlan = executionPlan;
         _acquisition = null;
@@ -125,6 +129,8 @@ public partial class CraftingQueueProcessor
         _retainerRestock = executionPlan.RetainerRestock;
         _retainerExecutor = null;
         _retainerBellNavigator = null;
+        _retainerRestartAfterAr = false;
+        RetainerCoordinationStatus = string.Empty;
         var hasRetainerWork = _retainerRestock && AllaganTools.Enabled
             && (MaterialTargets.Count > 0 || RetainerPrecraftTargets.Count > 0);
 
@@ -887,6 +893,7 @@ public partial class CraftingQueueProcessor
 
     private void CompleteQueue()
     {
+        ReleaseRetainerWithdrawalProtection();
         if (_currentQueueIndex < QueueItems.Count)
         {
             BlockAcquisition("Queue stopped before all requested crafts completed. Remaining intent retained.", QueueState.AcquisitionFailed);
@@ -1145,29 +1152,28 @@ public partial class CraftingQueueProcessor
 
     private void QueueRetainerBellNavigationTasks()
     {
-        var bell = RetainerTaskExecutor.FindNearestBellForNavigation();
-        if (bell == null)
-        {
-            GatherBuddy.Log.Warning("[CraftingQueueProcessor] No retainer bell found in current zone, skipping navigation");
-            _currentState = QueueState.WithdrawingFromRetainer;
-            QueueRetainerWithdrawalTasks();
-            return;
-        }
-
-        _retainerBellNavigator = new RetainerBellNavigator();
-        if (!_retainerBellNavigator.StartNavigation(bell))
-        {
-            GatherBuddy.Log.Warning("[CraftingQueueProcessor] Failed to start retainer bell navigation");
-            _currentState = QueueState.WithdrawingFromRetainer;
-            QueueRetainerWithdrawalTasks();
-            return;
-        }
-
         _tasks.Add(() =>
         {
+            if (_retainerBellNavigator?.IsSettling == true)
+            {
+                RetainerCoordinationStatus = "Settling bell movement before withdrawal";
+                _retainerBellNavigator.Update();
+                return _retainerBellNavigator.IsComplete ? CraftingTasks.TaskResult.Done : CraftingTasks.TaskResult.Retry;
+            }
+            if (!EnsureRetainerNavigationAdmission())
+            {
+                _retainerBellNavigator?.Stop();
+                _retainerBellNavigator = null;
+                return CraftingTasks.TaskResult.Retry;
+            }
+            RetainerCoordinationStatus = "Navigating to reachable bell interaction range";
             if (_retainerBellNavigator == null)
-                return CraftingTasks.TaskResult.Done;
-
+            {
+                var bell = RetainerTaskExecutor.FindNearestBellForNavigation();
+                if (bell == null) return CraftingTasks.TaskResult.Done;
+                _retainerBellNavigator = new RetainerBellNavigator();
+                _retainerBellNavigator.StartNavigation(bell);
+            }
             _retainerBellNavigator.Update();
             if (_retainerBellNavigator.IsComplete)
             {
@@ -1180,6 +1186,7 @@ public partial class CraftingQueueProcessor
 
         _tasks.Add(() =>
         {
+            if (RetainerBellNavigator.CleanupPending) return CraftingTasks.TaskResult.Retry;
             _currentState = QueueState.WithdrawingFromRetainer;
             QueueRetainerWithdrawalTasks();
             return CraftingTasks.TaskResult.Done;
@@ -1187,6 +1194,23 @@ public partial class CraftingQueueProcessor
     }
 
     private void QueueRetainerWithdrawalTasks()
+    {
+        // Queue startup must not interact with a bell before the framework's AR monitor can yield.
+        _tasks.Add(() =>
+        {
+            if (!EnsureRetainerWithdrawalProtection()) return CraftingTasks.TaskResult.Retry;
+            try { BuildProtectedRetainerWithdrawalTasks(); }
+            catch (Exception ex) when (ex is not (AccessViolationException or System.Runtime.InteropServices.SEHException))
+            {
+                GatherBuddy.Log.Error($"[Retainer coordination] Withdrawal planning failed: {ex}");
+                Pause($"Retainer withdrawal planning failed; owned bell cleanup pending. {ex.Message}");
+                return CraftingTasks.TaskResult.Retry;
+            }
+            return CraftingTasks.TaskResult.Done;
+        });
+    }
+
+    private void BuildProtectedRetainerWithdrawalTasks()
     {
         RefreshRetainerRestockPlanForWithdrawal();
         GatherBuddy.Log.Debug($"[CraftingQueueProcessor] Building retainer withdrawal plan ({RetainerPrecraftTargets.Count} craftable pull target(s), {MaterialTargets.Count} leaf material(s))");
@@ -1245,27 +1269,37 @@ public partial class CraftingQueueProcessor
         if (_retainerExecutor == null)
         {
             GatherBuddy.Log.Warning("[CraftingQueueProcessor] Retainer withdrawal executor unavailable, proceeding to gather stage");
-            TransitionFromRetainerWithdrawComplete();
-            return;
+        }
+        else
+        {
+            _tasks.Add(() =>
+            {
+                if (_retainerExecutor == null)
+                    return CraftingTasks.TaskResult.Done;
+                if (!EnsureRetainerWithdrawalProtection()) return CraftingTasks.TaskResult.Retry;
+                CraftingTasks.TaskResult result;
+                try { result = _retainerExecutor.Tick(); }
+                catch (Exception ex) when (ex is not (AccessViolationException or System.Runtime.InteropServices.SEHException))
+                {
+                    GatherBuddy.Log.Error($"[Retainer coordination] Withdrawal failed: {ex}");
+                    Pause($"Retainer withdrawal failed; owned bell cleanup pending. {ex.Message}");
+                    return CraftingTasks.TaskResult.Retry;
+                }
+                if (result == CraftingTasks.TaskResult.Done)
+                {
+                    if (_retainerExecutor.IsAborted)
+                        GatherBuddy.Log.Warning("[CraftingQueueProcessor] Retainer withdrawal aborted, rebuilding from current inventory");
+                    else
+                        GatherBuddy.Log.Information("[CraftingQueueProcessor] Retainer withdrawal complete");
+                }
+                return result;
+            });
         }
 
         _tasks.Add(() =>
         {
-            if (_retainerExecutor == null)
-                return CraftingTasks.TaskResult.Done;
-            var result = _retainerExecutor.Tick();
-            if (result == CraftingTasks.TaskResult.Done)
-            {
-                if (_retainerExecutor.IsAborted)
-                    GatherBuddy.Log.Warning("[CraftingQueueProcessor] Retainer withdrawal aborted, rebuilding from current inventory");
-                else
-                    GatherBuddy.Log.Information("[CraftingQueueProcessor] Retainer withdrawal complete");
-            }
-            return result;
-        });
-
-        _tasks.Add(() =>
-        {
+            if (!FinishRetainerWithdrawalProtection()) return CraftingTasks.TaskResult.Retry;
+            _retainerExecutor = null;
             TransitionFromRetainerWithdrawComplete();
             return CraftingTasks.TaskResult.Done;
         });
@@ -1406,6 +1440,8 @@ public partial class CraftingQueueProcessor
         _inventoryRecovery?.Pause(_runClock.Elapsed);
         _pauseReason = reason ?? string.Empty;
         _acquisition?.Pause(DateTime.UtcNow);
+        ReleaseRetainerWithdrawalProtection();
+        if (_currentState == QueueState.WithdrawingFromRetainer) _retainerExecutor = null;
         if (_currentState == QueueState.NavigatingToRetainerBell)
         {
             GatherBuddy.Log.Debug("[CraftingQueueProcessor] Pausing retainer bell navigation");
@@ -1466,6 +1502,7 @@ public partial class CraftingQueueProcessor
         if (_currentState == QueueState.NavigatingToRetainerBell)
         {
             GatherBuddy.Log.Debug("[CraftingQueueProcessor] Resuming retainer bell navigation");
+            _retainerRestartAfterAr = false;
             QueueRetainerBellNavigationTasks();
             return;
         }
@@ -1473,6 +1510,7 @@ public partial class CraftingQueueProcessor
         if (_currentState == QueueState.WithdrawingFromRetainer)
         {
             GatherBuddy.Log.Debug("[CraftingQueueProcessor] Resuming retainer withdrawal");
+            _retainerRestartAfterAr = false;
             if (_retainerExecutor == null)
                 QueueRetainerWithdrawalTasks();
             else
@@ -1495,6 +1533,8 @@ public partial class CraftingQueueProcessor
 
     public void Stop()
     {
+        _retainerRestartAfterAr = false;
+        ReleaseRetainerWithdrawalProtection();
         var arOwner = _executionPlan == null ? null : $"Vulcan:{_executionPlan.AcquisitionRunId}";
         GatherBuddy.AutoRetainerIntegration?.Coordinator.PreventResume();
         _preparationGate.Cancel();
@@ -1551,6 +1591,10 @@ public partial class CraftingQueueProcessor
     
     public void Reset()
     {
+        _retainerBellNavigator?.Stop();
+        _retainerRestartAfterAr = false;
+        ReleaseRetainerWithdrawalProtection();
+        RetainerCoordinationStatus = string.Empty;
         _preparationGate.Cancel();
         _inventoryRecovery?.Cancel();
         _inventoryRecovery = null;

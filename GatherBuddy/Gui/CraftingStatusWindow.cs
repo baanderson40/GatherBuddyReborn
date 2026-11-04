@@ -221,6 +221,9 @@ public class CraftingStatusWindow : Window
                     ImGui.SetTooltip("Estimate for remaining crafts; excludes gathering, repairs, travel, and AutoRetainer. Raphael uses cached solutions when available, otherwise a provisional default.");
             }
             if (handoff != null) ImGui.TextWrapped(handoff.Status);
+            if (!string.IsNullOrEmpty(_queueProcessor.RetainerCoordinationStatus)
+                && currentState is CraftingQueueProcessor.QueueState.NavigatingToRetainerBell or CraftingQueueProcessor.QueueState.WithdrawingFromRetainer)
+                ImGui.TextWrapped(_queueProcessor.RetainerCoordinationStatus);
             // Preserve useful failure/shortage diagnostics, not routine acquisition chatter.
             if (currentState is CraftingQueueProcessor.QueueState.BlockedByMaterials or CraftingQueueProcessor.QueueState.AcquisitionFailed)
             {

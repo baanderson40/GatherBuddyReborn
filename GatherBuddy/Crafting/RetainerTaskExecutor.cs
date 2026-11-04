@@ -948,8 +948,7 @@ internal unsafe class RetainerTaskExecutor
                 !name.Equals("リテイナーベル", StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            float maxDist = obj.ObjectKind == ObjectKind.HousingEventObject ? 6.5f : 4.75f;
-            if (Vector3.Distance(obj.Position, player.Position) > maxDist)
+            if (!RetainerBellGeometry.InRange(player.Position, obj.Position, obj.HitboxRadius))
                 continue;
 
             if (!obj.IsTargetable)

@@ -321,6 +321,7 @@ public partial class GatherBuddy : IDalamudPlugin
 
         try
         {
+            RetainerBellNavigator.TickCleanup();
             MarketboardTravel?.Update();
             if (MarketboardTravel?.Coordinator.BlocksAutomation == true) return;
             AutoRetainerIntegration?.Update();
@@ -351,6 +352,7 @@ public partial class GatherBuddy : IDalamudPlugin
 
     void IDisposable.Dispose()
     {
+        RetainerBellNavigator.StopAll();
         AutoRetainerIntegration?.Dispose();
         MarketboardTravel?.Dispose();
         Config?.SaveIfDirty(force: true);

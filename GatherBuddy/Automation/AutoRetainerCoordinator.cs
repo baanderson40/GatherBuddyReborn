@@ -176,8 +176,11 @@ public sealed class AutoRetainerCoordinator
                     throw new InvalidOperationException("Character changed before the owned AutoRetainer pass started");
                 if (!_port.TryYield(out var reason)) { Status = $"Yielding: {reason}"; return; }
                 _yielded = true;
-                if (_external)
+                if (_external || _port.MultiModeEnabled || _port.Busy)
                 {
+                    // Bell access can start AR while Vulcan is yielding. Observe/drain;
+                    // never adopt ownership, start a competing pass, or abort its tasks.
+                    _external = true;
                     _deadline = now + TimeSpan.FromMinutes(60);
                     SetState(AutoRetainerHandoffState.WaitingForIdle, "Waiting for external AutoRetainer activity to end (no mode changes)");
                     return;
@@ -185,8 +188,6 @@ public sealed class AutoRetainerCoordinator
                 var readyWork = _port.FindReadyWork(_mode);
                 if (!_resume || !_port.Enabled || readyWork == null)
                 { Finish(now); return; }
-                if (_port.MultiModeEnabled || _port.Busy)
-                    throw new InvalidOperationException("External AutoRetainer work started during handoff; no ownership taken");
                 _repeatedWork = readyWork == _lastWork && _mode == _lastMode ? _repeatedWork + 1 : 1;
                 _lastWork = readyWork;
                 _lastMode = _mode;

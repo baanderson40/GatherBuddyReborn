@@ -11,6 +11,14 @@ public partial class CraftingQueueProcessor
     internal bool TryYieldToAutoRetainer(out string reason)
     {
         reason = $"Vulcan settling {_currentState}";
+        if (_currentState is QueueState.NavigatingToRetainerBell or QueueState.WithdrawingFromRetainer)
+        {
+            SuspendRetainerStageForAutoRetainer();
+            if (RetainerBellNavigator.CleanupPending)
+            { reason = "Settling owned bell path / possible vnavmesh retry before handoff"; return false; }
+            if (GatherBuddy.AutoRetainerIntegration?.Withdrawal.Owner.HasValue == true)
+            { reason = "Closing owned Vulcan bell before AutoRetainer handoff"; return false; }
+        }
         if (!_arAcquisitionPaused)
         {
             _acquisition?.Pause(DateTime.UtcNow);
@@ -28,7 +36,9 @@ public partial class CraftingQueueProcessor
     private void UpdateAutoRetainerYield()
     {
         if (_arParked) return;
-        // Let transaction/repair/withdrawal task chains settle. No state dispatcher
+        if (_currentState is QueueState.NavigatingToRetainerBell or QueueState.WithdrawingFromRetainer)
+        { TryYieldToAutoRetainer(out _); return; }
+        // Let transaction/repair/extraction task chains settle. No state dispatcher
         // is allowed to start another craft or advance acquisition while yielding.
         ProcessTasks();
         if (_currentState == QueueState.WaitingForPlayerInventory
@@ -82,6 +92,7 @@ public partial class CraftingQueueProcessor
         // Preserve user's explicit pause and its acquisition suspension.
         if (!_paused && resume)
         {
+            RestartRetainerStageAfterAutoRetainer();
             _acquisition?.Resume(DateTime.UtcNow);
             YesAlready.Lock();
         }

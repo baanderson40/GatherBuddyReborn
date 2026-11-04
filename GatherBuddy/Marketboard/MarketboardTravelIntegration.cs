@@ -20,6 +20,10 @@ public sealed class MarketboardTravelIntegration : IMarketTravelPort, IDisposabl
 
     public static bool CanStartAutomation()
     {
+        if (Crafting.RetainerBellNavigator.CleanupPending)
+        { Communicator.PrintError("Wait for Vulcan bell movement to settle before starting automation."); return false; }
+        if (GatherBuddy.AutoRetainerIntegration?.Withdrawal.Owner.HasValue == true)
+        { Communicator.PrintError("Wait for Vulcan retainer interaction cleanup before starting other automation."); return false; }
         if (GatherBuddy.MarketboardTravel?.Coordinator.BlocksAutomation != true) return true;
         Communicator.PrintError("Finish, stop follow-up, or recover Marketboard travel before starting automation.");
         return false;
@@ -55,6 +59,9 @@ public sealed class MarketboardTravelIntegration : IMarketTravelPort, IDisposabl
     {
         get
         {
+            if (Crafting.RetainerBellNavigator.CleanupPending) return "Wait for Vulcan bell movement to settle.";
+            if (GatherBuddy.AutoRetainerIntegration?.Withdrawal.Owner.HasValue == true)
+                return "Finish Vulcan retainer interaction cleanup before Marketboard travel.";
             if (GatherBuddy.AutoGather.Enabled || GatherBuddy.AutoGather.TaskManager.IsBusy)
                 return "Stop gathering/fishing and let queued GBR actions settle first.";
             if (CraftingGatherBridge.AutoRetainerOwner != null || CraftingGatherBridge.HasAcquisitionOwnership

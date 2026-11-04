@@ -12,7 +12,7 @@ using GatherBuddy.Plugin;
 namespace GatherBuddy.Automation;
 
 /// <summary>Framework-thread adapter. Cancels only an owned pass on explicit Stop; never aborts submitted AR tasks.</summary>
-public sealed class AutoRetainerIntegration : IAutoRetainerCoordinationPort, IDisposable
+public sealed partial class AutoRetainerIntegration : IAutoRetainerCoordinationPort, IDisposable
 {
     private const string Prefix = "AutoRetainer.PluginState.";
     private readonly Stopwatch _clock = Stopwatch.StartNew();
@@ -26,6 +26,7 @@ public sealed class AutoRetainerIntegration : IAutoRetainerCoordinationPort, IDi
     public AutoRetainerIntegration()
     {
         Coordinator = new(this);
+        Withdrawal = new(new WithdrawalPort(this));
         _finished = Dalamud.PluginInterface.GetIpcSubscriber<object>(Prefix + "OnSingleMultiModeFinished");
         _finished.Subscribe(Coordinator.OnPassFinished);
     }
@@ -35,8 +36,9 @@ public sealed class AutoRetainerIntegration : IAutoRetainerCoordinationPort, IDi
     public string? ActiveOwner => CraftingGatherBridge.AutoRetainerOwner
         ?? (GatherBuddy.AutoGather.Enabled ? $"AutoGather:{GatherBuddy.AutoGather.AutomationRunId}" : null);
     public bool CanRequestHandoff => GatherBuddy.MarketboardTravel?.Coordinator.BlocksAutomation != true
+        && !RetainerBellNavigator.CleanupPending
         && CraftingGatherBridge.AutoRetainerQueue?.Paused != true
-        && SeFunctions.TeleportData.IsReady;
+        && Withdrawal.Owner == null && SeFunctions.TeleportData.IsReady && !IsSuppressedForHandoff();
     public bool DeferForTimedNode => GatherBuddy.AutoGather.Enabled && GatherBuddy.AutoGather.DeferAutoRetainerForTimedNode;
     public AutoRetainerCharacter? Character => Dalamud.Objects.LocalPlayer is { } player && Dalamud.PlayerState.ContentId != 0
         ? new(Dalamud.PlayerState.ContentId, $"{player.Name}@{player.HomeWorld.Value.Name}") : null;
@@ -90,6 +92,8 @@ public sealed class AutoRetainerIntegration : IAutoRetainerCoordinationPort, IDi
     public bool CanStartAutomation()
     {
         if (!Marketboard.MarketboardTravelIntegration.CanStartAutomation()) return false;
+        if (Withdrawal.Owner.HasValue)
+        { Communicator.PrintError($"Wait for Vulcan retainer cleanup. {Withdrawal.Status}"); return false; }
         if (Coordinator.YieldRequested)
         {
             Communicator.PrintError(Coordinator.IsStopping
@@ -279,6 +283,10 @@ public sealed class AutoRetainerIntegration : IAutoRetainerCoordinationPort, IDi
     public void Update()
     {
         if (_disposed) return;
+        if (Withdrawal.Owner is { } withdrawalOwner && CraftingGatherBridge.AutoRetainerOwner != $"Vulcan:{withdrawalOwner}")
+            Withdrawal.RequestRelease(withdrawalOwner);
+        Withdrawal.Tick(Environment.TickCount64);
+        LogWithdrawalStatus();
         if (GatherBuddy.MarketboardTravel?.Coordinator.BlocksAutomation == true) return;
         Coordinator.Tick(_clock.Elapsed);
         if (Coordinator.YieldRequested && GatherBuddy.AutoGather.Enabled)
@@ -290,6 +298,13 @@ public sealed class AutoRetainerIntegration : IAutoRetainerCoordinationPort, IDi
     public void Dispose()
     {
         if (_disposed) return;
+        if (Withdrawal.Owner is { } owner)
+        {
+            Withdrawal.RequestRelease(owner);
+            Withdrawal.Tick(Environment.TickCount64, unloading: true);
+            if (Withdrawal.Owner.HasValue)
+                GatherBuddy.Log.Warning($"[Retainer coordination] Unload could not finish owned bell cleanup. Close the retainer interaction and inspect AutoRetainer suppression manually. {Withdrawal.Status}");
+        }
         _disposed = true;
         _finished.Unsubscribe(Coordinator.OnPassFinished);
         // Do not abort an AR pass on unload or claim that its return completed.

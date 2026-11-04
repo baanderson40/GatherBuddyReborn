@@ -346,6 +346,28 @@ public class AutoRetainerCoordinatorTests
     }
 
     [Fact]
+    public void ExternalWorkStartingDuringYieldIsObservedWithoutOwnershipOrCompetingPass()
+    {
+        var port = new Port { YieldReady = false };
+        var coordinator = new AutoRetainerCoordinator(port);
+        coordinator.Tick(TimeSpan.Zero);
+        Assert.Equal(AutoRetainerHandoffState.Yielding, coordinator.State);
+        port.Busy = true;
+        port.YieldReady = true;
+        coordinator.Tick(TimeSpan.FromSeconds(1));
+        Assert.Equal(AutoRetainerHandoffState.WaitingForIdle, coordinator.State);
+        Assert.Equal(0, port.Starts);
+        Assert.Equal(0, port.Cancels);
+        port.Busy = false;
+        port.Work = null;
+        coordinator.Tick(TimeSpan.FromSeconds(2));
+        coordinator.Tick(TimeSpan.FromSeconds(3));
+        Assert.Equal(AutoRetainerHandoffState.Monitoring, coordinator.State);
+        Assert.True(port.Resumed);
+        Assert.Equal(0, port.Cancels);
+    }
+
+    [Fact]
     public void OwnTravelBusyDoesNotGetMistakenForAnExternalMultiModePass()
     {
         var port = new Port { Busy = true };
