@@ -13,6 +13,7 @@ public partial class FishRecorder : IDisposable
 {
     public readonly List<FishRecord>                  Records = new();
     public readonly Dictionary<uint, FishRecordTimes> Times   = new();
+    private bool _enabled, _disposed;
 
     public FishRecorder(IGameInteropProvider provider)
     {
@@ -37,32 +38,65 @@ public partial class FishRecorder : IDisposable
             ResetTimes();
         }
 
-        Parser = new FishingParser(provider);
-        SubscribeToParser();
-        UsedLure += LureTimer.Restart;
+        FishingParser? parser = null;
+        try
+        {
+            parser = new FishingParser(provider);
+            Parser = parser;
+            SubscribeToParser();
+            UsedLure += LureTimer.Restart;
+        }
+        catch (Exception ex) when (HookInitialization.IsManagedFailure(ex))
+        {
+            if (parser != null)
+                HookInitialization.Cleanup(parser.Dispose, "parser constructor rollback", ReportCleanup);
+            // No framework subscription or upload task exists before Enable().
+            // Do not write fish-record files as part of failed-constructor rollback.
+            HookInitialization.Cleanup(RemoteRecordsCancellationTokenSource.Dispose, "constructor cancellation source", ReportCleanup);
+            throw;
+        }
     }
 
     public void Enable()
     {
-        Parser.Enable();
-        Dalamud.Framework.Update += OnFrameworkUpdate;
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_enabled) return;
+        try
+        {
+            Parser.Enable();
+            Dalamud.Framework.Update += OnFrameworkUpdate;
+            _enabled = true;
+        }
+        catch (Exception ex) when (HookInitialization.IsManagedFailure(ex))
+        {
+            Disable();
+            throw;
+        }
     }
 
     public void Disable()
     {
-        Dalamud.Framework.Update -= OnFrameworkUpdate;
-        Parser.Disable();
+        if (_disposed) return;
+        _enabled = false;
+        HookInitialization.Cleanup(() => Dalamud.Framework.Update -= OnFrameworkUpdate, "framework unsubscribe", ReportCleanup);
+        HookInitialization.Cleanup(Parser.Disable, "parser disable", ReportCleanup);
     }
 
     public void Dispose()
     {
+        if (_disposed) return;
         Disable();
-        Parser.Dispose();
-        StopRemoteRecordsRequests();
-        WriteRemoteFile();
+        _disposed = true;
+        HookInitialization.Cleanup(Parser.Dispose, "parser dispose", ReportCleanup);
+        HookInitialization.Cleanup(StopRemoteRecordsRequests, "remote cancellation", ReportCleanup);
+        HookInitialization.Cleanup(WriteRemoteFile, "remote record save", ReportCleanup);
         if (Changes > 0)
-            WriteFile();
+            HookInitialization.Cleanup(WriteFile, "local record save", ReportCleanup);
+        HookInitialization.Cleanup(RemoteRecordsCancellationTokenSource.Dispose, "cancellation source dispose", ReportCleanup);
     }
+
+    private static void ReportCleanup(string stage, Exception ex)
+        => GatherBuddy.Log.Error($"[Fishing hooks] Recorder cleanup failed at {stage}: {ex}");
 
     private void AddUnchecked(FishRecord record)
     {

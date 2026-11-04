@@ -1,4 +1,7 @@
 using System;
+using System.Diagnostics;
+using System.Linq;
+using System.Reflection;
 using Dalamud.Hooking;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
@@ -17,39 +20,108 @@ public unsafe partial class FishingParser : IDisposable
     public event Action<HookSet>?                            HookedIn;
     private readonly Hook<AgentCatch.Delegates.UpdateCatch>  _catchHook;
     private readonly Hook<ActionManager.Delegates.UseAction> _hookHook;
+    private readonly Guid _hookAttempt = Guid.NewGuid();
+    private bool _enabled, _disposed;
 
     public FishingParser(IGameInteropProvider provider)
     {
         FishingSpotNames = SetupFishingSpotNames();
 
-        _catchHook = provider.HookFromAddress<AgentCatch.Delegates.UpdateCatch>(
-            (nint)AgentCatch.MemberFunctionPointers.UpdateCatch,
-            OnCatchUpdate);
-
-        _hookHook = provider.HookFromAddress<ActionManager.Delegates.UseAction>(
-            (nint)ActionManager.MemberFunctionPointers.UseAction,
-            OnUseAction);
+        (_catchHook, _hookHook) = HookInitialization.CreatePair(
+            () => CreateFishingHook(provider, "AgentCatch.UpdateCatch",
+                (nint)AgentCatch.MemberFunctionPointers.UpdateCatch, (AgentCatch.Delegates.UpdateCatch)OnCatchUpdate),
+            () => CreateFishingHook(provider, "ActionManager.UseAction",
+                (nint)ActionManager.MemberFunctionPointers.UseAction, (ActionManager.Delegates.UseAction)OnUseAction),
+            ReportHookCleanup);
     }
+
+    private Hook<T> CreateFishingHook<T>(IGameInteropProvider provider, string stage, nint address, T detour)
+        where T : Delegate
+    {
+        WriteHookDiagnostic(() => GatherBuddy.Log.Debug($"[Fishing hooks][{_hookAttempt}] Creating {stage}; target=0x{address:X}; {DescribeHookEnvironment(address)}"));
+        try
+        {
+            var hook = provider.HookFromAddress(address, detour);
+            WriteHookDiagnostic(() => GatherBuddy.Log.Debug($"[Fishing hooks][{_hookAttempt}] Created {stage}; backend={hook.BackendName}"));
+            return hook;
+        }
+        catch (Exception ex) when (HookInitialization.IsManagedFailure(ex))
+        {
+            WriteHookDiagnostic(() => GatherBuddy.Log.Error($"[Fishing hooks][{_hookAttempt}] Failed creating {stage}; target=0x{address:X}. No retry or backend fallback attempted. Preserve Dalamud's preceding 'Could not set up a hook at' address-space report.\n{ex}"));
+            throw;
+        }
+    }
+
+    private static string DescribeHookEnvironment(nint address)
+    {
+        try { return DescribeHookEnvironmentCore(address); }
+        catch (Exception ex) when (HookInitialization.IsManagedFailure(ex))
+        { return $"thread={Environment.CurrentManagedThreadId}; environment inspection unavailable: {ex.Message}"; }
+    }
+
+    private static string DescribeHookEnvironmentCore(nint address)
+    {
+        using var process = Process.GetCurrentProcess();
+        var target = "not in an enumerated native module";
+        foreach (ProcessModule module in process.Modules)
+        {
+            var offset = address.ToInt64() - module.BaseAddress.ToInt64();
+            if (offset < 0 || offset >= module.ModuleMemorySize) continue;
+            target = $"{module.ModuleName}+0x{offset:X}";
+            break;
+        }
+        var assemblies = AppDomain.CurrentDomain.GetAssemblies()
+            .Where(a => a.GetName().Name is { } name && (name == "Dalamud" || name.Contains("Reloaded", StringComparison.OrdinalIgnoreCase)))
+            .Select(a => $"{a.GetName().Name}={a.GetName().Version} ({a.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unknown build"})")
+            .OrderBy(name => name);
+        return $"pid={process.Id}; thread={Environment.CurrentManagedThreadId}; module={target}; loaded={string.Join("; ", assemblies)}";
+    }
+
+    private static void WriteHookDiagnostic(Action write)
+    {
+        // Diagnostics cannot turn successful allocation into an unowned hook or prevent creation.
+        try { write(); }
+        catch (Exception ex) when (HookInitialization.IsManagedFailure(ex)) { }
+    }
+
+    private void ReportHookCleanup(string stage, Exception ex)
+        => GatherBuddy.Log.Error($"[Fishing hooks][{_hookAttempt}] Cleanup failed at {stage}: {ex}");
 
     public void Enable()
     {
-        _catchHook.Enable();
-        _hookHook.Enable();
-        Dalamud.Chat.ChatMessage += OnMessageDelegate;
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_enabled) return;
+        try
+        {
+            _catchHook.Enable();
+            _hookHook.Enable();
+            Dalamud.Chat.ChatMessage += OnMessageDelegate;
+            _enabled = true;
+        }
+        catch (Exception ex) when (HookInitialization.IsManagedFailure(ex))
+        {
+            Disable();
+            WriteHookDiagnostic(() => GatherBuddy.Log.Error($"[Fishing hooks][{_hookAttempt}] Enable failed; completed hooks disabled, no retry attempted.\n{ex}"));
+            throw;
+        }
     }
 
     public void Disable()
     {
-        _catchHook.Disable();
-        _hookHook.Disable();
-        Dalamud.Chat.ChatMessage -= OnMessageDelegate;
+        if (_disposed) return;
+        _enabled = false;
+        HookInitialization.Cleanup(() => Dalamud.Chat.ChatMessage -= OnMessageDelegate, "chat unsubscribe", ReportHookCleanup);
+        HookInitialization.Cleanup(_hookHook.Disable, "UseAction disable", ReportHookCleanup);
+        HookInitialization.Cleanup(_catchHook.Disable, "UpdateCatch disable", ReportHookCleanup);
     }
 
     public void Dispose()
     {
+        if (_disposed) return;
         Disable();
-        _catchHook.Dispose();
-        _hookHook.Dispose();
+        _disposed = true;
+        HookInitialization.Cleanup(_hookHook.Dispose, "UseAction dispose", ReportHookCleanup);
+        HookInitialization.Cleanup(_catchHook.Dispose, "UpdateCatch dispose", ReportHookCleanup);
     }
 
     private void OnCatchUpdate(
