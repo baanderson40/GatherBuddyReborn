@@ -6,6 +6,23 @@ using GatherBuddy.Vulcan.Vendors;
 
 namespace GatherBuddy.Crafting;
 
+public sealed record AcquisitionExchangeCost(uint CurrencyItemId, VendorCurrencyGroup CurrencyGroup, ulong Amount);
+
+/// <summary>Whole exchange transactions; excess is limited to the last required bundle.</summary>
+public static class ExchangeTransactions
+{
+    public static uint Needed(uint units, uint output)
+    {
+        ArgumentOutOfRangeException.ThrowIfZero(output);
+        return checked((uint)(((ulong)units + output - 1) / output));
+    }
+
+    public static bool ValidCosts(IReadOnlyList<AcquisitionExchangeCost> costs)
+        => costs.Count > 0 && costs.Select(c => c.CurrencyItemId).Distinct().Count() == costs.Count
+        && costs.All(c => c.CurrencyItemId != 0 && c.Amount > 0 && Enum.IsDefined(c.CurrencyGroup)
+            && (c.CurrencyGroup == VendorCurrencyGroup.Gil) == (c.CurrencyItemId == 1));
+}
+
 public enum MaterialShortageReason
 {
     InsufficientCurrency,
@@ -82,10 +99,14 @@ public sealed record VendorPurchaseAllocation
     public VendorCurrencyGroup CurrencyGroup { get; }
     public ulong ExpectedCurrencyCost { get; }
     public VendorShopType ShopType { get; }
-    public VendorNpc Vendor { get; }
+    public VendorNpc Vendor { get; private init; }
+    public IReadOnlyList<AcquisitionExchangeCost> Costs { get; }
+    public IReadOnlyDictionary<uint, ulong> ExpectedCosts { get; }
+    public IReadOnlyList<VendorNpc> AuthorizedAlternatives { get; }
 
     public VendorPurchaseAllocation(Guid sessionId, uint itemId, uint transactionCount, uint outputQuantityPerTransaction,
-        uint currencyItemId, VendorCurrencyGroup currencyGroup, ulong costPerTransaction, VendorShopType shopType, VendorNpc vendor)
+        uint currencyItemId, VendorCurrencyGroup currencyGroup, ulong costPerTransaction, VendorShopType shopType, VendorNpc vendor,
+        IReadOnlyList<AcquisitionExchangeCost>? costs = null, IReadOnlyList<VendorNpc>? authorizedAlternatives = null)
     {
         if (sessionId == Guid.Empty)
             throw new ArgumentException("A purchase must belong to an acquisition session.", nameof(sessionId));
@@ -107,7 +128,23 @@ public sealed record VendorPurchaseAllocation
         ExpectedCurrencyCost = checked(costPerTransaction * transactionCount);
         ShopType = shopType;
         Vendor = vendor;
+        Costs = Array.AsReadOnly((costs ?? new[] { new AcquisitionExchangeCost(currencyItemId, currencyGroup, costPerTransaction) }).ToArray());
+        if (!ExchangeTransactions.ValidCosts(Costs) || !Costs.Contains(new(currencyItemId, currencyGroup, costPerTransaction)))
+            throw new ArgumentException("Invalid exchange costs or primary cost mismatch.", nameof(costs));
+        ExpectedCosts = new ReadOnlyDictionary<uint, ulong>(Costs.ToDictionary(c => c.CurrencyItemId, c => checked(c.Amount * transactionCount)));
+        AuthorizedAlternatives = Array.AsReadOnly((authorizedAlternatives ?? Array.Empty<VendorNpc>()).Distinct().ToArray());
     }
+
+    public VendorPurchaseAllocation WithAuthorizedVendor(VendorNpc vendor)
+    {
+        if (!AuthorizedAlternatives.Contains(vendor)) throw new ArgumentException("Vendor was not authorized by the planner.", nameof(vendor));
+        return this with { Vendor = vendor };
+    }
+
+    public bool CanShareShopWith(VendorPurchaseAllocation next)
+        => SessionId == next.SessionId && Vendor.NpcId == next.Vendor.NpcId && ShopType == next.ShopType
+            && Vendor.MenuShopType == next.Vendor.MenuShopType && Vendor.ShopId == next.Vendor.ShopId
+            && Vendor.SourceShopId == next.Vendor.SourceShopId;
 }
 
 public sealed record MaterialShortage(MaterialShortageReason Reason, string Detail);

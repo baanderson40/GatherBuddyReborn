@@ -83,17 +83,33 @@ internal static class VendorPurchasePolicyUi
         var seals = policy.AllowedCurrencyGroups.Contains(VendorCurrencyGroup.GrandCompanySeals);
         if (ImGui.Checkbox("Allow current-GC seals", ref seals))
         { VendorPurchasePolicyEditing.SetCurrencyAllowed(policy, VendorCurrencyGroup.GrandCompanySeals, seals); changed = true; }
-        var gilIndex = policy.CurrencyPriority.IndexOf(VendorCurrencyGroup.Gil);
-        var sealsIndex = policy.CurrencyPriority.IndexOf(VendorCurrencyGroup.GrandCompanySeals);
-        var priority = sealsIndex >= 0 && (gilIndex < 0 || sealsIndex < gilIndex) ? 1 : 0;
-        ImGui.SetNextItemWidth(VulcanUiScaling.Scaled(220f));
-        if (ImGui.Combo("Gil / GC priority", ref priority, new[] { "Gil before GC seals", "GC seals before gil" }, 2))
-        { VendorPurchasePolicyEditing.SetGrandCompanyFirst(policy, priority == 1); changed = true; }
-        if (policy.AllowedCurrencyGroups.Any(g => g is not (VendorCurrencyGroup.Gil or VendorCurrencyGroup.GrandCompanySeals)))
-            ImGui.TextWrapped("Other configured currency groups are preserved, but integrated live execution currently supports gil/GC materials only.");
-        if (!gil && !seals) ImGui.TextWrapped("No supported purchase currency allowed; materials will fall back to gathering or shortage reporting.");
+        var gemstones = policy.AllowedCurrencyGroups.Contains(VendorCurrencyGroup.BicolorGemstones);
+        if (ImGui.Checkbox("Allow Bicolor Gemstones", ref gemstones))
+        { VendorPurchasePolicyEditing.SetCurrencyAllowed(policy, VendorCurrencyGroup.BicolorGemstones, gemstones); changed = true; }
+        changed |= policy.Normalize();
+        ImGui.TextUnformatted("Currency priority (top spends first)");
+        for (var i = 0; i < policy.CurrencyPriority.Count; i++)
+        {
+            var group = policy.CurrencyPriority[i];
+            if (group is not (VendorCurrencyGroup.Gil or VendorCurrencyGroup.GrandCompanySeals or VendorCurrencyGroup.BicolorGemstones)) continue;
+            ImGui.PushID(i);
+            ImGui.BeginDisabled(i == 0);
+            if (ImGui.SmallButton("Up") && i > 0)
+            { (policy.CurrencyPriority[i - 1], policy.CurrencyPriority[i]) = (policy.CurrencyPriority[i], policy.CurrencyPriority[i - 1]); changed = true; }
+            ImGui.EndDisabled();
+            ImGui.SameLine();
+            ImGui.BeginDisabled(i + 1 >= policy.CurrencyPriority.Count);
+            if (ImGui.SmallButton("Down") && i + 1 < policy.CurrencyPriority.Count)
+            { (policy.CurrencyPriority[i + 1], policy.CurrencyPriority[i]) = (policy.CurrencyPriority[i], policy.CurrencyPriority[i + 1]); changed = true; }
+            ImGui.EndDisabled();
+            ImGui.SameLine();
+            ImGui.TextUnformatted(group switch { VendorCurrencyGroup.Gil => "Gil", VendorCurrencyGroup.GrandCompanySeals => "Current-GC seals", _ => "Bicolor Gemstones" });
+            ImGui.PopID();
+        }
+        if (!gil && !seals && !gemstones) ImGui.TextWrapped("No supported purchase currency allowed; materials will fall back to gathering or shortage reporting.");
 
         changed |= DrawReserve(policy, "Gil reserve", 1);
+        changed |= DrawReserve(policy, "Bicolor Gemstone reserve", VendorShopResolver.BicolorCurrencyItemId);
         // Normalize legacy settings before editing, including explicit zero handling.
         changed |= policy.Normalize();
         var sealReserve = policy.GrandCompanySealReserve ?? 0;
@@ -122,10 +138,10 @@ internal static class VendorPurchasePolicyUi
         {
             if (DrawAmount(policy, "Maximum gil purchase spend", ref cap))
             { policy.MaximumGilSpendPerRun = cap; changed = true; }
-            ImGui.TextWrapped("Zero forbids gil purchases. GC seals are controlled by their allowlist and reserves, not this gil cap.");
+            ImGui.TextWrapped("Zero forbids gil purchases. GC seals and gemstones use their own allowlist/reserves, not this gil cap. A mixed-cost exchange must satisfy every cost's limits.");
         }
         else ImGui.TextWrapped("Gil purchase spending is unlimited (reserves still apply). Set a low cap for initial testing.");
-        ImGui.TextWrapped("Stackable unit-output gil/GC materials only. Special exchanges remain preview-only. Changes apply to future runs, not an active or resumed run.");
+        ImGui.TextWrapped("Stackable gil/GC materials and validated gemstone exchanges. Bundles may buy the minimum excess needed; every cost must be authorized and within reserves/budgets. Locked or unverifiable shops remain shortages. Changes apply to future runs, not an active or resumed run.");
         return changed;
     }
 

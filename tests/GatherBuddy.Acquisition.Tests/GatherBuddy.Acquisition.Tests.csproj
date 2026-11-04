@@ -33,6 +33,8 @@
     <Compile Include="../../GatherBuddy/Crafting/TransientVendorExecution.cs" Link="Production/TransientVendorExecution.cs" />
     <Compile Include="../../GatherBuddy/Crafting/CraftingAcquisitionCoordinator.cs" Link="Production/CraftingAcquisitionCoordinator.cs" />
     <Compile Include="../../GatherBuddy/Vulcan/Vendors/VendorAutomationLease.cs" Link="Production/VendorAutomationLease.cs" />
+    <Compile Include="../../GatherBuddy/Vulcan/Vendors/VendorExchangeReadiness.cs" Link="Production/VendorExchangeReadiness.cs" />
+    <Compile Include="../../GatherBuddy/Vulcan/Vendors/LiveVendorExchange.cs" Link="Production/LiveVendorExchange.cs" />
     <Compile Include="../../GatherBuddy/Vulcan/Vendors/AethernetSourceApproach.cs" Link="Production/AethernetSourceApproach.cs" />
     <Compile Include="../../GatherBuddy/Crafting/MaterialAcquisitionModels.cs" Link="Production/MaterialAcquisitionModels.cs" />
     <Compile Include="../../GatherBuddy/Crafting/MaterialAcquisitionPlan.cs" Link="Production/MaterialAcquisitionPlan.cs" />

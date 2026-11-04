@@ -21,6 +21,7 @@ namespace GatherBuddy.Vulcan.Vendors;
 
 public static class VendorInteractionHelper
 {
+    private static readonly Dictionary<uint, uint[]> CurrencyIdsByIcon = new();
     private readonly record struct ShopMenuSelectionKey(uint NpcId, VendorMenuShopType ShopType, uint ShopId);
     private sealed class ShopMenuSelectionState(IReadOnlyList<int> menuIndices)
     {
@@ -384,7 +385,7 @@ public static class VendorInteractionHelper
         return true;
     }
 
-    public static unsafe bool TrySelectSpecialShopItem(int itemIndex, uint requestedItemId, uint quantity, out string? error)
+    public static unsafe bool TrySelectSpecialShopItem(int itemIndex, uint requestedItemId, uint quantity, out string? error, bool exactIndex = false)
     {
         error = null;
         if (itemIndex < 0)
@@ -402,7 +403,7 @@ public static class VendorInteractionHelper
 
         if (GenericHelpers.TryGetAddonByName("ShopExchangeCurrency", out AtkUnitBase* currencyShop) && currencyShop->IsVisible)
         {
-            var liveItemIndex = FindShopExchangeCurrencyItemIndex(currencyShop, requestedItemId);
+            var liveItemIndex = exactIndex ? itemIndex : FindShopExchangeCurrencyItemIndex(currencyShop, requestedItemId);
             if (liveItemIndex < 0)
             {
                 error = $"Could not find requested item {requestedItemId} in live ShopExchangeCurrency rows.";
@@ -418,6 +419,127 @@ public static class VendorInteractionHelper
 
         return false;
     }
+
+    /// <summary>Match complete live transaction, never the first row with the requested item.</summary>
+    public static unsafe bool TryFindAuthorizedExchange(Crafting.VendorPurchaseAllocation allocation, out int index, out string? error,
+        out bool incomplete, out bool unsupported, bool requireSelected = false)
+    {
+        index = -1;
+        incomplete = false;
+        unsupported = false;
+        var itemVisible = GenericHelpers.TryGetAddonByName("ShopExchangeItem", out AtkUnitBase* itemAddon) && itemAddon->IsVisible;
+        var currencyVisible = GenericHelpers.TryGetAddonByName("ShopExchangeCurrency", out AtkUnitBase* currencyAddon) && currencyAddon->IsVisible;
+        var addon = itemVisible && currencyVisible ? "ShopExchangeItem+ShopExchangeCurrency"
+            : itemVisible ? "ShopExchangeItem" : currencyVisible ? "ShopExchangeCurrency" : "none";
+        var target = Dalamud.Targets.Target?.BaseId ?? 0;
+        var available = TryGetAgentShop(out var agent);
+        var receiveCount = agent == null ? -1 : agent->ItemReceiveCount;
+        var costCount = agent == null ? -1 : agent->ItemCostCount;
+        var selected = agent == null ? -1 : agent->SelectedItemIndex;
+        var context = $"addon={addon}; target={target}; expectedNpc={allocation.Vendor.NpcId}; agent={available}; receiveRows={receiveCount}; costRows={costCount}; selected={selected}; expectedItem={allocation.ItemId}; expectedOutput={allocation.OutputQuantityPerTransaction}; expectedCosts={string.Join(",", allocation.Costs.Select(c => $"{c.CurrencyItemId}:{c.Amount}"))}";
+        error = $"reason=TargetMismatch; {context}";
+        if (target != allocation.Vendor.NpcId) { incomplete = target == 0; return false; }
+        if (!itemVisible && !currencyVisible) { incomplete = true; error = $"reason=AddonNotReady; {context}"; return false; }
+        if (!available || receiveCount <= 0)
+        { incomplete = true; error = $"reason=AgentOrReceiveRowsNotReady; {context}"; return false; }
+        if (receiveCount > 2048)
+        { unsupported = true; error = $"reason=ReceiveCountOutOfBounds; {context}"; return false; }
+        var outputs = new List<(uint ItemId, uint Quantity)>();
+        for (var i = 0; i < receiveCount; i++)
+        {
+            var receive = agent->ItemReceive[i];
+            outputs.Add((receive.ItemId, receive.ItemCount));
+        }
+        context += $"; receiveSample=[{string.Join(",", outputs.Take(4).Select((r, i) => $"{i}:{r.ItemId}x{r.Quantity}"))}]; requestedAgentRows=[{string.Join(",", outputs.Select((r, i) => (Row: r, Index: i)).Where(r => r.Row.ItemId == allocation.ItemId).Take(4).Select(r => $"{r.Index}:{r.Row.ItemId}x{r.Row.Quantity}"))}]";
+        // AgentShop documents three cost slots, but not their row mapping. Do not assume i*3+j.
+        // Use the source-backed basic currency addon contract; unknown exchange forms fail closed.
+        if (!currencyVisible || itemVisible || allocation.Costs.Count != 1)
+        {
+            unsupported = true;
+            error = $"reason=UnsupportedLiveExchangeLayout; {context}; {DescribeRawExchangeCosts(agent)}";
+            return false;
+        }
+        if (currencyAddon->AtkValues == null || currencyAddon->AtkValuesCount > 16384)
+        { unsupported = true; error = $"reason=InvalidAtkValueBounds; {context}"; return false; }
+        var values = new uint?[Math.Min((int)currencyAddon->AtkValuesCount, BasicCurrencyExchangeReader.CallbackBase + BasicCurrencyExchangeReader.MaximumRows)];
+        if (values.Length <= BasicCurrencyExchangeReader.CurrencyIconSlot)
+        { incomplete = true; error = $"reason=BasicHeaderNotReady; {context}"; return false; }
+        values[BasicCurrencyExchangeReader.CountSlot] = ReadAtkNumber(currencyAddon, BasicCurrencyExchangeReader.CountSlot);
+        values[BasicCurrencyExchangeReader.CurrencyIconSlot] = ReadAtkNumber(currencyAddon, BasicCurrencyExchangeReader.CurrencyIconSlot);
+        if (values[BasicCurrencyExchangeReader.CurrencyIconSlot] is not { } icon || icon == 0)
+        { incomplete = true; error = $"reason=CurrencyIconNotReady; {context}"; return false; }
+        var itemSheet = Dalamud.GameData.GetExcelSheet<Item>();
+        if (itemSheet == null)
+        { incomplete = true; error = $"reason=CurrencyIdentityDataNotReady; {context}"; return false; }
+        if (!CurrencyIdsByIcon.TryGetValue(icon, out var currencyIds))
+        {
+            currencyIds = itemSheet.Where(item => item.Icon == icon).Select(item => item.RowId).Take(2).ToArray();
+            if (CurrencyIdsByIcon.Count >= 32) CurrencyIdsByIcon.Clear();
+            CurrencyIdsByIcon[icon] = currencyIds;
+        }
+        if (LiveVendorExchange.UniqueCurrencyId(currencyIds) is not { } currencyId)
+        {
+            unsupported = true;
+            error = $"reason=CurrencyIconNotUnique; icon={icon}; candidates=[{string.Join(",", currencyIds)}]; {context}";
+            return false;
+        }
+        var count = values[BasicCurrencyExchangeReader.CountSlot] ?? 0;
+        if (count <= BasicCurrencyExchangeReader.MaximumRows)
+            for (var i = 0; i < count; i++)
+                if (BasicCurrencyExchangeReader.CallbackBase + i < values.Length)
+                {
+                    values[BasicCurrencyExchangeReader.ItemBase + i] = ReadAtkNumber(currencyAddon, BasicCurrencyExchangeReader.ItemBase + i);
+                    values[BasicCurrencyExchangeReader.PriceBase + i] = ReadAtkNumber(currencyAddon, BasicCurrencyExchangeReader.PriceBase + i);
+                    values[BasicCurrencyExchangeReader.CallbackBase + i] = ReadAtkNumber(currencyAddon, BasicCurrencyExchangeReader.CallbackBase + i);
+                }
+        var status = BasicCurrencyExchangeReader.Read(values, outputs, currencyId, allocation.CurrencyGroup, out var rows, out var readerDetail);
+        var match = status == LiveExchangeStatus.Ready
+            ? LiveVendorExchange.Match(allocation, rows, requireSelected ? selected : null)
+            : new LiveExchangeMatch(status, -1, readerDetail);
+        if (match.Status != LiveExchangeStatus.Match)
+        {
+            incomplete = match.Status == LiveExchangeStatus.Incomplete;
+            unsupported = match.Status == LiveExchangeStatus.Unsupported;
+            var observed = rows.Where(r => r.ItemId == allocation.ItemId).Take(4)
+                .Select(r => $"callback={r.CallbackIndex},item={r.ItemId},output={r.OutputQuantity},costs=[{string.Join(",", r.Costs.Select(c => $"{c.CurrencyItemId}:{c.Amount}"))}]");
+            error = $"reason={match.Detail}; {readerDetail}; icon={icon}; {context}; observed=[{string.Join(";", observed)}]; {DescribeRawExchangeCosts(agent)}";
+            return false;
+        }
+        index = match.CallbackIndex;
+        error = null;
+        return true;
+    }
+
+    private static unsafe uint? ReadAtkNumber(AtkUnitBase* addon, int slot)
+    {
+        if (addon->AtkValues == null || slot < 0 || slot >= addon->AtkValuesCount) return null;
+        var value = addon->AtkValues[slot];
+        return value.Type switch { ValueType.UInt => value.UInt, ValueType.Int when value.Int >= 0 => (uint)value.Int, _ => null };
+    }
+
+    private static unsafe string DescribeRawExchangeCosts(AgentShop* agent)
+    {
+        if (agent == null || agent->ItemCost == null || agent->ItemCostCount < 0 || agent->ItemCostCount > 6144)
+            return "rawAgentCosts=unavailable";
+        var count = Math.Min(agent->ItemCostCount, 96);
+        var sample = new List<string>();
+        for (var i = 0; i < count; i++)
+        {
+            var cost = agent->ItemCost[i];
+            sample.Add($"{i}:{cost.ItemId}x{cost.ItemCount}(owned={cost.OwnedItemCount})");
+        }
+        return $"rawAgentCosts=[{string.Join(",", sample)}]; omittedSlots={agent->ItemCostCount - count}";
+    }
+
+    public static unsafe bool IsOwnedShopVisible(VendorShopType type)
+        => type switch
+        {
+            VendorShopType.GilShop => GenericHelpers.TryGetAddonByName("Shop", out AtkUnitBase* gil) && gil->IsVisible,
+            VendorShopType.GrandCompanySeals => GenericHelpers.TryGetAddonByName("GrandCompanyExchange", out AtkUnitBase* gc) && gc->IsVisible,
+            VendorShopType.SpecialCurrency => GenericHelpers.TryGetAddonByName("ShopExchangeItem", out AtkUnitBase* item) && item->IsVisible
+                || GenericHelpers.TryGetAddonByName("ShopExchangeCurrency", out AtkUnitBase* currency) && currency->IsVisible,
+            _ => false,
+        };
 
     public static unsafe bool IsGrandCompanyRankTabSelected(int rankIndex, out string? error)
         => IsGrandCompanyTabSelected(37u, rankIndex, "rank", out error);

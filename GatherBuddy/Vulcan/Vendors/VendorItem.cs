@@ -44,7 +44,8 @@ public sealed record VendorNpc(
     int                ShopItemIndex         = -1,
     uint               SourceShopId          = 0,
     int                GcRankIndex           = -1,
-    int                GcCategoryIndex       = -1
+    int                GcCategoryIndex       = -1,
+    int                SourceItemIndex       = -1
 );
 
 public sealed record VendorShopEntry(

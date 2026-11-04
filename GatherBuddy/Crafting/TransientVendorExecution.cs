@@ -10,7 +10,13 @@ public enum TransientVendorStartResult { Started, Busy, InvalidBatch, Purchasing
 public enum TransientVendorState { Idle, Ready, Purchasing, CleaningUp, Paused, CleanupBlocked, Finished }
 public enum TransientPurchaseStart { Started, Skipped, Unsafe }
 public sealed record TransientPurchaseReceipt(Guid SessionId, Guid AllocationId, uint AcquiredQuantity,
-    ulong? ConfirmedSpend, bool Interrupted, bool Fatal, string Message);
+    ulong? ConfirmedSpend, bool Interrupted, bool Fatal, string Message)
+{
+    public IReadOnlyDictionary<uint, ulong>? ConfirmedCosts { get; init; }
+    // Native adapter may reduce a request to the supported material stack size.
+    public uint? SubmittedOutputQuantity { get; init; }
+    public bool PreventVendorFallback { get; init; }
+}
 public sealed record TransientAllocationResult(Guid AllocationId, uint ItemId, uint RequestedQuantity,
     uint AcquiredQuantity, uint RemainingQuantity, ulong? ConfirmedSpend, string Message);
 public sealed record TransientVendorResult(Guid SessionId, MaterialAcquisitionCompletion Completion,
@@ -30,6 +36,7 @@ public interface ITransientVendorPort
     void Cancel(Guid sessionId);
     bool TryCleanup(Guid sessionId);
     void Release(Guid sessionId);
+    bool CanContinueInteraction(Guid sessionId, VendorPurchaseAllocation previous, VendorPurchaseAllocation next) => false;
 }
 
 /// <summary>Transient sequencing only. Does not create saved lists or advance gathering/crafting.</summary>
@@ -46,6 +53,9 @@ public sealed class TransientVendorExecution
     private int _index;
     private uint _acquired;
     private ulong _allocationSpend;
+    private readonly Dictionary<uint, ulong> _allocationCosts = new();
+    private VendorPurchaseAllocation? _alternative;
+    private readonly HashSet<VendorNpc> _attemptedVendors = new();
     private uint _activeRequested;
     private bool _pause;
     private bool _cancel;
@@ -75,15 +85,15 @@ public sealed class TransientVendorExecution
         if (!policy.Enabled) return TransientVendorStartResult.PurchasingDisabled;
         var batch = allocations.ToList();
         if (sessionId == Guid.Empty || _startedSessions.Contains(sessionId) || batch.Count == 0 || batch.Any(a => a.SessionId != sessionId
-                || a.OutputQuantityPerTransaction != 1 || !policy.Allows(a.CurrencyGroup)
+                || a.Costs.Any(c => !policy.Allows(c.CurrencyGroup))
                 || (a.CurrencyGroup == VendorCurrencyGroup.Gil) != (a.CurrencyItemId == 1)
                 || !inventoryTargets.TryGetValue(a.ItemId, out var target) || target == 0)
             || batch.Select(a => a.AllocationId).Distinct().Count() != batch.Count)
             return TransientVendorStartResult.InvalidBatch;
         try
         {
-            foreach (var group in batch.GroupBy(a => a.CurrencyItemId))
-                _ = group.Aggregate(0ul, (sum, allocation) => checked(sum + allocation.ExpectedCurrencyCost));
+            foreach (var group in batch.SelectMany(a => a.ExpectedCosts).GroupBy(c => c.Key))
+                _ = group.Aggregate(0ul, (sum, cost) => checked(sum + cost.Value));
         }
         catch (OverflowException) { return TransientVendorStartResult.InvalidBatch; }
         if (!_port.TryAcquire(sessionId, out var reason))
@@ -101,6 +111,9 @@ public sealed class TransientVendorExecution
         _index = 0;
         _acquired = 0;
         _allocationSpend = 0;
+        _allocationCosts.Clear();
+        _alternative = null;
+        _attemptedVendors.Clear();
         _pause = _cancel = _fatal = _uncertain = _skipAllocation = _cleanupFault = false;
         _targetSatisfied = false;
         _allocationMessage = string.Empty;
@@ -127,26 +140,52 @@ public sealed class TransientVendorExecution
                 }
                 var receipt = _port.Poll(SessionId);
                 if (receipt == null) return;
-                var allocation = _allocations[_index];
+                var allocation = _alternative ?? _allocations[_index];
                 if (receipt.SessionId != SessionId || receipt.AllocationId != allocation.AllocationId)
                 {
                     Record("StaleResult", "Ignored mismatched session/allocation receipt");
                     return;
                 }
-                var receiptCertain = receipt.AcquiredQuantity <= _activeRequested
-                    && receipt.ConfirmedSpend == checked((ulong)receipt.AcquiredQuantity * UnitCost(allocation));
+                var transactions = receipt.AcquiredQuantity / allocation.OutputQuantityPerTransaction;
+                var actualCosts = receipt.ConfirmedCosts ?? (allocation.Costs.Count == 1 && receipt.ConfirmedSpend.HasValue
+                    ? new Dictionary<uint, ulong> { [allocation.CurrencyItemId] = receipt.ConfirmedSpend.Value } : null);
+                var submitted = receipt.SubmittedOutputQuantity ?? _activeRequested;
+                var receiptCertain = submitted > 0 && submitted <= _activeRequested
+                    && submitted % allocation.OutputQuantityPerTransaction == 0
+                    && receipt.AcquiredQuantity <= submitted
+                    && receipt.AcquiredQuantity % allocation.OutputQuantityPerTransaction == 0
+                    && actualCosts != null && actualCosts.Count == allocation.Costs.Count
+                    && allocation.Costs.All(c => actualCosts.GetValueOrDefault(c.CurrencyItemId) == checked(c.Amount * transactions));
                 if (!receiptCertain)
                     _uncertain = true;
                 _acquired = checked(_acquired + Math.Min(receipt.AcquiredQuantity, _activeRequested));
-                if (receiptCertain && receipt.ConfirmedSpend is { } spend)
+                if (receiptCertain)
                 {
-                    _spent[allocation.CurrencyItemId] = checked(_spent.GetValueOrDefault(allocation.CurrencyItemId) + spend);
-                    _allocationSpend = checked(_allocationSpend + spend);
+                    foreach (var cost in actualCosts!)
+                    {
+                        _spent[cost.Key] = checked(_spent.GetValueOrDefault(cost.Key) + cost.Value);
+                        _allocationCosts[cost.Key] = checked(_allocationCosts.GetValueOrDefault(cost.Key) + cost.Value);
+                    }
+                    _allocationSpend = _allocationCosts.GetValueOrDefault(allocation.CurrencyItemId);
                 }
                 _fatal |= receipt.Fatal || _uncertain;
                 _allocationMessage = receipt.Message;
-                _skipAllocation = receipt.AcquiredQuantity < _activeRequested && !receipt.Interrupted;
+                _skipAllocation = receipt.AcquiredQuantity < submitted && !receipt.Interrupted;
+                if (_skipAllocation && receipt.AcquiredQuantity == 0 && !_fatal && !_cancel && !receipt.Interrupted && !receipt.PreventVendorFallback)
+                    TryNextAuthorizedVendor();
                 Record("Receipt", $"allocation={allocation.AllocationId}; acquired={receipt.AcquiredQuantity}; confirmedSpend={receipt.ConfirmedSpend?.ToString() ?? "unknown"}; certain={!_uncertain}; message={receipt.Message}");
+                var finished = _skipAllocation || _acquired >= allocation.RequestedOutputQuantity;
+                var nextIndex = finished ? _index + 1 : _index;
+                if (!_cancel && !_fatal && !_pause && !receipt.Interrupted && !_skipAllocation
+                    && receipt.AcquiredQuantity > 0 && nextIndex < _allocations.Count
+                    && _port.CanContinueInteraction(SessionId, allocation, nextIndex == _index ? _alternative ?? allocation : _allocations[nextIndex]))
+                {
+                    if (finished) FinishAllocation();
+                    State = TransientVendorState.Ready;
+                    Status = "Keeping owned shop open; revalidating next batch";
+                    Record("KeepShopOpen", "Settled transaction; compatible owned vendor context retained");
+                    return;
+                }
                 BeginCleanup(now);
                 return;
             }
@@ -181,11 +220,13 @@ public sealed class TransientVendorExecution
                 return;
             }
             State = TransientVendorState.Ready;
-            var current = _allocations[_index];
+            var current = _alternative ?? _allocations[_index];
             var owned = _port.ReadItemCount(current.ItemId);
             var target = _targets[current.ItemId];
             var needed = target > owned ? target - owned : 0;
-            var quantity = Math.Min(99u, Math.Min(current.RequestedOutputQuantity - _acquired, needed));
+            var transactionsNeeded = ExchangeTransactions.Needed(needed, current.OutputQuantityPerTransaction);
+            var transactionsLeft = (current.RequestedOutputQuantity - _acquired) / current.OutputQuantityPerTransaction;
+            var quantity = checked(Math.Min(99u, Math.Min(transactionsLeft, transactionsNeeded)) * current.OutputQuantityPerTransaction);
             if (quantity == 0)
             {
                 _targetSatisfied = needed == 0;
@@ -193,20 +234,25 @@ public sealed class TransientVendorExecution
                 FinishAllocation();
                 return;
             }
-            var otherCommitments = _allocations.Skip(_index + 1).Where(a => a.CurrencyItemId == current.CurrencyItemId)
-                .Aggregate(0ul, (sum, a) => checked(sum + a.ExpectedCurrencyCost));
-            var maximum = current.ExpectedCurrencyCost - _allocationSpend;
-            if (current.CurrencyItemId == 1 && _policy!.MaximumGilSpendPerRun is { } cap)
+            var budgets = new Dictionary<uint, TransientPurchaseBudget>();
+            foreach (var cost in current.Costs)
             {
-                var used = _spent.GetValueOrDefault(1u);
-                var remainingCap = cap > used ? cap - used : 0;
-                remainingCap = remainingCap > otherCommitments ? remainingCap - otherCommitments : 0;
-                maximum = Math.Min(maximum, remainingCap);
+                var other = _allocations.Skip(_index + 1).Aggregate(0ul, (sum, a) => checked(sum + a.ExpectedCosts.GetValueOrDefault(cost.CurrencyItemId)));
+                var maximumCost = current.ExpectedCosts[cost.CurrencyItemId] - _allocationCosts.GetValueOrDefault(cost.CurrencyItemId);
+                if (cost.CurrencyItemId == 1 && _policy!.MaximumGilSpendPerRun is { } cap)
+                {
+                    var used = _spent.GetValueOrDefault(1u);
+                    var remainingCap = cap > used ? cap - used : 0;
+                    remainingCap = remainingCap > other ? remainingCap - other : 0;
+                    maximumCost = Math.Min(maximumCost, remainingCap);
+                }
+                budgets[cost.CurrencyItemId] = new(_policy!.GetReserve(cost.CurrencyItemId), other, maximumCost);
             }
-            var budget = new TransientPurchaseBudget(_policy!.GetReserve(current.CurrencyItemId), otherCommitments, maximum);
+            var budget = budgets[current.CurrencyItemId] with { CurrencyBudgets = new ReadOnlyDictionary<uint, TransientPurchaseBudget>(budgets) };
             _activeRequested = quantity;
+            _attemptedVendors.Add(current.Vendor);
             var start = _port.TryStart(SessionId, current, quantity, target, budget, out var startReason);
-            Record("Request", $"allocation={current.AllocationId}; item={current.ItemId}; quantity={quantity}; otherCommitments={otherCommitments}; maximumSpend={maximum}; result={start}; reason={startReason}");
+            Record("Request", $"allocation={current.AllocationId}; item={current.ItemId}; quantity={quantity}; otherCommitments={budget.OtherCommitments}; maximumSpend={budget.MaximumSpend}; result={start}; reason={startReason}");
             Status = startReason;
             if (start == TransientPurchaseStart.Started) State = TransientVendorState.Purchasing;
             else
@@ -214,6 +260,7 @@ public sealed class TransientVendorExecution
                 _allocationMessage = startReason;
                 _skipAllocation = true;
                 _fatal |= start == TransientPurchaseStart.Unsafe;
+                if (!_fatal && !_cancel) TryNextAuthorizedVendor();
                 BeginCleanup(now);
             }
         }
@@ -232,6 +279,7 @@ public sealed class TransientVendorExecution
         if (!IsBusy) return;
         _pause = true;
         _port.Pause(SessionId);
+        if (State == TransientVendorState.Ready) BeginCleanup(DateTime.UtcNow);
         Record("Pause", "No new batch will start; submitted transaction must settle");
     }
     public void Resume()
@@ -250,12 +298,21 @@ public sealed class TransientVendorExecution
         Record("Cancel", "Owned work cancelled; awaiting cleanup before release");
     }
 
-    private static ulong UnitCost(VendorPurchaseAllocation allocation) => allocation.ExpectedCurrencyCost / allocation.TransactionCount;
     private void BeginCleanup(DateTime now)
     {
         State = TransientVendorState.CleaningUp;
         _cleanupStarted = now;
         Status = "Waiting for vendor interaction and purchase settlement";
+    }
+
+    private void TryNextAuthorizedVendor()
+    {
+        var original = _allocations[_index];
+        var next = original.AuthorizedAlternatives.FirstOrDefault(v => !_attemptedVendors.Contains(v));
+        if (next == null) return;
+        _alternative = original.WithAuthorizedVendor(next);
+        _skipAllocation = false;
+        Record("AlternativeVendor", $"allocation={original.AllocationId}; vendor={next.NpcId}; originalCostsAndOutputUnchanged=True; plannedAuthorization=True");
     }
     private void FinishAllocation()
     {
@@ -266,6 +323,9 @@ public sealed class TransientVendorExecution
         _index++;
         _acquired = 0;
         _allocationSpend = 0;
+        _allocationCosts.Clear();
+        _alternative = null;
+        _attemptedVendors.Clear();
         _skipAllocation = false;
         _targetSatisfied = false;
         _allocationMessage = string.Empty;

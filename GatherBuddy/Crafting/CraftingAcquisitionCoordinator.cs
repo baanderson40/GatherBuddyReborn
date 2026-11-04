@@ -126,7 +126,10 @@ public sealed class CraftingAcquisitionCoordinator
         => plan.Allocations.GroupBy(a => a.ItemId).ToDictionary(g => g.Key, g =>
         {
             var owned = input.Inventory.GetValueOrDefault(g.Key);
-            return g.Aggregate(checked((uint)owned.NQ + (uint)owned.HQ), (target, allocation) => checked(target + allocation.RequestedOutputQuantity));
+            var output = g.Aggregate(0u, (sum, allocation) => checked(sum + allocation.RequestedOutputQuantity));
+            var demand = plan.Materials.Single(m => m.ItemId == g.Key).DemandAfterInventory;
+            var compatible = checked((uint)(demand.Total - demand.RequiredHQ));
+            return checked((uint)owned.NQ + (uint)owned.HQ + Math.Min(output, compatible));
         });
 
     public Dictionary<uint, int> BuildGatherTargets()

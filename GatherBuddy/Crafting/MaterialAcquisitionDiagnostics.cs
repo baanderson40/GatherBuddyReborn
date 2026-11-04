@@ -32,7 +32,7 @@ public static class MaterialAcquisitionDiagnostics
         foreach (var offer in input.Offers.OrderBy(offer => offer.ItemId).ThenBy(offer => offer.CurrencyItemId).ThenBy(offer => offer.Vendor.NpcId).ThenBy(offer => offer.Vendor.ShopId))
             lines.Add($"OFFER {Name(offer.ItemId)}: vendor={Clean(offer.Vendor.Name)} [{offer.Vendor.NpcId}]; shop={offer.Vendor.ShopId}; sourceShop={offer.Vendor.SourceShopId}; type={offer.ShopType}/{offer.Vendor.MenuShopType}; row={offer.Vendor.ShopItemIndex}; currency={Name(offer.CurrencyItemId)} ({offer.CurrencyGroup}); cost={offer.CostPerTransaction}; output={offer.OutputQuantityPerTransaction}; supported={offer.Supported}; access={offer.Access}; currencyAllowed={input.Policy.Allows(offer.CurrencyGroup)}; rejection={Clean(offer.RejectionReason ?? "none; affordability evaluated by planner")}.");
         foreach (var allocation in plan.Allocations)
-            lines.Add($"ALLOCATION {Name(allocation.ItemId)}: quantity={allocation.RequestedOutputQuantity}; transactions={allocation.TransactionCount}; currency={Name(allocation.CurrencyItemId)}; expectedCost={allocation.ExpectedCurrencyCost}; vendor={allocation.Vendor.NpcId}; shop={allocation.Vendor.ShopId}; sourceShop={allocation.Vendor.SourceShopId}; allocation={allocation.AllocationId}.");
+            lines.Add($"ALLOCATION {Name(allocation.ItemId)}: quantity={allocation.RequestedOutputQuantity}; transactions={allocation.TransactionCount}; currency={Name(allocation.CurrencyItemId)}; expectedCost={allocation.ExpectedCurrencyCost}; allCosts={string.Join(", ", allocation.ExpectedCosts.Select(c => $"{Name(c.Key)}={c.Value}"))}; vendor={allocation.Vendor.NpcId}; shop={allocation.Vendor.ShopId}; sourceShop={allocation.Vendor.SourceShopId}; sourceRow={allocation.Vendor.SourceItemIndex}; authorizedAlternativeVendors={allocation.AuthorizedAlternatives.Count}; allocation={allocation.AllocationId}.");
         foreach (var material in plan.Materials)
         {
             lines.Add($"MATERIAL {Name(material.ItemId)}: missingAfterInventory={material.DemandAfterInventory.Total} ({Quality(material.DemandAfterInventory)}); plannedPurchase={material.PlannedPurchaseQuantity}; gatherFallback={material.GatheringDemand.Total} ({Quality(material.GatheringDemand)}); unresolved={material.UnresolvedDemand.Total} ({Quality(material.UnresolvedDemand)}).");
@@ -58,7 +58,7 @@ public static class MaterialAcquisitionDiagnostics
         var offers = input.Offers.Where(offer => missingIds.Contains(offer.ItemId)).ToList();
         var relevantCurrencies = offers.Where(offer => MaterialAcquisitionPlanner.GetOfferRejection(offer, input.Policy) == null
                 && input.Materials.Any(material => material.ItemId == offer.ItemId && material.AllowPurchasing))
-            .Select(offer => offer.CurrencyItemId).Concat(plan.ProjectedSpending.Keys).ToHashSet();
+            .SelectMany(offer => offer.Costs.Select(c => c.CurrencyItemId)).Concat(plan.ProjectedSpending.Keys).ToHashSet();
         var lines = new List<string>
         {
             $"BEGIN session={input.SessionId}; READ ONLY; current inventory only; no retainer withdrawal simulated.",
@@ -79,7 +79,7 @@ public static class MaterialAcquisitionDiagnostics
         {
             var unknownAccess = offers.Any(offer => offer.ItemId == allocation.ItemId && offer.CurrencyItemId == allocation.CurrencyItemId
                 && offer.Vendor == allocation.Vendor && offer.Access == VendorOfferAccess.Unknown);
-            lines.Add($"BUY {name(allocation.ItemId)}: quantity={allocation.RequestedOutputQuantity}; currency={name(allocation.CurrencyItemId)}; cost={allocation.ExpectedCurrencyCost}; vendor={Clean(allocation.Vendor.Name)} [{allocation.Vendor.NpcId}]; shop={allocation.Vendor.ShopId}; access={(unknownAccess ? "not verified" : "snapshot accessible; recheck before purchase")}.");
+            lines.Add($"BUY {name(allocation.ItemId)}: quantity={allocation.RequestedOutputQuantity}; transactions={allocation.TransactionCount}; outputPerTransaction={allocation.OutputQuantityPerTransaction}; currency={name(allocation.CurrencyItemId)}; cost={allocation.ExpectedCurrencyCost}; allCosts={string.Join(", ", allocation.ExpectedCosts.Select(c => $"{name(c.Key)}={c.Value}"))}; vendor={Clean(allocation.Vendor.Name)} [{allocation.Vendor.NpcId}]; shop={allocation.Vendor.ShopId}; access={(unknownAccess ? "not verified" : "snapshot accessible; recheck before purchase")}.");
         }
         foreach (var material in missing)
         {

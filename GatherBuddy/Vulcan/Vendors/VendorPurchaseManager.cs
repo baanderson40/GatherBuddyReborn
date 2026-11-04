@@ -6,6 +6,9 @@ using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using GatherBuddy.AutoGather.Collectables;
 using GatherBuddy.Automation;
+using GatherBuddy.Crafting;
+using GatherBuddy.Utility;
+using Math = System.Math;
 using GatherBuddy.Plugin;
 
 namespace GatherBuddy.Vulcan.Vendors;
@@ -14,6 +17,7 @@ public sealed record VendorPurchaseConstraints(uint ReservedScripAmount = 0)
 {
     public TransientPurchaseBudget? TransientBudget { get; init; }
     public uint? TargetInventoryQuantity { get; init; }
+    public VendorPurchaseAllocation? AuthorizedExchange { get; init; }
     public bool HasReservedScripAmount
         => ReservedScripAmount > 0;
 }
@@ -67,6 +71,9 @@ public sealed class VendorPurchaseManager : IDisposable
         public Guid? AllocationId { get; init; }
         public ulong? ConfirmedCurrencySpent { get; init; }
         public bool AccountingUncertain { get; init; }
+        public IReadOnlyDictionary<uint, ulong>? ConfirmedCosts { get; init; }
+        public bool VendorRouteUnavailable { get; init; }
+        public bool UnsupportedExchangeLayout { get; init; }
     }
 
     private static readonly TimeSpan ActionThrottle       = TimeSpan.FromMilliseconds(400);
@@ -101,6 +108,13 @@ public sealed class VendorPurchaseManager : IDisposable
     private ulong _confirmedCurrencySpent;
     private bool _accountingUncertain;
     private bool _ownedExchangeConfirmed;
+    private readonly VendorExchangeReadiness _exchangeReadiness = new();
+    private int _submittedExchangeIndex = -1;
+    private static readonly DiagnosticThrottle<string> ExchangeDiagnostics = new(TimeSpan.FromSeconds(5), 64);
+    private readonly Dictionary<uint, uint> _balancesBeforeBatch = new();
+    private readonly Dictionary<uint, ulong> _confirmedCosts = new();
+    private uint OutputPerTransaction => _purchaseConstraints?.AuthorizedExchange?.OutputQuantityPerTransaction ?? 1;
+    private uint BatchTransactions => _currentBatchQuantity / OutputPerTransaction;
     public VendorAutomationLease AutomationLease { get; } = new();
     public bool HasSubmittedBatch => _request != null && _currentBatchQuantity > 0
         && _state is State.ConfirmingPurchase or State.WaitingForPurchaseComplete;
@@ -295,7 +309,7 @@ public sealed class VendorPurchaseManager : IDisposable
             return 0;
 
         var requiresSinglePurchaseBatch = RequiresSinglePurchaseBatch(_request.ItemId);
-        return Math.Min(remainingQuantity, requiresSinglePurchaseBatch ? 1u : MaxPurchaseBatchSize);
+        return Math.Min(remainingQuantity, requiresSinglePurchaseBatch ? 1u : checked(MaxPurchaseBatchSize * OutputPerTransaction));
     }
 
     private bool TryPrepareBatchQuantity(uint remainingQuantity)
@@ -304,7 +318,11 @@ public sealed class VendorPurchaseManager : IDisposable
             return false;
 
         _currentBatchQuantity = 0;
+        _ownedExchangeConfirmed = false;
+        _submittedExchangeIndex = -1;
         var desiredBatchQuantity = GetDesiredBatchQuantity(remainingQuantity);
+        if (_ownerSessionId.HasValue && _purchaseConstraints?.AuthorizedExchange is { } authorized)
+            return TryPrepareAuthorizedBatch(desiredBatchQuantity, authorized);
         if (_ownerSessionId.HasValue && _purchaseConstraints?.TargetInventoryQuantity is { } target)
         {
             var owned = (uint)Math.Max(0, CountItemOnCharacter(_request.ItemId));
@@ -344,6 +362,39 @@ public sealed class VendorPurchaseManager : IDisposable
 
 
         _currentBatchQuantity = affordableBatchQuantity;
+        return true;
+    }
+
+    private unsafe bool TryPrepareAuthorizedBatch(uint desired, VendorPurchaseAllocation allocation)
+    {
+        if (_request == null || _purchaseConstraints?.TransientBudget?.CurrencyBudgets is not { } budgets)
+        { Fail("Missing exact exchange authorization/budgets."); return false; }
+        if (_request.ShopType == VendorShopType.SpecialCurrency)
+        {
+            if (!VendorAcquisitionOfferAdapter.HasKnownQuestAccess(_request.Vendor))
+            { Fail("Exchange quest access unavailable or locked."); return false; }
+            var error = VendorAcquisitionOfferAdapter.ReadExchange(_request.ItemId, _request.Vendor, out var costs, out var output);
+            if (error != null || output != allocation.OutputQuantityPerTransaction || !costs.SequenceEqual(allocation.Costs))
+            { Fail(error ?? "Original exchange changed; no substitution authorized."); return false; }
+        }
+        var owned = (uint)Math.Max(0, CountItemOnCharacter(_request.ItemId));
+        var target = _purchaseConstraints.TargetInventoryQuantity ?? owned;
+        var transactions = Math.Min(desired / OutputPerTransaction, ExchangeTransactions.Needed(target > owned ? target - owned : 0, OutputPerTransaction));
+        var inventory = InventoryManager.Instance();
+        if (inventory == null || inventory->GetEmptySlotsInBag() == 0)
+        { CompletePartially("No free inventory slot; purchasing stopped conservatively."); return false; }
+        _balancesBeforeBatch.Clear();
+        foreach (var cost in allocation.Costs)
+        {
+            if (!budgets.TryGetValue(cost.CurrencyItemId, out var budget))
+            { Fail("Missing budget for exchange cost."); return false; }
+            var balance = VendorCurrencyAvailabilityResolver.Resolve(cost.CurrencyGroup, cost.CurrencyItemId, "authorized currency").AvailableAmount;
+            _balancesBeforeBatch[cost.CurrencyItemId] = balance;
+            transactions = (uint)Math.Min(transactions, budget.Spendable(balance, _confirmedCosts.GetValueOrDefault(cost.CurrencyItemId)) / cost.Amount);
+        }
+        if (transactions == 0)
+        { CompletePartially("Inventory target or live currency/reserve/budget permits no further transaction."); return false; }
+        _currentBatchQuantity = checked(transactions * OutputPerTransaction);
         return true;
     }
 
@@ -424,20 +475,43 @@ public sealed class VendorPurchaseManager : IDisposable
 
         if (_ownerSessionId.HasValue)
         {
-            var currency = VendorCurrencyAvailabilityResolver.Resolve(_request.CurrencyGroup, _request.CurrencyItemId, _request.CurrencyName).AvailableAmount;
-            var expectedSpend = checked((ulong)purchasedThisBatch * _request.Cost);
-            // Currency/inventory updates can arrive on different frames. Wait for both; never launch a duplicate purchase.
-            if (currency > _currencyBeforeBatch || (ulong)(_currencyBeforeBatch - currency) != expectedSpend)
+            if (_purchaseConstraints?.AuthorizedExchange is { } exchange)
             {
-                if ((DateTime.UtcNow - _stateStartTime) > PurchaseTimeout)
+                var transactions = purchasedThisBatch / OutputPerTransaction;
+                var matches = batchIncrease == _currentBatchQuantity && purchasedThisBatch % OutputPerTransaction == 0
+                    && exchange.Costs.All(cost =>
+                    {
+                        var balance = VendorCurrencyAvailabilityResolver.Resolve(cost.CurrencyGroup, cost.CurrencyItemId, "authorized currency").AvailableAmount;
+                        return _balancesBeforeBatch.TryGetValue(cost.CurrencyItemId, out var before) && balance <= before
+                            && (ulong)(before - balance) == checked(cost.Amount * transactions);
+                    });
+                if (!matches)
                 {
-                    _accountingUncertain = true;
-                    Fail("Inventory/currency changes could not be reconciled; further transient purchasing stopped.");
-                    return true;
+                    if ((DateTime.UtcNow - _stateStartTime) > PurchaseTimeout)
+                    { _accountingUncertain = true; Fail("Exchange inventory/all-cost receipt mismatch; no further purchase submitted."); return true; }
+                    return false;
                 }
-                return false;
+                foreach (var cost in exchange.Costs)
+                    _confirmedCosts[cost.CurrencyItemId] = checked(_confirmedCosts.GetValueOrDefault(cost.CurrencyItemId) + cost.Amount * transactions);
+                _confirmedCurrencySpent = _confirmedCosts.GetValueOrDefault(exchange.CurrencyItemId);
             }
-            _confirmedCurrencySpent = checked(_confirmedCurrencySpent + expectedSpend);
+            else
+            {
+                var currency = VendorCurrencyAvailabilityResolver.Resolve(_request.CurrencyGroup, _request.CurrencyItemId, _request.CurrencyName).AvailableAmount;
+                var expectedSpend = checked((ulong)purchasedThisBatch * _request.Cost);
+                // Currency/inventory updates can arrive on different frames. Wait for both; never launch a duplicate purchase.
+                if (currency > _currencyBeforeBatch || (ulong)(_currencyBeforeBatch - currency) != expectedSpend)
+                {
+                    if ((DateTime.UtcNow - _stateStartTime) > PurchaseTimeout)
+                    {
+                        _accountingUncertain = true;
+                        Fail("Inventory/currency changes could not be reconciled; further transient purchasing stopped.");
+                        return true;
+                    }
+                    return false;
+                }
+                _confirmedCurrencySpent = checked(_confirmedCurrencySpent + expectedSpend);
+            }
         }
 
         _completedQuantity += purchasedThisBatch;
@@ -558,7 +632,7 @@ public sealed class VendorPurchaseManager : IDisposable
 
             if (selectionError != null)
             {
-                Fail(selectionError);
+                Fail(selectionError, vendorRouteUnavailable: true);
                 return;
             }
         }
@@ -573,7 +647,7 @@ public sealed class VendorPurchaseManager : IDisposable
         {
             if (_interactionAttempts >= MaxInteractionTries)
             {
-                Fail($"Timed out opening {_request.Vendor.Name}'s {DescribeShopLabel(_request)} for {_request.ItemName}.");
+                Fail($"Timed out opening {_request.Vendor.Name}'s {DescribeShopLabel(_request)} for {_request.ItemName}.", vendorRouteUnavailable: true);
                 return;
             }
 
@@ -795,12 +869,28 @@ public sealed class VendorPurchaseManager : IDisposable
         if (!TryPrepareBatchQuantity(remainingQuantity))
             return;
         _ownedCountBeforePurchase = CountItemOnCharacter(_request.ItemId);
-        if (!VendorInteractionHelper.TrySelectSpecialShopItem(_request.Vendor.ShopItemIndex, _request.ItemId, _currentBatchQuantity, out var itemError))
+        var index = _request.Vendor.ShopItemIndex;
+        if (_purchaseConstraints?.AuthorizedExchange is { } authorized
+            && !VendorInteractionHelper.TryFindAuthorizedExchange(authorized, out index, out var validationError, out var incomplete, out var unsupported))
+        {
+            LogExchangeValidation("selection", validationError, incomplete);
+            if (_exchangeReadiness.ShouldWait(incomplete, Environment.TickCount64))
+            {
+                _statusText = $"Waiting for live exchange data for {_request.ItemName} (3 second limit)";
+                return;
+            }
+            Fail($"Live exchange validation rejected before submission: {validationError}", unsupportedExchangeLayout: unsupported);
+            return;
+        }
+        _exchangeReadiness.Reset();
+        if (!VendorInteractionHelper.TrySelectSpecialShopItem(index, _request.ItemId, BatchTransactions, out var itemError,
+                exactIndex: _ownerSessionId.HasValue))
         {
             if (itemError != null)
                 Fail(itemError);
             return;
         }
+        _submittedExchangeIndex = index;
 
         _state = State.ConfirmingPurchase;
         _stateStartTime = DateTime.UtcNow;
@@ -884,6 +974,8 @@ public sealed class VendorPurchaseManager : IDisposable
         if (!TryPrepareBatchQuantity(remainingQuantity))
             return;
         _ownedCountBeforePurchase = CountItemOnCharacter(_request.ItemId);
+        if (_purchaseConstraints?.AuthorizedExchange != null)
+        { Fail("Owned gemstone exchanges require a verifiable direct SpecialShop route."); return; }
         if (!VendorInteractionHelper.TrySelectInclusionShopItem(_request.Vendor.ShopItemIndex, _request.ItemId, _currentBatchQuantity, out var itemError))
         {
             if (itemError != null)
@@ -1024,29 +1116,61 @@ public sealed class VendorPurchaseManager : IDisposable
         {
             if (TryAdvancePurchaseProgress()) return;
             if (CountItemOnCharacter(_request.ItemId) > _ownedCountBeforePurchase) return;
+            if (_request.ShopType == VendorShopType.SpecialCurrency && _purchaseConstraints?.AuthorizedExchange is { } liveExchange)
+            {
+                if (!VendorInteractionHelper.TryFindAuthorizedExchange(liveExchange, out var liveIndex, out var validationError, out var incomplete, out _, requireSelected: true))
+                {
+                    LogExchangeValidation("confirmation", validationError, incomplete);
+                    if ((DateTime.UtcNow - _stateStartTime) > ConfirmTimeout)
+                    { _accountingUncertain = true; Fail($"Authorized live exchange could not be verified before confirmation: {validationError}"); }
+                    return;
+                }
+                if (liveIndex != _submittedExchangeIndex)
+                { _accountingUncertain = true; Fail("Live exchange callback index changed after selection; no confirmation authorized."); return; }
+            }
             if (_purchaseConstraints?.TargetInventoryQuantity is { } target
-                && (ulong)Math.Max(0, CountItemOnCharacter(_request.ItemId)) + _currentBatchQuantity > target)
+                && ((ulong)Math.Max(0, CountItemOnCharacter(_request.ItemId)) >= target
+                    || (ulong)Math.Max(0, CountItemOnCharacter(_request.ItemId)) + _currentBatchQuantity > (ulong)target + OutputPerTransaction - 1))
             {
                 _accountingUncertain = true;
                 Fail("Inventory target changed before confirmation; no additional confirmation submitted.");
                 return;
             }
-            var availability = VendorCurrencyAvailabilityResolver.Resolve(_request.CurrencyGroup, _request.CurrencyItemId, _request.CurrencyName);
-            if (availability.AvailableAmount != _currencyBeforeBatch)
+            if (_purchaseConstraints?.AuthorizedExchange is { } exchange)
             {
-                if ((DateTime.UtcNow - _stateStartTime) > PurchaseTimeout)
+                if (_purchaseConstraints.TransientBudget?.CurrencyBudgets is not { } budgets
+                    || exchange.Costs.Any(cost =>
+                    {
+                        var balance = VendorCurrencyAvailabilityResolver.Resolve(cost.CurrencyGroup, cost.CurrencyItemId, "authorized currency").AvailableAmount;
+                        return !_balancesBeforeBatch.TryGetValue(cost.CurrencyItemId, out var before) || balance != before
+                            || !budgets.TryGetValue(cost.CurrencyItemId, out var budget)
+                            || budget.Spendable(balance, _confirmedCosts.GetValueOrDefault(cost.CurrencyItemId)) < checked(cost.Amount * BatchTransactions);
+                    }))
+                {
+                    if ((DateTime.UtcNow - _stateStartTime) > PurchaseTimeout)
+                    { _accountingUncertain = true; Fail("Exchange costs changed before matching inventory receipt; stopped for reconciliation."); }
+                    return;
+                }
+            }
+            else
+            {
+                var availability = VendorCurrencyAvailabilityResolver.Resolve(_request.CurrencyGroup, _request.CurrencyItemId, _request.CurrencyName);
+                if (availability.AvailableAmount != _currencyBeforeBatch)
+                {
+                    if ((DateTime.UtcNow - _stateStartTime) > PurchaseTimeout)
+                    {
+                        _accountingUncertain = true;
+                        Fail("Currency changed without a matching inventory receipt; no further confirmation submitted.");
+                    }
+                    return;
+                }
+                if (_purchaseConstraints?.TransientBudget is not { } budget
+                    || budget.Spendable(availability.AvailableAmount, _confirmedCurrencySpent) < checked((ulong)_currentBatchQuantity * _request.Cost))
                 {
                     _accountingUncertain = true;
-                    Fail("Currency changed without a matching inventory receipt; no further confirmation submitted.");
+                    Fail("Currency changed before confirmation; transient purchase stopped for reconciliation.");
+                    return;
                 }
-                return;
-            }
-            if (_purchaseConstraints?.TransientBudget is not { } budget
-                || budget.Spendable(availability.AvailableAmount, _confirmedCurrencySpent) < checked((ulong)_currentBatchQuantity * _request.Cost))
-            {
-                _accountingUncertain = true;
-                Fail("Currency changed before confirmation; transient purchase stopped for reconciliation.");
-                return;
             }
         }
 
@@ -1155,7 +1279,7 @@ public sealed class VendorPurchaseManager : IDisposable
             message,
             false);
         result = EnrichResult(result);
-        ResetState();
+        ResetState(keepInteraction: _ownerSessionId.HasValue && _purchaseConstraints?.AuthorizedExchange != null);
         PurchaseFinished?.Invoke(result);
     }
 
@@ -1207,7 +1331,7 @@ public sealed class VendorPurchaseManager : IDisposable
         PurchaseFinished?.Invoke(result);
     }
 
-    private void Fail(string message)
+    private void Fail(string message, bool vendorRouteUnavailable = false, bool unsupportedExchangeLayout = false)
     {
         if (_request == null)
             return;
@@ -1222,19 +1346,23 @@ public sealed class VendorPurchaseManager : IDisposable
             _completedQuantity,
             _request.Vendor,
             message,
-            false);
+            false)
+        {
+            VendorRouteUnavailable = vendorRouteUnavailable && !HasSubmittedBatch && _completedQuantity == 0,
+            UnsupportedExchangeLayout = unsupportedExchangeLayout && !HasSubmittedBatch,
+        };
         _accountingUncertain |= _ownerSessionId.HasValue && HasSubmittedBatch;
         result = EnrichResult(result);
         ResetState();
         PurchaseFinished?.Invoke(result);
     }
 
-    private void ResetState()
+    private void ResetState(bool keepInteraction = false)
     {
         if (_request != null)
             VendorInteractionHelper.ResetShopSelectionState(_request.Vendor);
         GatherBuddy.VendorNavigator.Stop(_ownerSessionId);
-        YesAlready.Unlock();
+        if (!keepInteraction) YesAlready.Unlock();
 
         _state = State.Idle;
         _request = null;
@@ -1260,6 +1388,18 @@ public sealed class VendorPurchaseManager : IDisposable
         _confirmedCurrencySpent = 0;
         _accountingUncertain = false;
         _ownedExchangeConfirmed = false;
+        _exchangeReadiness.Reset();
+        _submittedExchangeIndex = -1;
+        _balancesBeforeBatch.Clear();
+        _confirmedCosts.Clear();
+    }
+
+    private void LogExchangeValidation(string phase, string? details, bool incomplete)
+    {
+        var key = $"{_ownerSessionId}/{_allocationId}/{phase}";
+        // A changing native snapshot must not bypass admission every frame. Final failure logs latest details.
+        if (ExchangeDiagnostics.TryLog(key, "validationFailure", out var suppressed))
+            GatherBuddy.Log.Debug($"[Vendor exchange] session={_ownerSessionId}; allocation={_allocationId}; phase={phase}; incomplete={incomplete}; {details}{DiagnosticThrottle.Suffix(suppressed)}");
     }
 
     private PurchaseResult EnrichResult(PurchaseResult result) => result with
@@ -1267,6 +1407,8 @@ public sealed class VendorPurchaseManager : IDisposable
         SessionId = _ownerSessionId,
         AllocationId = _allocationId,
         ConfirmedCurrencySpent = _ownerSessionId.HasValue && !_accountingUncertain ? _confirmedCurrencySpent : null,
+        ConfirmedCosts = _ownerSessionId.HasValue && !_accountingUncertain && _purchaseConstraints?.AuthorizedExchange != null
+            ? new System.Collections.ObjectModel.ReadOnlyDictionary<uint, ulong>(_purchaseConstraints.AuthorizedExchange.Costs.ToDictionary(c => c.CurrencyItemId, c => _confirmedCosts.GetValueOrDefault(c.CurrencyItemId))) : null,
         AccountingUncertain = _accountingUncertain,
     };
 

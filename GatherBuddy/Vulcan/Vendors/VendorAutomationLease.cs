@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace GatherBuddy.Vulcan.Vendors;
 
@@ -24,6 +25,7 @@ public sealed class VendorAutomationLease
 /// <summary>Pure spending guard. Other commitments exclude this allocation's own reservation.</summary>
 public sealed record TransientPurchaseBudget(ulong Reserve, ulong OtherCommitments, ulong? MaximumSpend)
 {
+    public IReadOnlyDictionary<uint, TransientPurchaseBudget>? CurrencyBudgets { get; init; }
     public ulong Spendable(ulong actualBalance, ulong alreadySpent)
     {
         static ulong Subtract(ulong value, ulong amount) => value > amount ? value - amount : 0;

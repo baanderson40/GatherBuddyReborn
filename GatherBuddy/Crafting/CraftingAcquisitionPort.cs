@@ -51,17 +51,18 @@ internal sealed class CraftingAcquisitionPort(CraftingExecutionPlan executionPla
             // Do not reserve currency for offers the transient executor cannot actually execute.
             snapshot = snapshot with { Offers = snapshot.Offers.Select(offer =>
             {
-                var supported = offer.ShopType != VendorShopType.SpecialCurrency
+                var supported = (offer.ShopType != VendorShopType.SpecialCurrency || offer.CurrencyGroup == VendorCurrencyGroup.BicolorGemstones)
                     && !VendorShopResolver.HousingItemIds.Contains(offer.ItemId) && !VendorShopResolver.EquippableItemIds.Contains(offer.ItemId)
-                    && sheet != null && sheet.TryGetRow(offer.ItemId, out var item) && item.StackSize > 1;
+                    && sheet != null && sheet.TryGetRow(offer.ItemId, out var item) && item.StackSize > 1
+                    && offer.OutputQuantityPerTransaction <= item.StackSize;
                 return supported ? offer : offer with { Supported = false,
-                    RejectionReason = "Integrated execution supports stackable unit-output gil/GC materials only.",
+                    RejectionReason = "Integrated execution supports stackable gil/GC and validated gemstone material exchanges only.",
                     RejectionKind = AcquisitionOfferRejectionKind.Unsupported };
             }).ToList().AsReadOnly() };
         }
         var balances = new Dictionary<uint, ulong>();
         var currentSeals = VendorShopResolver.GetCurrentGrandCompanySealCurrencyItemId();
-        foreach (var currency in snapshot.Offers.Select(o => (o.CurrencyItemId, o.CurrencyGroup)).Distinct())
+        foreach (var currency in snapshot.Offers.SelectMany(o => o.Costs).Select(c => (c.CurrencyItemId, c.CurrencyGroup)).Distinct())
         {
             if (currency.CurrencyGroup == VendorCurrencyGroup.GrandCompanySeals
                 && !GrandCompanySealPolicy.IsCurrentCurrency(currency.CurrencyItemId, currentSeals)) continue;

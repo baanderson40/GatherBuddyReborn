@@ -57,7 +57,7 @@ public static class MaterialAcquisitionPlanner
                         if (compatible == 0) break;
                         if (!IsValid(offer)) continue;
                         if (offer.Access == VendorOfferAccess.Inaccessible) continue;
-                        if (!input.Policy.Allows(offer.CurrencyGroup)) continue;
+                        if (offer.Costs.Any(c => !input.Policy.Allows(c.CurrencyGroup))) continue;
 
                         var balance = input.CurrencyBalances.GetValueOrDefault(offer.CurrencyItemId);
                         var reserve = input.Policy.GetReserve(offer.CurrencyItemId);
@@ -82,21 +82,31 @@ public static class MaterialAcquisitionPlanner
                             available = Math.Min(available, capRemaining);
                         }
 
-                        // Never overbuy a bundle. Residual units may be fulfilled by another offer or gathering.
-                        var transactions = (uint)Math.Min(compatible / offer.OutputQuantityPerTransaction, available / offer.CostPerTransaction);
+                        var affordable = offer.Costs.Min(c => Spendable(input, c.CurrencyItemId, commitments) / c.Amount);
+                        var transactions = (uint)Math.Min(ExchangeTransactions.Needed(compatible, offer.OutputQuantityPerTransaction), affordable);
+                        // Keep output representable by inventory/demand APIs; never wrap an oversized bundle.
+                        transactions = Math.Min(transactions, (uint)int.MaxValue / offer.OutputQuantityPerTransaction);
                         trace?.Record("P2", "Affordability", $"item={item.ItemId}; compatibleDemand={compatible}; affordableTransactions={available / offer.CostPerTransaction}; plannedTransactions={transactions}");
                         if (transactions == 0)
                         {
-                            trace?.Record("P2", "RejectBundle", $"item={item.ItemId}; residual={compatible}; outputPerTransaction={offer.OutputQuantityPerTransaction}; excessPurchasingForbidden=True");
+                            trace?.Record("P2", "RejectBundle", $"item={item.ItemId}; residual={compatible}; outputPerTransaction={offer.OutputQuantityPerTransaction}; reason=NoAffordableRepresentableTransaction");
                             continue;
                         }
                         var allocation = new VendorPurchaseAllocation(input.SessionId, item.ItemId, transactions,
                             offer.OutputQuantityPerTransaction, offer.CurrencyItemId, offer.CurrencyGroup,
-                            offer.CostPerTransaction, offer.ShopType, offer.Vendor);
+                            offer.CostPerTransaction, offer.ShopType, offer.Vendor, offer.Costs,
+                            offers.Where(alternative => GetOfferRejection(alternative, input.Policy) == null
+                                && alternative.Vendor != offer.Vendor && alternative.ShopType == offer.ShopType
+                                && alternative.OutputQuantityPerTransaction == offer.OutputQuantityPerTransaction
+                                && alternative.CurrencyItemId == offer.CurrencyItemId && alternative.Costs.SequenceEqual(offer.Costs))
+                                .Select(alternative => alternative.Vendor).Distinct().ToArray());
                         allocations.Add(allocation);
                         var priorCommitment = commitments.GetValueOrDefault(offer.CurrencyItemId);
-                        commitments[offer.CurrencyItemId] = checked(commitments.GetValueOrDefault(offer.CurrencyItemId) + allocation.ExpectedCurrencyCost);
-                        spending[offer.CurrencyItemId] = checked(spending.GetValueOrDefault(offer.CurrencyItemId) + allocation.ExpectedCurrencyCost);
+                        foreach (var cost in allocation.ExpectedCosts)
+                        {
+                            commitments[cost.Key] = checked(commitments.GetValueOrDefault(cost.Key) + cost.Value);
+                            spending[cost.Key] = checked(spending.GetValueOrDefault(cost.Key) + cost.Value);
+                        }
                         remaining = remaining.ConsumeSplit((int)allocation.RequestedOutputQuantity, 0, out _, out _);
                         purchased = checked(purchased + allocation.RequestedOutputQuantity);
                         trace?.Record("P2", "Allocate", $"item={item.ItemId}; currency={offer.CurrencyItemId}; quantity={allocation.RequestedOutputQuantity}; plannedCost={allocation.ExpectedCurrencyCost}; commitments={priorCommitment}->{commitments[offer.CurrencyItemId]}; spendable={available}->{Subtract(available, allocation.ExpectedCurrencyCost)}; remainingQuality={remaining}; notExecuted=True");
@@ -155,7 +165,7 @@ public static class MaterialAcquisitionPlanner
         if (offer.RejectionKind == AcquisitionOfferRejectionKind.WrongGrandCompany && offer.Access == VendorOfferAccess.Inaccessible)
             return AcquisitionOfferRejectionKind.WrongGrandCompany;
         if (!IsValid(offer)) return AcquisitionOfferRejectionKind.Unsupported;
-        if (!policy.Allows(offer.CurrencyGroup)) return AcquisitionOfferRejectionKind.CurrencyDisallowed;
+        if (offer.Costs.Any(c => !policy.Allows(c.CurrencyGroup))) return AcquisitionOfferRejectionKind.CurrencyDisallowed;
         if (offer.Access == VendorOfferAccess.Inaccessible)
             return offer.RejectionKind == AcquisitionOfferRejectionKind.MissingLocation
                 ? AcquisitionOfferRejectionKind.MissingLocation : AcquisitionOfferRejectionKind.VendorInaccessible;
@@ -181,9 +191,7 @@ public static class MaterialAcquisitionPlanner
             {
                 foreach (var offer in eligible)
                 {
-                    var reason = offer.OutputQuantityPerTransaction > (uint)nqShortage
-                        ? MaterialShortageReason.BundleQuantityMismatch
-                        : FundingShortage(input, offer, commitments) ?? MaterialShortageReason.BundleQuantityMismatch;
+                    var reason = FundingShortage(input, offer, commitments) ?? MaterialShortageReason.UnsupportedOffer;
                     var blocker = new MaterialShortage(reason,
                         $"{nqShortage} NQ-compatible units remain. Currency {offer.CurrencyItemId}, vendor {offer.Vendor.NpcId}, shop {offer.Vendor.ShopId}: {Describe(reason)}");
                     eligibleBlockers.Add(blocker);
@@ -194,7 +202,7 @@ public static class MaterialAcquisitionPlanner
             else
             {
                 var supported = offers.Where(IsValid).ToList();
-                var allowed = supported.Where(offer => input.Policy.Allows(offer.CurrencyGroup)).ToList();
+                var allowed = supported.Where(offer => offer.Costs.All(c => input.Policy.Allows(c.CurrencyGroup))).ToList();
                 if (allowed.Count > 0) Add(MaterialShortageReason.VendorInaccessible);
                 else if (supported.Count > 0) Add(MaterialShortageReason.CurrencyDisallowed);
                 else Add(MaterialShortageReason.UnsupportedOffer);
@@ -208,14 +216,33 @@ public static class MaterialAcquisitionPlanner
     private static MaterialShortageReason? FundingShortage(MaterialAcquisitionPlanningInput input, AcquisitionVendorOffer offer,
         Dictionary<uint, ulong> commitments)
     {
-        var committed = commitments.GetValueOrDefault(offer.CurrencyItemId);
-        var balance = input.CurrencyBalances.GetValueOrDefault(offer.CurrencyItemId);
-        var available = Subtract(Subtract(balance, input.Policy.GetReserve(offer.CurrencyItemId)), committed);
-        if (available < offer.CostPerTransaction)
-            return Subtract(balance, committed) >= offer.CostPerTransaction
+        foreach (var cost in offer.Costs)
+        {
+            var reason = FundingCostShortage(input, cost, commitments);
+            if (reason.HasValue) return reason;
+        }
+        return null;
+    }
+
+    private static ulong Spendable(MaterialAcquisitionPlanningInput input, uint currency, Dictionary<uint, ulong> commitments)
+    {
+        var available = Subtract(Subtract(input.CurrencyBalances.GetValueOrDefault(currency), input.Policy.GetReserve(currency)), commitments.GetValueOrDefault(currency));
+        if (currency == 1 && input.Policy.MaximumGilSpendPerRun is { } cap)
+            available = Math.Min(available, Subtract(Subtract(cap, input.Ledger.SettledSpending.GetValueOrDefault(currency)), commitments.GetValueOrDefault(currency)));
+        return available;
+    }
+
+    private static MaterialShortageReason? FundingCostShortage(MaterialAcquisitionPlanningInput input, AcquisitionExchangeCost cost,
+        Dictionary<uint, ulong> commitments)
+    {
+        var committed = commitments.GetValueOrDefault(cost.CurrencyItemId);
+        var balance = input.CurrencyBalances.GetValueOrDefault(cost.CurrencyItemId);
+        var available = Subtract(Subtract(balance, input.Policy.GetReserve(cost.CurrencyItemId)), committed);
+        if (available < cost.Amount)
+            return Subtract(balance, committed) >= cost.Amount
                 ? MaterialShortageReason.ReserveReached : MaterialShortageReason.InsufficientCurrency;
-        if (offer.CurrencyItemId == VendorShopResolverGilId && input.Policy.MaximumGilSpendPerRun is { } cap
-            && Subtract(Subtract(cap, input.Ledger.SettledSpending.GetValueOrDefault(VendorShopResolverGilId)), committed) < offer.CostPerTransaction)
+        if (cost.CurrencyItemId == VendorShopResolverGilId && input.Policy.MaximumGilSpendPerRun is { } cap
+            && Subtract(Subtract(cap, input.Ledger.SettledSpending.GetValueOrDefault(VendorShopResolverGilId)), committed) < cost.Amount)
             return MaterialShortageReason.SpendingCapReached;
         return null;
     }
@@ -224,10 +251,12 @@ public static class MaterialAcquisitionPlanner
         => offer.Supported && offer.CurrencyItemId != 0 && offer.CostPerTransaction > 0 && offer.OutputQuantityPerTransaction > 0
         && offer.Vendor is { NpcId: > 0, ShopId: > 0 } && Enum.IsDefined(offer.CurrencyGroup)
         && Enum.IsDefined(offer.ShopType) && Enum.IsDefined(offer.Access)
+        && ExchangeTransactions.ValidCosts(offer.Costs)
+        && offer.Costs.Contains(new(offer.CurrencyItemId, offer.CurrencyGroup, offer.CostPerTransaction))
         && (offer.CurrencyGroup == VendorCurrencyGroup.Gil) == (offer.CurrencyItemId == VendorShopResolverGilId);
 
     private static IEnumerable<AcquisitionVendorOffer> OrderOffers(MaterialAcquisitionPlanningInput input, IEnumerable<AcquisitionVendorOffer> offers)
-        => offers.OrderBy(offer => input.Policy.CurrencyPriority.ToList().IndexOf(offer.CurrencyGroup) is var index && index >= 0 ? index : int.MaxValue)
+        => offers.OrderBy(offer => offer.Costs.Select(c => input.Policy.CurrencyPriority.ToList().IndexOf(c.CurrencyGroup) is var index && index >= 0 ? index : int.MaxValue).DefaultIfEmpty(int.MaxValue).Max())
             .ThenBy(offer => offer.CurrencyGroup).ThenBy(offer => offer.CurrencyItemId)
             .ThenBy(offer => offer.OutputQuantityPerTransaction == 0 ? decimal.MaxValue : (decimal)offer.CostPerTransaction / offer.OutputQuantityPerTransaction)
             .ThenBy(offer => offer.Vendor.NpcId).ThenBy(offer => offer.ShopType).ThenBy(offer => offer.Vendor.MenuShopType)
@@ -279,11 +308,13 @@ public static class MaterialAcquisitionPlanner
         {
             if (allocation.SessionId != input.SessionId || !seen.Add(allocation.AllocationId))
                 throw new ArgumentException("Only unique unexecuted allocations belonging to this session may be replaced.");
-            var committed = commitments.GetValueOrDefault(allocation.CurrencyItemId);
-            if (allocation.ExpectedCurrencyCost > committed)
-                throw new ArgumentException("Replacement allocations exceed recorded outstanding commitments.");
-            commitments[allocation.CurrencyItemId] = committed - allocation.ExpectedCurrencyCost;
-            trace?.Record("P2", "ReleaseReplaced", $"allocation={allocation.AllocationId}; currency={allocation.CurrencyItemId}; released={allocation.ExpectedCurrencyCost}; commitments={committed}->{commitments[allocation.CurrencyItemId]}; settledSpendingUnchanged=True");
+            foreach (var cost in allocation.ExpectedCosts)
+            {
+                var committed = commitments.GetValueOrDefault(cost.Key);
+                if (cost.Value > committed) throw new ArgumentException("Replacement allocations exceed recorded outstanding commitments.");
+                commitments[cost.Key] = committed - cost.Value;
+                trace?.Record("P2", "ReleaseReplaced", $"allocation={allocation.AllocationId}; currency={cost.Key}; released={cost.Value}; commitments={committed}->{commitments[cost.Key]}; settledSpendingUnchanged=True");
+            }
         }
     }
 

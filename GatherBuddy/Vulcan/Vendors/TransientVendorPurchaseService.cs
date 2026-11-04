@@ -28,6 +28,10 @@ public sealed class TransientVendorPurchaseService : ITransientVendorPort, IDisp
     private int _loggedEvents;
     private bool _loggedSummary;
     private Guid? _craftingSession;
+    private VendorPurchaseAllocation? _retainedInteraction;
+    private readonly HashSet<(uint Npc, uint Shop, uint Source, VendorMenuShopType Menu)> _unavailableShops = new();
+    private static (uint, uint, uint, VendorMenuShopType) ShopKey(VendorNpc vendor)
+        => (vendor.NpcId, vendor.ShopId, vendor.SourceShopId, vendor.MenuShopType);
     public TransientVendorExecution Execution { get; }
 
     public TransientVendorPurchaseService(VendorPurchaseManager manager)
@@ -104,6 +108,8 @@ public sealed class TransientVendorPurchaseService : ITransientVendorPort, IDisp
         if (!_manager.AutomationLease.TryAcquire(sessionId)) { reason = "Vendor ownership busy"; return false; }
         _receipt = null;
         _active = null;
+        _retainedInteraction = null;
+        _unavailableShops.Clear();
         reason = "Exclusive transient ownership acquired";
         return true;
     }
@@ -138,9 +144,11 @@ public sealed class TransientVendorPurchaseService : ITransientVendorPort, IDisp
             return TransientPurchaseStart.Unsafe;
         }
         if (_manager.IsRunning || _active != null) { reason = "Previous purchase has not settled"; return TransientPurchaseStart.Unsafe; }
-        if (allocation.OutputQuantityPerTransaction != 1 || allocation.ShopType == VendorShopType.SpecialCurrency)
+        if (_unavailableShops.Contains(ShopKey(allocation.Vendor)))
+        { reason = "Vendor shop route already failed this session; no repeated interaction attempted."; return TransientPurchaseStart.Skipped; }
+        if (allocation.ShopType == VendorShopType.SpecialCurrency && allocation.CurrencyGroup != VendorCurrencyGroup.BicolorGemstones)
         {
-            reason = "Transient live execution currently supports unit-output gil and GC shops only; special exchanges remain preview-only.";
+            reason = "Only gil, current-GC seals, and validated gemstone exchanges are authorized for integrated execution.";
             return TransientPurchaseStart.Skipped;
         }
         if (VendorShopResolver.HousingItemIds.Contains(allocation.ItemId) || VendorShopResolver.EquippableItemIds.Contains(allocation.ItemId))
@@ -153,7 +161,8 @@ public sealed class TransientVendorPurchaseService : ITransientVendorPort, IDisp
         var offer = offerSnapshot.Offers.FirstOrDefault(candidate => candidate.Supported && candidate.Access != VendorOfferAccess.Inaccessible
             && candidate.ItemId == allocation.ItemId && candidate.CurrencyItemId == allocation.CurrencyItemId
             && candidate.CurrencyGroup == allocation.CurrencyGroup && candidate.ShopType == allocation.ShopType
-            && candidate.CostPerTransaction == unitCost && candidate.Vendor == allocation.Vendor);
+            && candidate.CostPerTransaction == unitCost && candidate.Vendor == allocation.Vendor
+            && candidate.OutputQuantityPerTransaction == allocation.OutputQuantityPerTransaction && candidate.Costs.SequenceEqual(allocation.Costs));
         if (offer == null || offerSnapshot.Status != VendorOfferDataStatus.Ready || unitCost > uint.MaxValue)
         {
             reason = "Exact authorized offer unavailable, changed, or vendor data not ready. No substitution performed.";
@@ -176,17 +185,18 @@ public sealed class TransientVendorPurchaseService : ITransientVendorPort, IDisp
             reason = "Item is not a supported stackable material";
             return TransientPurchaseStart.Skipped;
         }
-        if (allocation.ShopType == VendorShopType.GrandCompanySeals)
+        if (allocation.Costs.Any(c => c.CurrencyGroup == VendorCurrencyGroup.GrandCompanySeals))
         {
             var state = PlayerState.Instance();
-            if (state == null || !GrandCompanySealPolicy.IsCurrentCurrency(allocation.CurrencyItemId, VendorShopResolver.GetCurrentGrandCompanySealCurrencyItemId()))
+            if (state == null || allocation.Costs.Any(c => c.CurrencyGroup == VendorCurrencyGroup.GrandCompanySeals
+                    && !GrandCompanySealPolicy.IsCurrentCurrency(c.CurrencyItemId, VendorShopResolver.GetCurrentGrandCompanySealCurrencyItemId())))
             {
                 reason = "Wrong Grand Company or player data unavailable";
                 return TransientPurchaseStart.Skipped;
             }
         }
-        var availability = VendorCurrencyAvailabilityResolver.Resolve(allocation.CurrencyGroup, allocation.CurrencyItemId, "authorized currency");
-        if (budget.Spendable(availability.AvailableAmount, 0) < unitCost)
+        if (budget.CurrencyBudgets == null || allocation.Costs.Any(cost => !budget.CurrencyBudgets.TryGetValue(cost.CurrencyItemId, out var guard)
+                || guard.Spendable(VendorCurrencyAvailabilityResolver.Resolve(cost.CurrencyGroup, cost.CurrencyItemId, "authorized currency").AvailableAmount, 0) < cost.Amount))
         {
             reason = "Live balance/reserve/other commitments/run cap permit no purchase";
             return TransientPurchaseStart.Skipped;
@@ -197,10 +207,18 @@ public sealed class TransientVendorPurchaseService : ITransientVendorPort, IDisp
         _requestStarted = DateTime.UtcNow;
         _receipt = null;
         _active = allocation;
-        _manager.StartPurchase(entry, allocation.Vendor, location, Math.Min(item.StackSize, Math.Min(99u, quantity)), purchaseConstraints: new()
+        var output = allocation.OutputQuantityPerTransaction;
+        var batch = Math.Min(quantity / output, Math.Min(99u, item.StackSize / output));
+        if (batch == 0) { _active = null; reason = "Exchange output exceeds supported material stack/batch capacity."; return TransientPurchaseStart.Skipped; }
+        var continued = _retainedInteraction != null && CanContinueInteraction(sessionId, _retainedInteraction, allocation);
+        if (_retainedInteraction != null && !continued)
+        { _active = null; reason = "Retained shop changed unexpectedly; cleanup required."; return TransientPurchaseStart.Unsafe; }
+        _retainedInteraction = null;
+        _manager.StartPurchase(entry, allocation.Vendor, location, checked(batch * output), continueCurrentVendorInteraction: continued, purchaseConstraints: new()
         {
             TransientBudget = budget,
             TargetInventoryQuantity = inventoryTarget,
+            AuthorizedExchange = allocation,
         }, ownerSessionId: sessionId, allocationId: allocation.AllocationId);
         if (!_manager.IsRunning)
         {
@@ -221,16 +239,32 @@ public sealed class TransientVendorPurchaseService : ITransientVendorPort, IDisp
             _manager.Stop(sessionId);
         if (_receipt == null || (DateTime.UtcNow - _resultTime).TotalSeconds < 1) return null;
         var receipt = _receipt;
+        if (receipt.VendorRouteUnavailable) _unavailableShops.Add(ShopKey(_active.Vendor));
         var count = ReadItemCount(_active.ItemId);
         var delta = count > (uint)_inventoryBefore ? count - (uint)_inventoryBefore : 0;
         var certain = !receipt.AccountingUncertain && delta == receipt.CompletedQuantity;
         var result = new TransientPurchaseReceipt(sessionId, _active.AllocationId, certain ? receipt.CompletedQuantity : delta,
             certain ? receipt.ConfirmedCurrencySpent : null, receipt.State == VendorPurchaseManager.CompletionState.Cancelled,
-            !certain, receipt.Message);
+            !certain, receipt.Message)
+        {
+            ConfirmedCosts = certain ? receipt.ConfirmedCosts : null,
+            SubmittedOutputQuantity = receipt.RequestedQuantity,
+            PreventVendorFallback = receipt.UnsupportedExchangeLayout,
+        };
+        _retainedInteraction = certain && receipt.State == VendorPurchaseManager.CompletionState.Completed ? _active : null;
+        if (_retainedInteraction != null) YesAlready.Lock();
         _active = null;
         _receipt = null;
         return result;
     }
+
+    public bool CanContinueInteraction(Guid sessionId, VendorPurchaseAllocation previous, VendorPurchaseAllocation next)
+        => _retainedInteraction != null && _retainedInteraction.Vendor == previous.Vendor
+            && _manager.AutomationLease.Owner == sessionId && !_manager.IsRunning && IsSafe(out _)
+            && Dalamud.Objects.LocalPlayer != null && GenericHelpers.IsScreenReady()
+            && Dalamud.Targets.Target?.BaseId == next.Vendor.NpcId
+            && previous.CanShareShopWith(next)
+            && VendorInteractionHelper.IsOwnedShopVisible(next.ShopType);
 
     private void OnPurchaseFinished(VendorPurchaseManager.PurchaseResult result)
     {
@@ -252,6 +286,7 @@ public sealed class TransientVendorPurchaseService : ITransientVendorPort, IDisp
     }
     public bool TryCleanup(Guid sessionId)
     {
+        _retainedInteraction = null;
         if (_manager.AutomationLease.Owner != sessionId) return false;
         if (_manager.IsRunning || _active != null || Dalamud.Objects.LocalPlayer == null) return false;
         if ((DateTime.UtcNow - _resultTime).TotalSeconds < 2) return false;
@@ -265,6 +300,7 @@ public sealed class TransientVendorPurchaseService : ITransientVendorPort, IDisp
             return false;
         }
         GatherBuddy.VendorNavigator.Stop(sessionId);
+        YesAlready.Unlock();
         return true;
     }
     public void Release(Guid sessionId)

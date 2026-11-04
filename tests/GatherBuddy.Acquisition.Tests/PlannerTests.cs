@@ -262,15 +262,15 @@ public class PlannerTests
     }
 
     [Fact]
-    public void BundlesNeverOverbuyAndUnitOfferCanFillRemainder()
+    public void BundlesPermitMinimumOverbuyWithoutAnExtraConfirmation()
     {
         var plan = MaterialAcquisitionPlanner.Plan(Input(demands: [Demand(quantity: 7)],
             offers: [Gil(cost: 20, output: 5), Gil(cost: 10, npc: 11)]));
-        Assert.Equal(new uint[] { 5, 2 }, plan.Allocations.Select(a => a.RequestedOutputQuantity));
+        Assert.Equal(new uint[] { 10 }, plan.Allocations.Select(a => a.RequestedOutputQuantity));
         Assert.Equal(40ul, plan.ProjectedSpending[1]);
         var residual = MaterialAcquisitionPlanner.Plan(Input(demands: [Demand(quantity: 3)], offers: [Gil(output: 5)]));
-        Assert.Empty(residual.Allocations);
-        Assert.Equal(3, residual.Materials.Single().UnresolvedDemand.Total);
+        Assert.Equal(5u, Assert.Single(residual.Allocations).RequestedOutputQuantity);
+        Assert.Equal(0, residual.Materials.Single().UnresolvedDemand.Total);
     }
 
     [Fact]
@@ -329,10 +329,10 @@ public class PlannerTests
     }
 
     [Fact]
-    public void BundleAndHqShortagesHaveDistinctReasons()
+    public void BundleOverbuyDoesNotSatisfyMandatoryHqDemand()
     {
         var bundle = MaterialAcquisitionPlanner.Plan(Input(demands: [Demand(quantity: 3)], offers: [Gil(output: 5)]));
-        Assert.Equal(MaterialShortageReason.BundleQuantityMismatch, bundle.Materials.Single().PrimaryShortage!.Reason);
+        Assert.Null(bundle.Materials.Single().PrimaryShortage);
         var hq = MaterialAcquisitionPlanner.Plan(Input(demands: [new(100, IngredientQualityDemand.FromRequiredHQ(3, 3))]));
         Assert.Equal(MaterialShortageReason.RequiredQualityUnavailable, hq.Materials.Single().PrimaryShortage!.Reason);
     }

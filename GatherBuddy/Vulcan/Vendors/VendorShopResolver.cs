@@ -7,6 +7,7 @@ using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using GatherBuddy.Plugin;
 using Lumina.Excel;
 using Lumina.Excel.Sheets;
+using GatherBuddy.Utility;
 
 namespace GatherBuddy.Vulcan.Vendors;
 
@@ -58,13 +59,15 @@ public static class VendorShopResolver
     private static volatile bool _initializing;
     private static volatile bool _lastBuildHadCompleteDataShare;
     private static int _revision;
+    private static readonly DiagnosticThrottle<string> InitDiagnostics = new(TimeSpan.FromSeconds(30), 16);
+    private static bool _recovering;
     private static readonly TimeSpan RetryCooldown = TimeSpan.FromSeconds(2);
     private static DateTime _lastInitializeAttemptUtc = DateTime.MinValue;
 
-    private static List<VendorShopEntry> _gilShopEntries     = new();
-    private static List<VendorShopEntry> _specialShopEntries = new();
-    private static List<VendorShopEntry> _gcShopEntries      = new();
-    private static HashSet<uint>         _allVendorNpcIds    = new();
+    private sealed record ShopCache(List<VendorShopEntry> Gil, List<VendorShopEntry> Special,
+        List<VendorShopEntry> AcquisitionSpecial, List<VendorShopEntry> Gc, HashSet<uint> Npcs);
+    // Publish completed collections together; failed builds leave the previous generation intact.
+    private static volatile ShopCache _cache = new(new(), new(), new(), new(), new());
     private static Dictionary<uint, HashSet<uint>> _fallbackGilMap = new();
     private static Dictionary<uint, HashSet<uint>> _fallbackSpecialMap = new();
     private static Dictionary<uint, HashSet<uint>> _fallbackGcMap = new();
@@ -80,11 +83,14 @@ public static class VendorShopResolver
     public static bool IsInitialized  => _initialized;
     public static bool IsInitializing => _initializing;
     public static int Revision => Volatile.Read(ref _revision);
+    public readonly record struct CacheStamp(int Revision, bool IsInitialized);
+    public static CacheStamp ViewStamp => new(Revision, IsInitialized);
 
-    public static IReadOnlyList<VendorShopEntry> GilShopEntries     => _gilShopEntries;
-    public static IReadOnlyList<VendorShopEntry> SpecialShopEntries => _specialShopEntries;
-    public static IReadOnlyList<VendorShopEntry> GcShopEntries      => _gcShopEntries;
-    public static IReadOnlySet<uint>             AllVendorNpcIds    => _allVendorNpcIds;
+    public static IReadOnlyList<VendorShopEntry> GilShopEntries     => _cache.Gil;
+    public static IReadOnlyList<VendorShopEntry> SpecialShopEntries => _cache.Special;
+    public static IReadOnlyList<VendorShopEntry> AcquisitionSpecialEntries => _cache.AcquisitionSpecial;
+    public static IReadOnlyList<VendorShopEntry> GcShopEntries      => _cache.Gc;
+    public static IReadOnlySet<uint>             AllVendorNpcIds    => _cache.Npcs;
 
     public static IReadOnlySet<uint> GatherableIds => _gatherableIds;
     public static IReadOnlySet<uint> FishIds       => _fishIds;
@@ -94,7 +100,7 @@ public static class VendorShopResolver
     public static IReadOnlySet<uint> DyeItemIds     => _dyeItemIds;
 
     public static HashSet<uint> GetAllVendorNpcIds()
-        => new(_allVendorNpcIds);
+        => new(_cache.Npcs);
 
     public static int GetInclusionShopSubPageCount(uint inclusionShopId, int pageIndex)
     {
@@ -143,15 +149,19 @@ public static class VendorShopResolver
     private static void Initialize()
     {
         var success = false;
+        var stage = "NPC names";
         try
         {
             var npcNames = BuildNpcNameLookup();
             if (npcNames.Count == 0)
             {
-                GatherBuddy.Log.Warning("[VendorShopResolver] ENpcResident lookup is empty; deferring vendor cache initialization");
+                _recovering = true;
+                if (InitDiagnostics.TryLog("Readiness", "NPC names empty", out var suppressed))
+                    GatherBuddy.Log.Warning($"[VendorShopResolver] ENpcResident lookup is empty; deferring vendor cache initialization{DiagnosticThrottle.Suffix(suppressed)}");
                 return;
             }
 
+            stage = "DataShare and fallback maps";
             var (dataShareGilMap, dataShareSpecialMap, dataShareGcMap, dataShareInclusionMap) = GetShopNpcMapsFromDataShare();
             var (fallbackGilMap, fallbackSpecialMap, fallbackGcMap, fallbackInclusionMap) = BuildNpcShopMapsFromLumina();
             _fallbackGilMap = fallbackGilMap;
@@ -163,7 +173,8 @@ public static class VendorShopResolver
             var hasAnyDataShare      = HasAnyShopDataShare(dataShareGilMap, dataShareSpecialMap, dataShareGcMap, dataShareInclusionMap);
             var dataShareAvailability = DescribeShopDataShareAvailability(dataShareGilMap, dataShareSpecialMap, dataShareGcMap, dataShareInclusionMap);
 
-            GatherBuddy.Log.Debug($"[VendorShopResolver] AllaganTools DataShare: {(hasCompleteDataShare ? "ready" : hasAnyDataShare ? "partial" : "not available")} ({dataShareAvailability})");
+            if (InitDiagnostics.TryLog("DataShare", dataShareAvailability, out var dataShareSuppressed))
+                GatherBuddy.Log.Debug($"[VendorShopResolver] AllaganTools DataShare: {(hasCompleteDataShare ? "ready" : hasAnyDataShare ? "partial" : "not available")} ({dataShareAvailability}){DiagnosticThrottle.Suffix(dataShareSuppressed)}");
 
             var gilMap = MergeNpcMaps(fallbackGilMap, dataShareGilMap);
             var specialMap = MergeNpcMaps(fallbackSpecialMap, dataShareSpecialMap);
@@ -172,6 +183,7 @@ public static class VendorShopResolver
             if (!hasCompleteDataShare)
                 GatherBuddy.Log.Debug($"[VendorShopResolver] Merged Lumina fallback with incomplete shop maps ({dataShareAvailability})");
 
+            stage = "Inclusion routes and crafting IDs";
             var directSpecialMap = CloneNpcMap(specialMap);
             var inclusionRoutes  = BuildSpecialShopInclusionRoutes();
             AugmentSpecialMapFromInclusion(specialMap, inclusionMap);
@@ -179,39 +191,53 @@ public static class VendorShopResolver
             var tomestoneLookup = BuildTomestoneLookup();
             BuildCraftingRelevantIds();
 
+            stage = "Gil discovery";
             var gilEntries     = BuildGilShopEntries(gilMap, npcNames);
-            var specialEntries = BuildSpecialShopEntries(specialMap, directSpecialMap, inclusionMap, inclusionRoutes, npcNames, tomestoneLookup);
+            stage = "Special-shop discovery";
+            var specialEntries = BuildSpecialShopEntries(specialMap, directSpecialMap, inclusionMap, inclusionRoutes, npcNames, tomestoneLookup, out var acquisitionSpecialEntries);
+            stage = "GC discovery";
             var gcEntries      = BuildGcShopEntries(gcMap, npcNames);
 
             if (gilEntries.Count == 0 && specialEntries.Count == 0 && gcEntries.Count == 0)
             {
-                GatherBuddy.Log.Warning("[VendorShopResolver] No vendor shop entries were built; deferring vendor cache initialization");
+                _recovering = true;
+                if (InitDiagnostics.TryLog("Readiness", "Vendor entries empty", out var suppressed))
+                    GatherBuddy.Log.Warning($"[VendorShopResolver] No vendor shop entries were built; deferring vendor cache initialization{DiagnosticThrottle.Suffix(suppressed)}");
                 return;
             }
 
-            _gilShopEntries     = gilEntries;
-            _specialShopEntries = specialEntries;
-            _gcShopEntries      = gcEntries;
-            _lastBuildHadCompleteDataShare = hasCompleteDataShare;
-
-
-            _allVendorNpcIds = BuildVendorNpcIdSet(_gilShopEntries, _specialShopEntries, _gcShopEntries);
-            VendorNpcLocationCache.InitializeAsync(_allVendorNpcIds);
+            stage = "Location initialization";
+            var npcIds = BuildVendorNpcIdSet(gilEntries, specialEntries.Concat(acquisitionSpecialEntries), gcEntries);
+            var replacement = new ShopCache(gilEntries, specialEntries, acquisitionSpecialEntries, gcEntries, npcIds);
+            VendorNpcLocationCache.InitializeAsync(npcIds);
+            stage = "Cache publication";
+            _cache = replacement;
             global::GatherBuddy.Crafting.MaterialSourceClassifier.Reset();
+            _lastBuildHadCompleteDataShare = hasCompleteDataShare;
             success = true;
         }
         catch (Exception ex)
         {
-            GatherBuddy.Log.Warning($"[VendorShopResolver] Init failed: {ex.Message}");
+            _recovering = true;
+            var context = $"stage={stage}; shop={ex.Data["VendorShopId"] ?? "unknown"}; sourceRow={ex.Data["VendorSourceRow"] ?? "unknown"}";
+            if (InitDiagnostics.TryLog("Failure", $"{context}; {ex.GetType().FullName}; {ex.Message}; {ex.StackTrace}", out var suppressed))
+                GatherBuddy.Log.Warning($"[VendorShopResolver] Init failed ({context}); cache not ready, retry remains pending.{DiagnosticThrottle.Suffix(suppressed)}\n{ex}");
         }
         finally
         {
             if (success)
+            {
                 Interlocked.Increment(ref _revision);
+                if (_recovering)
+                    GatherBuddy.Log.Information($"[VendorShopResolver] Vendor cache recovered; revision={Revision}; NPCs={AllVendorNpcIds.Count}.");
+                else
+                    GatherBuddy.Log.Debug($"[VendorShopResolver] Vendor cache initialized; revision={Revision}; NPCs={AllVendorNpcIds.Count}.");
+                _recovering = false;
+                InitDiagnostics.Forget("Failure");
+                InitDiagnostics.Forget("Readiness");
+            }
             _initialized  = success;
             _initializing = false;
-            if (!success)
-                GatherBuddy.Log.Debug("[VendorShopResolver] Vendor cache is still uninitialized and will retry when requested");
         }
     }
 
@@ -381,6 +407,9 @@ public static class VendorShopResolver
             if (tomes.TryGetValue(rawId, out var v) || CurrencyTypeMap.TryGetValue(rawId, out v)) rawId = v;
         return rawId;
     }
+
+    internal static uint ResolveExchangeCurrency(uint shopId, uint rawId, ushort useCurrencyType)
+        => ConvertCurrencyId(shopId, rawId, useCurrencyType, BuildTomestoneLookup());
 
     private static Dictionary<uint, string> BuildNpcNameLookup()
     {
@@ -853,8 +882,9 @@ public static class VendorShopResolver
         Dictionary<uint, HashSet<uint>> inclusionMap,
         Dictionary<uint, List<InclusionShopRoute>> inclusionRoutes,
         Dictionary<uint, string> npcNames,
-        Dictionary<uint, uint> tomestoneLookup)
+        Dictionary<uint, uint> tomestoneLookup, out List<VendorShopEntry> acquisitionEntries)
     {
+        acquisitionEntries = new();
         var entries              = new List<VendorShopEntry>();
         var multiCostListings    = 0;
         var reprioritizedListings = 0;
@@ -869,46 +899,70 @@ public static class VendorShopResolver
             var npcs            = ResolveSpecialShopNpcs(shop.RowId, displayNpcMap, directSpecialMap, inclusionMap, inclusionRoutes, npcNames);
             var useCurrencyType = shop.UseCurrencyType;
             var shopItemIndex   = 0;
+            var sourceItemIndex = -1;
 
             foreach (var entry in shop.Item)
             {
-                if (!TryResolvePreferredSpecialShopCost(shop.RowId, entry, useCurrencyType, itemSheet, tomestoneLookup, tomestoneItemIds, out var selectedCost, out var resolvedCostCount, out var hasAdditionalDistinctCosts))
-                    continue;
-                if (resolvedCostCount > 1)
+                sourceItemIndex++;
+                try
                 {
-                    multiCostListings++;
-                    if (selectedCost.OriginalIndex != 0)
-                        reprioritizedListings++;
-                    if (hasAdditionalDistinctCosts)
+                    // Preserve original transaction rows separately from legacy flattened UI offers.
+                    var receivedItems = entry.ReceiveItems.Where(r => r.Item.RowId != 0).ToList();
+                    if (receivedItems.Count == 1 && receivedItems[0].ReceiveCount > 0 && !receivedItems[0].ReceiveHq
+                        && itemSheet.TryGetRow(receivedItems[0].Item.RowId, out var exchangeItem))
                     {
-                        skippedExchangeListings++;
-                        continue;
+                        if (TryFindGemstoneCost(entry.ItemCosts,
+                                rawId => ConvertCurrencyId(shop.RowId, rawId, useCurrencyType, tomestoneLookup), out var gemstoneCost))
+                            acquisitionEntries.Add(new(exchangeItem.RowId, exchangeItem.Name.ExtractText(), (ushort)exchangeItem.Icon,
+                                gemstoneCost, BicolorCurrencyItemId, "Bicolor Gemstones",
+                                npcs.Select(npc => npc with { ShopItemIndex = sourceItemIndex, SourceItemIndex = sourceItemIndex, SourceShopId = shop.RowId }).ToList(),
+                                VendorShopType.SpecialCurrency, VendorCurrencyGroup.BicolorGemstones));
                     }
-                }
-                var addedListing = false;
-
-                foreach (var received in entry.ReceiveItems)
-                {
-                    var itemId = received.Item.RowId;
-                    if (itemId == 0) continue;
-                    if (!itemSheet.TryGetRow(itemId, out var item)) continue;
-                    var routedNpcs = npcs
-                        .Select(npc => npc with
+                    if (!TryResolvePreferredSpecialShopCost(shop.RowId, entry, useCurrencyType, itemSheet, tomestoneLookup, tomestoneItemIds, out var selectedCost, out var resolvedCostCount, out var hasAdditionalDistinctCosts))
+                        continue;
+                    if (resolvedCostCount > 1)
+                    {
+                        multiCostListings++;
+                        if (selectedCost.OriginalIndex != 0)
+                            reprioritizedListings++;
+                        if (hasAdditionalDistinctCosts)
                         {
-                            ShopItemIndex = shopItemIndex,
-                            SourceShopId  = shop.RowId,
-                        })
-                        .ToList();
+                            skippedExchangeListings++;
+                            continue;
+                        }
+                    }
+                    var addedListing = false;
 
-                    entries.Add(new VendorShopEntry(
-                        itemId, item.Name.ExtractText(), (ushort)item.Icon,
-                        selectedCost.Amount, selectedCost.CurrencyItemId, selectedCost.CurrencyName, routedNpcs,
-                        VendorShopType.SpecialCurrency, selectedCost.Group));
-                    addedListing = true;
+                    foreach (var received in entry.ReceiveItems)
+                    {
+                        var itemId = received.Item.RowId;
+                        if (itemId == 0) continue;
+                        if (!itemSheet.TryGetRow(itemId, out var item)) continue;
+                        var routedNpcs = npcs
+                            .Select(npc => npc with
+                            {
+                                ShopItemIndex = shopItemIndex,
+                                SourceShopId  = shop.RowId,
+                                SourceItemIndex = sourceItemIndex,
+                            })
+                            .ToList();
+
+                        entries.Add(new VendorShopEntry(
+                            itemId, item.Name.ExtractText(), (ushort)item.Icon,
+                            selectedCost.Amount, selectedCost.CurrencyItemId, selectedCost.CurrencyName, routedNpcs,
+                            VendorShopType.SpecialCurrency, selectedCost.Group));
+                        addedListing = true;
+                    }
+
+                    if (addedListing)
+                        shopItemIndex++;
                 }
-
-                if (addedListing)
-                    shopItemIndex++;
+                catch (Exception ex)
+                {
+                    ex.Data["VendorShopId"] = shop.RowId;
+                    ex.Data["VendorSourceRow"] = sourceItemIndex;
+                    throw;
+                }
             }
         }
 
@@ -919,6 +973,23 @@ public static class VendorShopResolver
             return cmp != 0 ? cmp : string.Compare(a.ItemName, b.ItemName, StringComparison.OrdinalIgnoreCase);
         });
         return deduped;
+    }
+
+    /// <summary>Never read a default Lumina row: its property getters require a backing sheet page.</summary>
+    public static bool TryFindGemstoneCost(IEnumerable<SpecialShop.ItemStruct.ItemCostsStruct> costs,
+        Func<uint, uint> resolveCurrency, out uint amount)
+    {
+        foreach (var cost in costs)
+        {
+            var value = cost.CurrencyCost;
+            if (value == 0) continue;
+            var rawId = cost.ItemCost.RowId;
+            if (rawId == 0 || resolveCurrency(rawId) != BicolorCurrencyItemId) continue;
+            amount = checked((uint)value);
+            return true;
+        }
+        amount = 0;
+        return false;
     }
 
 

@@ -22,7 +22,11 @@ public readonly record struct AcquisitionInventory(int NQ, int HQ);
 public sealed record AcquisitionVendorOffer(uint ItemId, uint CurrencyItemId, VendorCurrencyGroup CurrencyGroup,
     ulong CostPerTransaction, uint OutputQuantityPerTransaction, VendorShopType ShopType, VendorNpc Vendor,
     bool Supported = true, VendorOfferAccess Access = VendorOfferAccess.Unknown, string? RejectionReason = null,
-    AcquisitionOfferRejectionKind? RejectionKind = null);
+    AcquisitionOfferRejectionKind? RejectionKind = null)
+{
+    public IReadOnlyList<AcquisitionExchangeCost> Costs { get; init; } =
+        Array.AsReadOnly(new[] { new AcquisitionExchangeCost(CurrencyItemId, CurrencyGroup, CostPerTransaction) });
+}
 
 public sealed class MaterialAcquisitionPlanningInput
 {
@@ -54,7 +58,7 @@ public sealed class MaterialAcquisitionPlanningInput
         SessionId = sessionId;
         Policy = policy;
         Materials = materials.ToList().AsReadOnly();
-        Offers = offers.ToList().AsReadOnly();
+        Offers = offers.Select(o => o with { Costs = Array.AsReadOnly(o.Costs.ToArray()) }).ToList().AsReadOnly();
         Inventory = new ReadOnlyDictionary<uint, AcquisitionInventory>(new Dictionary<uint, AcquisitionInventory>(inventory));
         CurrencyBalances = new ReadOnlyDictionary<uint, ulong>(new Dictionary<uint, ulong>(currencyBalances));
         Ledger = ledger;

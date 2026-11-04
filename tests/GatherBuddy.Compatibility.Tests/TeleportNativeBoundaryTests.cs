@@ -69,7 +69,7 @@ public class TeleportNativeBoundaryTests
         Assert.DoesNotContain("UpdateAetheryteList", calls);
     }
 
-    private static IEnumerable<string> Calls(PEReader pe, MetadataReader metadata, MethodDefinitionHandle handle)
+    internal static IEnumerable<string> Calls(PEReader pe, MetadataReader metadata, MethodDefinitionHandle handle)
     {
         var method = metadata.GetMethodDefinition(handle);
         if (method.RelativeVirtualAddress == 0) yield break;

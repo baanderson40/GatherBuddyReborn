@@ -4,6 +4,9 @@ Personal experimental fork, not an official release. Unit tests/builds do not pr
 native currency, travel, recipe-window, or callback behavior. No test below is
 marked passed merely because its pure helper has automated coverage.
 
+Gemstone exchanges and retained vendor batches have a separate implementation and
+pending native acceptance checklist: [gemstone acquisition](gemstone-acquisition.md).
+
 ## Recorded evidence
 
 Committed implementation: `42188db` (Phase 5, unified GC reserve, inventory recovery,

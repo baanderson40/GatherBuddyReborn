@@ -86,6 +86,7 @@ public class CraftingMaterialsWindow : Window
     private bool _cachedMaterialViewKeepFulfilled;
     private bool _cachedMaterialViewShowRetainer;
     private bool _cachedMobDropInfoInitialized;
+    private VendorShopResolver.CacheStamp _cachedVendorShopStamp = new(-1, false);
     private List<MaterialPanel> _cachedPanels = [];
 
     public CraftingMaterialsWindow() : base("Materials###CraftingMaterials")
@@ -199,6 +200,10 @@ public class CraftingMaterialsWindow : Window
                 ImGui.SetTooltip("Refresh retainer NQ/HQ counts. Automatic refresh is disabled here to avoid UI hitching.");
         }
         ImGui.Separator();
+        if (!VendorShopResolver.IsInitialized)
+            ImGui.TextWrapped(VendorShopResolver.IsInitializing
+                ? "Vendor data loading; currency options may be incomplete."
+                : "Vendor data unavailable; currency options may be incomplete while initialization retries.");
         if (!_cachedHasVisibleEntries)
         {
             ImGui.TextColored(new Vector4(0.4f, 0.9f, 0.4f, 1f), "All materials ready.");
@@ -227,6 +232,7 @@ public class CraftingMaterialsWindow : Window
     private void InvalidateMaterialView()
     {
         _cachedMaterialViewValid = false;
+        _cachedVendorShopStamp = new(-1, false);
         _cachedHasMaterials = false;
         _cachedHasVisibleEntries = false;
         _cachedTotalMissing = 0;
@@ -252,6 +258,8 @@ public class CraftingMaterialsWindow : Window
             return true;
         if (_cachedMobDropInfoInitialized != MobDropInfoCache.IsInitialized)
             return true;
+        if (_cachedVendorShopStamp != VendorShopResolver.ViewStamp)
+            return true;
 
         return false;
     }
@@ -260,6 +268,8 @@ public class CraftingMaterialsWindow : Window
     {
         if (_editor == null)
             return;
+        // Capture before reading offers: publication during the build must cause another refresh.
+        var vendorStamp = VendorShopResolver.ViewStamp;
 
         try
         {
@@ -272,14 +282,14 @@ public class CraftingMaterialsWindow : Window
 
             if (!_cachedHasMaterials)
             {
-                UpdateMaterialViewCacheMetadata(showRetainer);
+                UpdateMaterialViewCacheMetadata(showRetainer, vendorStamp);
                 return;
             }
 
             var itemSheet = Dalamud.GameData.GetExcelSheet<Item>();
             if (itemSheet == null)
             {
-                UpdateMaterialViewCacheMetadata(showRetainer);
+                UpdateMaterialViewCacheMetadata(showRetainer, vendorStamp);
                 return;
             }
 
@@ -363,7 +373,7 @@ public class CraftingMaterialsWindow : Window
             if (vendorList.Count > 0) _cachedPanels.Add(new MaterialPanel("##vendor", "Vendor", AccentVendor, vendorList, nonCraftRetainerMode, BuildVendorBuyListTargets(vendorList)));
             if (craftList is { Count: > 0 }) _cachedPanels.Add(new MaterialPanel("##craft", "Craft", AccentCraft, craftList, craftRetainerMode, null));
 
-            UpdateMaterialViewCacheMetadata(showRetainer);
+            UpdateMaterialViewCacheMetadata(showRetainer, vendorStamp);
         }
         catch (Exception ex)
         {
@@ -372,7 +382,7 @@ public class CraftingMaterialsWindow : Window
         }
     }
 
-    private void UpdateMaterialViewCacheMetadata(bool showRetainer)
+    private void UpdateMaterialViewCacheMetadata(bool showRetainer, VendorShopResolver.CacheStamp vendorStamp)
     {
         _cachedMaterialViewValid = true;
         _cachedMaterialViewEditor = _editor;
@@ -382,6 +392,7 @@ public class CraftingMaterialsWindow : Window
         _cachedMaterialViewKeepFulfilled = _matsKeepFulfilled;
         _cachedMaterialViewShowRetainer = showRetainer;
         _cachedMobDropInfoInitialized = MobDropInfoCache.IsInitialized;
+        _cachedVendorShopStamp = vendorStamp;
     }
 
     private bool TryCreateMaterialEntry(ExcelSheet<Item> itemSheet, uint itemId, int needed, bool isPrecraft,
