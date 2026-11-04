@@ -44,8 +44,11 @@ public unsafe class OverrideMovement : IDisposable
         get => _rmiWalkHook.IsEnabled;
         set
         {
+            if (!value && _legacyMode.IsDisposed) return;
+            ObjectDisposedException.ThrowIf(_legacyMode.IsDisposed, this);
             if (value)
             {
+                UpdateLegacyMode();
                 _rmiWalkHook.Enable();
                 _rmiFlyHook.Enable();
             }
@@ -61,7 +64,7 @@ public unsafe class OverrideMovement : IDisposable
     public Vector3 DesiredPosition;
     public float Precision = 0.01f;
 
-    private bool _legacyMode;
+    private readonly LegacyMovementModeObserver _legacyMode = new();
 
     private delegate void RMIWalkDelegate(void* self, float* sumLeft, float* sumForward, float* sumTurnLeft, byte* haveBackwardOrStrafe, byte* a6, byte bAdditiveUnk);
     [Signature("E8 ?? ?? ?? ?? 80 7B 3E 00 48 8D 3D")]
@@ -77,14 +80,20 @@ public unsafe class OverrideMovement : IDisposable
         GatherBuddy.Log.Information($"RMIWalk address: 0x{_rmiWalkHook.Address:X}");
         GatherBuddy.Log.Information($"RMIFly address: 0x{_rmiFlyHook.Address:X}");
         Dalamud.GameConfig.UiControlChanged += OnConfigChanged;
+        Dalamud.GameConfig.UiConfigChanged += OnUiConfigChanged;
+        Dalamud.ClientState.Login += UpdateLegacyMode;
         UpdateLegacyMode();
     }
 
     public void Dispose()
     {
+        if (_legacyMode.IsDisposed) return;
+        _legacyMode.Dispose();
         Dalamud.GameConfig.UiControlChanged -= OnConfigChanged;
-        _rmiWalkHook.Dispose();
-        _rmiFlyHook.Dispose();
+        Dalamud.GameConfig.UiConfigChanged -= OnUiConfigChanged;
+        Dalamud.ClientState.Login -= UpdateLegacyMode;
+        try { _rmiWalkHook.Dispose(); }
+        finally { _rmiFlyHook.Dispose(); }
     }
 
     private void RMIWalkDetour(void* self, float* sumLeft, float* sumForward, float* sumTurnLeft, byte* haveBackwardOrStrafe, byte* a6, byte bAdditiveUnk)
@@ -126,16 +135,35 @@ public unsafe class OverrideMovement : IDisposable
         var dirH = Angle.FromDirectionXZ(dist);
         var dirV = allowVertical ? Angle.FromDirection(new(dist.Y, new Vector2(dist.X, dist.Z).Length())) : default;
 
-        var refDir = _legacyMode
+        var refDir = _legacyMode.LegacyMode
             ? ((CameraEx*)CameraManager.Instance()->GetActiveCamera())->DirH.Radians() + 180.Degrees()
             : player.Rotation.Radians();
         return (dirH - refDir, dirV);
     }
 
-    private void OnConfigChanged(object? sender, ConfigChangeEvent evt) => UpdateLegacyMode();
+    private void OnConfigChanged(object? sender, ConfigChangeEvent evt)
+        => RefreshForConfigChange(evt, true);
+
+    private void OnUiConfigChanged(object? sender, ConfigChangeEvent evt)
+        => RefreshForConfigChange(evt, false);
+
+    private void RefreshForConfigChange(ConfigChangeEvent evt, bool uiControl)
+    {
+        var initial = !_legacyMode.HasValue;
+        var option = string.IsNullOrEmpty(evt.Name) ? evt.Option.ToString() : evt.Name;
+        if (_legacyMode.RefreshForChange(option, uiControl, ReadMoveMode))
+            LogLegacyMode(initial, option);
+    }
+
+    private static uint? ReadMoveMode()
+        => Dalamud.GameConfig.UiControl.TryGetUInt("MoveMode", out var mode) ? mode : null;
+
     private void UpdateLegacyMode()
     {
-        _legacyMode = Dalamud.GameConfig.UiControl.TryGetUInt("MoveMode", out var mode) && mode == 1;
-        GatherBuddy.Log.Information($"Legacy mode is now {(_legacyMode ? "enabled" : "disabled")}");
+        var initial = !_legacyMode.HasValue;
+        if (_legacyMode.Refresh(ReadMoveMode)) LogLegacyMode(initial, "refresh");
     }
+
+    private void LogLegacyMode(bool initial, string source)
+        => GatherBuddy.Log.Debug($"[Movement mode] Legacy mode observed {(_legacyMode.LegacyMode ? "enabled" : "disabled")}; initial={initial}; source={source}");
 }
