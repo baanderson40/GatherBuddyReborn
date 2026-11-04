@@ -35,7 +35,7 @@ public partial class VulcanWindow
 
         if (GatherBuddy.ControllerSupport != null && !_mbRequestFocus)
         {
-            var handle = GatherBuddy.ControllerSupport.TabNavigation.TabItem("Marketboard##marketboardTab", 8, 9);
+            var handle = GatherBuddy.ControllerSupport.TabNavigation.TabItem("Marketboard##marketboardTab", (int)VulcanMainTab.Marketboard, MainTabCount);
             tabItem = handle;
             tabOpen = handle;
         }
@@ -60,6 +60,8 @@ public partial class VulcanWindow
         {
             if (!tabOpen)
                 return;
+
+            GatherBuddy.ControllerSupport?.TabNavigation.NotifyTabActive((int)VulcanMainTab.Marketboard);
 
             var svc = GatherBuddy.MarketboardService;
             if (svc == null)

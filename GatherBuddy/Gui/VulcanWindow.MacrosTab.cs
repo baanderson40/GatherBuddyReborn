@@ -29,72 +29,51 @@ public partial class VulcanWindow
     private int _editingMacroMinCP;
     private readonly Dictionary<uint, uint> _skillIconCache = new();
 
-    private void DrawMacrosTab()
+    private void DrawMacrosSettings()
     {
-        IDisposable tabItem;
-        bool tabOpen;
-
-        if (GatherBuddy.ControllerSupport != null)
+        var skipUnusable = GatherBuddy.Config.SkipMacroStepIfUnable;
+        if (ImGui.Checkbox("Skip step if unable##skipUnusable", ref skipUnusable))
         {
-            var handle = GatherBuddy.ControllerSupport.TabNavigation.TabItem("Macros##macrosTab", 3, 9);
-            tabItem = handle;
-            tabOpen = handle;
+            GatherBuddy.Config.SkipMacroStepIfUnable = skipUnusable;
+            GatherBuddy.Config.Save();
         }
-        else
+        var fallbackEnabled = GatherBuddy.Config.MacroFallbackEnabled;
+        if (ImGui.Checkbox("Fallback solver when macro exhausts##fallbackEnabled", ref fallbackEnabled))
         {
-            var handle = ImRaii.TabItem("Macros##macrosTab");
-            tabItem = handle;
-            tabOpen = handle.Success;
+            GatherBuddy.Config.MacroFallbackEnabled = fallbackEnabled;
+            GatherBuddy.Config.Save();
         }
 
-        using (tabItem)
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        var avail = ImGui.GetContentRegionAvail();
+        var sideBySide = avail.X >= VulcanUiScaling.Scaled(700f);
+        var listSize = sideBySide
+            ? new Vector2(VulcanUiScaling.Scaled(270f), Math.Max(1f, avail.Y))
+            : new Vector2(0, Math.Max(1f, Math.Min(VulcanUiScaling.Scaled(180f), avail.Y * 0.35f)));
+
+        using (ImRaii.PushColor(ImGuiCol.ChildBg, new Vector4(0.08f, 0.08f, 0.10f, 1.00f)))
         {
-            if (!tabOpen)
-                return;
+            using var list = ImRaii.Child("##macrosLeft", listSize, true);
+            if (list) DrawMacroListPanel();
+        }
 
-            var skipUnusable = GatherBuddy.Config.SkipMacroStepIfUnable;
-            if (ImGui.Checkbox("Skip step if unable##skipUnusable", ref skipUnusable))
-            {
-                GatherBuddy.Config.SkipMacroStepIfUnable = skipUnusable;
-                GatherBuddy.Config.Save();
-            }
-            ImGui.SameLine(0, VulcanUiScaling.Scaled(20f));
-            var fallbackEnabled = GatherBuddy.Config.MacroFallbackEnabled;
-            if (ImGui.Checkbox("Fallback solver when macro exhausts##fallbackEnabled", ref fallbackEnabled))
-            {
-                GatherBuddy.Config.MacroFallbackEnabled = fallbackEnabled;
-                GatherBuddy.Config.Save();
-            }
+        if (sideBySide) ImGui.SameLine();
 
-            ImGui.Spacing();
-            ImGui.Separator();
-            ImGui.Spacing();
-
-            var avail     = ImGui.GetContentRegionAvail();
-            var leftWidth = VulcanUiScaling.Scaled(270f);
-
-            using (ImRaii.PushColor(ImGuiCol.ChildBg, new Vector4(0.08f, 0.08f, 0.10f, 1.00f)))
-            {
-                ImGui.BeginChild("##macrosLeft", new Vector2(leftWidth, avail.Y), true);
-                DrawMacroListPanel();
-                ImGui.EndChild();
-            }
-
-            ImGui.SameLine();
-
-            using (ImRaii.PushColor(ImGuiCol.ChildBg, new Vector4(0.08f, 0.08f, 0.10f, 1.00f)))
-            {
-                ImGui.BeginChild("##macrosRight", new Vector2(0, avail.Y), true);
-                var macroLibrary = CraftingGameInterop.UserMacroLibrary;
-                var selectedMacro = _selectedMacroId != null
-                    ? macroLibrary.GetMacroByStringId(_selectedMacroId)
-                    : null;
-                if (selectedMacro != null)
-                    DrawMacroDetail(selectedMacro, macroLibrary);
-                else
-                    DrawImportPanel();
-                ImGui.EndChild();
-            }
+        using (ImRaii.PushColor(ImGuiCol.ChildBg, new Vector4(0.08f, 0.08f, 0.10f, 1.00f)))
+        {
+            using var detail = ImRaii.Child("##macrosRight", new Vector2(0, 0), true, ImGuiWindowFlags.HorizontalScrollbar);
+            if (!detail) return;
+            var macroLibrary = CraftingGameInterop.UserMacroLibrary;
+            var selectedMacro = _selectedMacroId != null
+                ? macroLibrary.GetMacroByStringId(_selectedMacroId)
+                : null;
+            if (selectedMacro != null)
+                DrawMacroDetail(selectedMacro, macroLibrary);
+            else
+                DrawImportPanel();
         }
     }
 

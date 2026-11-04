@@ -30,33 +30,6 @@ public partial class VulcanWindow
     private DebugSection _selectedDebugSection = DebugSection.ContextMenus;
 #endif
 
-    private void DrawDebugTab()
-    {
-        IDisposable tabItem;
-        bool tabOpen;
-        
-        if (GatherBuddy.ControllerSupport != null)
-        {
-            var handle = GatherBuddy.ControllerSupport.TabNavigation.TabItem("Debug##debugTab", 7, 9);
-            tabItem = handle;
-            tabOpen = handle;
-        }
-        else
-        {
-            var handle = ImRaii.TabItem("Debug##debugTab");
-            tabItem = handle;
-            tabOpen = handle.Success;
-        }
-        
-        using (tabItem)
-        {
-            if (!tabOpen)
-                return;
-
-            DrawDebugPanels();
-        }
-    }
-
     private void DrawDebugPanels()
     {
         var available = ImGui.GetContentRegionAvail();

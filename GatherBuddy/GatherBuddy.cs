@@ -200,6 +200,7 @@ public partial class GatherBuddy : IDalamudPlugin
             WindowSystem.AddWindow(new FishTimerWindow(FishRecorder));
             WindowSystem.AddWindow(new SpearfishingHelper(GameData));
             WindowSystem.AddWindow(_vulcanWindow);
+            WindowSystem.AddWindow(_vulcanWindow.DebugWindow);
             WindowSystem.AddWindow(_craftingStatusWindow);
             WindowSystem.AddWindow(_craftingMaterialsWindow);
             WindowSystem.AddWindow(_craftingTreeWindow);
@@ -222,6 +223,7 @@ public partial class GatherBuddy : IDalamudPlugin
                 
                 // Register both windows as managed by ElliCon
                 ControllerSupport.RegisterBlockingWindow("Vulcan - Crafting###VulcanWindow");
+                ControllerSupport.RegisterBlockingWindow(Gui.VulcanDebugWindow.WindowId);
                 ControllerSupport.RegisterBlockingWindow("Crafting Status###GatherBuddyCraftingStatus");
                 ControllerSupport.RegisterBlockingWindow(Gui.VendorBuyListWindow.WindowId);
                 ControllerSupport.RegisterBlockingWindow(Gui.CollectablesWindow.WindowId);
@@ -366,6 +368,7 @@ public partial class GatherBuddy : IDalamudPlugin
         CollectableManager?.Dispose();
         VendorBuyListManager?.Dispose();
         VendorPurchaseManager?.Dispose();
+        _vulcanWindow?.Dispose();
         ControllerSupport?.Dispose();
         Ipc?.Dispose();
         NativeItemTooltipBridge?.Dispose();

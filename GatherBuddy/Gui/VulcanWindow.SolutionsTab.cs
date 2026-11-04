@@ -23,25 +23,9 @@ public partial class VulcanWindow
 
     private void DrawSolutionsTab()
     {
-        IDisposable tabItem;
-        bool tabOpen;
-
-        if (GatherBuddy.ControllerSupport != null)
+        using (var tab = ImRaii.TabItem("Solutions##raphaelSolutions"))
         {
-            var handle = GatherBuddy.ControllerSupport.TabNavigation.TabItem("Solutions##solutionsTab", 5, 9);
-            tabItem = handle;
-            tabOpen = handle;
-        }
-        else
-        {
-            var handle = ImRaii.TabItem("Solutions##solutionsTab");
-            tabItem = handle;
-            tabOpen = handle.Success;
-        }
-
-        using (tabItem)
-        {
-            if (!tabOpen)
+            if (!tab)
                 return;
 
             if ((DateTime.UtcNow - _solutionsLastRefresh).TotalSeconds > 0.5)
@@ -56,9 +40,8 @@ public partial class VulcanWindow
             var coordinator = GatherBuddy.RaphaelSolveCoordinator;
             var raphaelConfig = GatherBuddy.Config.RaphaelSolverConfig;
 
-            ImGui.SetNextItemWidth(VulcanUiScaling.Scaled(220f));
+            ImGui.SetNextItemWidth(-1f);
             ImGui.InputTextWithHint("##solutionsSearch", "Search items...", ref _solutionsSearch, 128);
-            ImGui.SameLine();
             using (ImRaii.Disabled(coordinator.PendingSolves <= 0))
             {
                 if (ImGui.Button("Stop Queue", VulcanUiScaling.Scaled(90f, 0f)))
@@ -73,7 +56,6 @@ public partial class VulcanWindow
                 _selectedSolutionKey = null;
                 _solutionsList.Clear();
             }
-            ImGui.SameLine();
             var autoClear = raphaelConfig.AutoClearSolutionCache;
             if (ImGui.Checkbox("Auto-clear on queue start", ref autoClear))
             {
@@ -85,7 +67,6 @@ public partial class VulcanWindow
 
             var activeColor = coordinator.ActiveSolves > 0 ? ImGuiColors.HealerGreen : ImGuiColors.DalamudGrey;
             var pendingColor = coordinator.PendingSolves > 0 ? ImGuiColors.DalamudOrange : ImGuiColors.DalamudGrey;
-            ImGui.SameLine();
             ImGui.TextColored(activeColor, $"Active: {coordinator.ActiveSolves}");
             ImGui.SameLine();
             ImGui.TextColored(pendingColor, $"Pending: {coordinator.PendingSolves}");
@@ -109,23 +90,23 @@ public partial class VulcanWindow
             }
 
             var avail = ImGui.GetContentRegionAvail();
-            var leftWidth = VulcanUiScaling.Scaled(290f);
-            var rightWidth = avail.X - leftWidth - ImGui.GetStyle().ItemSpacing.X;
+            var sideBySide = avail.X >= VulcanUiScaling.Scaled(700f);
+            var listSize = sideBySide
+                ? new Vector2(VulcanUiScaling.Scaled(290f), Math.Max(1f, avail.Y))
+                : new Vector2(0, Math.Max(1f, Math.Min(VulcanUiScaling.Scaled(180f), avail.Y * 0.35f)));
 
             using (ImRaii.PushColor(ImGuiCol.ChildBg, new Vector4(0.08f, 0.08f, 0.10f, 1.00f)))
             {
-                ImGui.BeginChild("##solLeftPanel", new Vector2(leftWidth, avail.Y), true);
-                DrawSolutionsList(filtered);
-                ImGui.EndChild();
+                using var list = ImRaii.Child("##solLeftPanel", listSize, true);
+                if (list) DrawSolutionsList(filtered);
             }
 
-            ImGui.SameLine();
+            if (sideBySide) ImGui.SameLine();
 
             using (ImRaii.PushColor(ImGuiCol.ChildBg, new Vector4(0.08f, 0.08f, 0.10f, 1.00f)))
             {
-                ImGui.BeginChild("##solRightPanel", new Vector2(rightWidth, avail.Y), true);
-                DrawSolutionDetail();
-                ImGui.EndChild();
+                using var detail = ImRaii.Child("##solRightPanel", new Vector2(0, 0), true, ImGuiWindowFlags.HorizontalScrollbar);
+                if (detail) DrawSolutionDetail();
             }
         }
     }

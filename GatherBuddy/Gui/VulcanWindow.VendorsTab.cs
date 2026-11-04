@@ -196,7 +196,7 @@ public partial class VulcanWindow
 
         if (GatherBuddy.ControllerSupport != null && !_vendorsTabRequestFocus)
         {
-            var handle = ImRaii.TabItem("Vendors##vendorsTab");
+            var handle = GatherBuddy.ControllerSupport.TabNavigation.TabItem("Vendors##vendorsTab", (int)VulcanMainTab.Vendors, MainTabCount);
             tabItem = handle;
             tabOpen = handle.Success;
         }
@@ -223,6 +223,8 @@ public partial class VulcanWindow
         {
             if (!tabOpen)
                 return;
+
+            GatherBuddy.ControllerSupport?.TabNavigation.NotifyTabActive((int)VulcanMainTab.Vendors);
 
             if (!VendorShopResolver.IsInitialized && !VendorShopResolver.IsInitializing)
                 VendorShopResolver.InitializeAsync();

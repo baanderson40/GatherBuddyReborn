@@ -1,37 +1,14 @@
 ﻿using System;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
-using GatherBuddy.Plugin;
 using GatherBuddy.Vulcan;
-using ImRaii = ElliLib.Raii.ImRaii;
 
 namespace GatherBuddy.Gui;
 
 public partial class VulcanWindow
 {
-    private void DrawStandardSolverConfigTab()
+    private void DrawStandardSolverSettings()
     {
-        IDisposable tabItem;
-        bool tabOpen;
-        
-        if (GatherBuddy.ControllerSupport != null)
-        {
-        var handle = GatherBuddy.ControllerSupport.TabNavigation.TabItem("Standard Solver##standardSolverTab", 4, 9);
-            tabItem = handle;
-            tabOpen = handle;
-        }
-        else
-        {
-            var handle = ImRaii.TabItem("Standard Solver##standardSolverTab");
-            tabItem = handle;
-            tabOpen = handle.Success;
-        }
-        
-        using (tabItem)
-        {
-            if (!tabOpen)
-                return;
-
         var config = GatherBuddy.Config.StandardSolverConfig;
 
         ImGui.Text("Standard Solver Configuration");
@@ -190,6 +167,5 @@ public partial class VulcanWindow
         }
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Reset all Standard Solver settings to their default values");
-        }
     }
 }

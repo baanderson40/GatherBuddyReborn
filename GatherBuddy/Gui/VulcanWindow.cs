@@ -24,6 +24,8 @@ namespace GatherBuddy.Gui;
 
 public partial class VulcanWindow : Window, IDisposable
 {
+    private static int MainTabCount => VulcanNavigation.MainTabs.Count;
+    internal VulcanDebugWindow DebugWindow { get; }
     // Shared state
     private CraftingListDefinition? _editingList  = null;
     private CraftingListDefinition? _previewList  = null;
@@ -74,6 +76,13 @@ public partial class VulcanWindow : Window, IDisposable
             MaximumSize = new Vector2(float.MaxValue, float.MaxValue),
         };
         _teamCraftImportWindowSize = NormalizeTeamCraftImportWindowSize(GatherBuddy.Config.TeamCraftImportWindowSize);
+        DebugWindow = new VulcanDebugWindow(DrawDebugPanels);
+        TitleBarButtons.Add(new TitleBarButton
+        {
+            Icon = FontAwesomeIcon.Bug,
+            ShowTooltip = () => ImGui.SetTooltip("Open Debug"),
+            Click = _ => DebugWindow.OpenOrRestore(),
+        });
         
         CraftingGameInterop.CraftFinished += OnCraftFinished;
     }
@@ -298,12 +307,12 @@ public partial class VulcanWindow : Window, IDisposable
     public override void Draw()
     {
         using var theme = VulcanUiStyle.PushTheme();
-        GatherBuddy.ControllerSupport?.TabNavigation.Update(Dalamud.GamepadState, 10);
         
         // Track window focus for controller input blocking
         var isFocused = ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows);
         if (isFocused)
         {
+            GatherBuddy.ControllerSupport?.TabNavigation.Update(Dalamud.GamepadState, MainTabCount);
             GatherBuddy.ControllerSupport?.UpdateFocusedWindow("Vulcan - Crafting###VulcanWindow");
             _wasFocusedLastFrame = true;
         }
@@ -321,16 +330,18 @@ public partial class VulcanWindow : Window, IDisposable
             {
                 if (tab)
                 {
-                    DrawCraftingListsTab();
-                    DrawRecipesTab();
-                    DrawWorkshopsTab();
-                    DrawMacrosTab();
-                    DrawStandardSolverConfigTab();
-                    DrawSolutionsTab();
-                    DrawSettingsTab();
-                    DrawDebugTab();
-                    DrawMarketboardTab();
-                    DrawVendorsTab();
+                    foreach (var mainTab in VulcanNavigation.MainTabs)
+                    {
+                        switch (mainTab)
+                        {
+                            case VulcanMainTab.CraftingLists: DrawCraftingListsTab(); break;
+                            case VulcanMainTab.Recipes: DrawRecipesTab(); break;
+                            case VulcanMainTab.Workshops: DrawWorkshopsTab(); break;
+                            case VulcanMainTab.Marketboard: DrawMarketboardTab(); break;
+                            case VulcanMainTab.Vendors: DrawVendorsTab(); break;
+                            case VulcanMainTab.Settings: DrawSettingsTab(); break;
+                        }
+                    }
                 }
             }
         
@@ -467,8 +478,8 @@ public partial class VulcanWindow : Window, IDisposable
 
     public void Dispose()
     {
+        DebugWindow.IsOpen = false;
         CraftingGameInterop.CraftFinished -= OnCraftFinished;
         DisposeListEditor();
     }
 }
-

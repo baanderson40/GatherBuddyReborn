@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Numerics;
 using Dalamud.Interface.Windowing;
 using Dalamud.Bindings.ImGui;
 using GatherBuddy.Crafting;
+using GatherBuddy.Automation;
 
 namespace GatherBuddy.Gui;
 
@@ -65,6 +67,9 @@ public class CraftingStatusWindow : Window
         if (!IsOpen)
             return;
 
+        ImGui.SetNextWindowSizeConstraints(VulcanUiScaling.Scaled(300f, 0f),
+            new Vector2(VulcanUiScaling.Scaled(420f), float.MaxValue));
+
         if (_pendingCollapseState.HasValue)
         {
             ImGui.SetNextWindowCollapsed(_pendingCollapseState.Value, ImGuiCond.Always);
@@ -80,7 +85,6 @@ public class CraftingStatusWindow : Window
 
     public override void Draw()
     {
-        AutoRetainerSettingsUi.DrawStatus();
         if (_queueProcessor == null)
             return;
         
@@ -99,32 +103,40 @@ public class CraftingStatusWindow : Window
         var currentState = _queueProcessor.CurrentState;
         var currentIndex = _queueProcessor.CurrentQueueIndex;
         var currentItem = _queueProcessor.CurrentRecipeItem;
+        var coordinator = GatherBuddy.AutoRetainerIntegration?.Coordinator;
+        var handoff = coordinator?.YieldRequested == true ? coordinator : null;
+        string? recipeName = null;
+        if (currentItem != null
+         && Dalamud.GameData.GetExcelSheet<Lumina.Excel.Sheets.Recipe>().TryGetRow(currentItem.RecipeId, out var recipe))
+            recipeName = recipe.ItemResult.Value.Name.ExtractText();
 
-        ImGui.TextColored(new System.Numerics.Vector4(0.0f, 1.0f, 0.8f, 1.0f), "Crafting Queue Active");
-        ImGui.Separator();
+        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.0f, 1.0f, 0.8f, 1.0f));
+        ImGui.TextWrapped(CraftingStatusPresentation.GetHeader(currentState, _queueProcessor.Paused, handoff?.State, recipeName));
+        ImGui.PopStyleColor();
+        if (handoff != null && ImGui.IsItemHovered())
+            ImGui.SetTooltip(handoff.Status);
         ImGui.Spacing();
 
-        ImGui.Text($"State: {GetStateDisplayName(currentState)}");
         var progress = _queueProcessor.Progress;
-        ImGui.Text($"Confirmed crafts: {progress.ConfirmedCrafts} / {progress.RequestedCrafts}");
+        ImGui.Text($"{progress.ConfirmedCrafts} / {progress.RequestedCrafts} crafts confirmed");
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Counts expanded craft entries, not output item units. Only inventory-confirmed output advances successful crafts; explicit skips are excluded.");
-        ImGui.Text($"Remaining crafts: {progress.RemainingCrafts}; explicitly skipped: {progress.ExplicitSkips}");
-        if (!string.IsNullOrEmpty(_queueProcessor.AcquisitionStatus))
-        {
-            ImGui.TextWrapped(_queueProcessor.AcquisitionPolicyDescription);
-            ImGui.TextWrapped(_queueProcessor.AcquisitionStatus);
-            if (_queueProcessor.AcquisitionShortages.Count > 0)
-                ImGui.TextDisabled("Last reconciled shortages (use Recheck after changing inventory):");
-            foreach (var shortage in _queueProcessor.AcquisitionShortages) ImGui.TextWrapped(shortage);
-        }
+        ImGui.ProgressBar(progress.RequestedCrafts > 0
+                ? (float)progress.ConfirmedCrafts / progress.RequestedCrafts : 0f,
+            new Vector2(-1f, VulcanUiScaling.Scaled(8f)), string.Empty);
+        ImGui.Text($"{progress.RemainingCrafts} crafts remaining");
+        if (progress.ExplicitSkips > 0)
+            ImGui.TextDisabled($"{progress.ExplicitSkips} explicitly skipped");
+
+        // Recovery controls remain visible even with Details collapsed.
+        if (handoff?.State == AutoRetainerHandoffState.Failed)
+            AutoRetainerSettingsUi.DrawStatus();
         if (currentState == CraftingQueueProcessor.QueueState.BlockedByMaterials)
         {
             ImGui.TextWrapped("Remaining work is retained. Add materials and Recheck without purchases, or explicitly Retry acquisition under the captured run policy.");
             if (ImGui.Button("Recheck materials (no purchases)")) _queueProcessor.RecheckAcquiredMaterials();
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Re-read current inventory and select ready recipes. Does not start purchases or gathering.");
-            ImGui.SameLine();
             if (ImGui.Button("Retry acquisition")) _queueProcessor.RetryMaterialAcquisition();
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("May spend gil/current-GC seals allowed by the captured policy, then gather remaining supported materials. Earlier purchase spending still counts toward the run cap. Close crafting/vendor interactions first.");
@@ -137,27 +149,8 @@ public class CraftingStatusWindow : Window
             ImGui.PopTextWrapPos();
         }
 
-        if (currentItem != null)
-        {
-            var recipeSheet = Dalamud.GameData.GetExcelSheet<Lumina.Excel.Sheets.Recipe>();
-            if (recipeSheet != null && recipeSheet.TryGetRow(currentItem.RecipeId, out var recipe))
-            {
-                var itemName = recipe.ItemResult.Value.Name.ExtractText();
-                ImGui.Text($"Current Recipe: {itemName}");
-            }
-        }
-
-        if (ShouldShowRemainingEstimate(currentState))
-        {
-            var remainingMs = GetRemainingEstimate(currentIndex);
-            ImGui.Text($"Estimated Time Remaining: ~{CraftingTimeEstimator.FormatDuration(remainingMs)}");
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Estimate based on the active craft path for each queue item. Macros, Standard Solver, and Progress Only are simulated, while Raphael uses cached solution length when available and falls back to a provisional default until ready. Excludes time spent gathering, repairing, or switching jobs.");
-        }
-        else if (!ShouldRetainRemainingEstimateCache(currentState))
-        {
+        if (!ShouldRetainRemainingEstimateCache(currentState))
             ResetRemainingEstimateCache();
-        }
 
         ImGui.Spacing();
         ImGui.Separator();
@@ -165,76 +158,71 @@ public class CraftingStatusWindow : Window
 
         if (currentState == CraftingQueueProcessor.QueueState.Complete)
         {
-            ImGui.TextColored(new System.Numerics.Vector4(0.0f, 1.0f, 0.0f, 1.0f), "Queue Complete!");
-            ImGui.Spacing();
             if (ImGui.Button("Close"))
             {
                 IsOpen = false;
                 _queueProcessor = null;
+                return;
             }
         }
         else
         {
             var retainedStop = currentState is CraftingQueueProcessor.QueueState.BlockedByMaterials
                 or CraftingQueueProcessor.QueueState.AcquisitionFailed or CraftingQueueProcessor.QueueState.Cancelled;
-            ImGui.TextDisabled(currentState switch
-            {
-                CraftingQueueProcessor.QueueState.BlockedByMaterials => "Queue blocked; remaining work retained.",
-                CraftingQueueProcessor.QueueState.AcquisitionFailed => "Automation failed; work retained. Inspect the error, then Stop before restarting.",
-                CraftingQueueProcessor.QueueState.Cancelled => "Queue cancelled; no new automation authorized.",
-                _ => _queueProcessor.Paused ? "Queue is paused." : "Queue is processing...",
-            });
-            ImGui.Spacing();
-            ImGui.Separator();
-            ImGui.Spacing();
-            
-            if (!retainedStop && !_queueProcessor.Paused)
+            if (!retainedStop && !_queueProcessor.Paused && handoff?.IsStopping != true)
             {
                 if (ImGui.Button("Pause"))
                 {
                     _queueProcessor.Pause();
                 }
+                if (handoff != null && ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Prevent automatic queue resume after AutoRetainer finishes. Does not cancel the AR pass.");
             }
-            else if (!retainedStop)
+            else if (!retainedStop && handoff?.IsStopping != true)
             {
+                ImGui.BeginDisabled(handoff != null);
                 if (ImGui.Button("Resume"))
                 {
                     _queueProcessor.Resume();
                 }
+                ImGui.EndDisabled();
+                if (handoff != null && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                    ImGui.SetTooltip("Wait for the AutoRetainer handoff to settle before resuming.");
             }
             
-            if (!retainedStop) ImGui.SameLine();
-            if (ImGui.Button("Stop"))
+            if (!retainedStop && handoff?.IsStopping != true) ImGui.SameLine();
+            if (ImGui.Button("Stop Queue"))
             {
                 CraftingGatherBridge.StopQueue();
-            }
-            
-            ImGui.Spacing();
-            ImGui.Separator();
-            ImGui.Spacing();
-
-            var delay = GatherBuddy.Config.VulcanExecutionDelayMs;
-            ImGui.SetNextItemWidth(VulcanUiScaling.Scaled(150f));
-            if (ImGui.SliderInt("Action Delay (ms)", ref delay, 0, 1000))
-            {
-                GatherBuddy.Config.VulcanExecutionDelayMs = Math.Clamp(delay, 0, 1000);
-                GatherBuddy.Config.Save();
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Delay between each crafting action");
-
-            ImGui.Spacing();
-            ImGui.Separator();
-            ImGui.Spacing();
-            
-            if (ImGui.Button("Open Vulcan Window"))
-            {
-                if (GatherBuddy.VulcanWindow != null)
-                {
-                    GatherBuddy.VulcanWindow.IsOpen = true;
-                }
+                return; // Stop can clear the queue/window during this draw.
             }
         }
+
+        if (ImGui.CollapsingHeader("Details"))
+        {
+            if (currentItem != null)
+            {
+                var recipeProgress = CraftingStatusPresentation.GetRecipeProgress(_queueProcessor.Queue, currentIndex, currentItem.RecipeId);
+                ImGui.TextWrapped($"{(handoff != null ? "Parked recipe" : "Current recipe")}: {recipeProgress.ConfirmedCrafts} / {recipeProgress.RequestedCrafts} crafts confirmed");
+                if (handoff != null && recipeName != null) ImGui.TextWrapped(recipeName);
+            }
+            ImGui.Text($"Queue entries remaining: {Math.Max(0, _queueProcessor.QueueCount - currentIndex)}");
+            if (handoff == null && ShouldShowRemainingEstimate(currentState))
+            {
+                ImGui.Text($"Estimated crafting time: ~{CraftingTimeEstimator.FormatDuration(GetRemainingEstimate(currentIndex))}");
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Estimate for remaining crafts; excludes gathering, repairs, travel, and AutoRetainer. Raphael uses cached solutions when available, otherwise a provisional default.");
+            }
+            if (handoff != null) ImGui.TextWrapped(handoff.Status);
+            // Preserve useful failure/shortage diagnostics, not routine acquisition chatter.
+            if (currentState is CraftingQueueProcessor.QueueState.BlockedByMaterials or CraftingQueueProcessor.QueueState.AcquisitionFailed)
+            {
+                ImGui.TextWrapped(_queueProcessor.AcquisitionStatus);
+                foreach (var shortage in _queueProcessor.AcquisitionShortages) ImGui.TextWrapped(shortage);
+            }
+        }
+        if (ImGui.Button("Open Vulcan") && GatherBuddy.VulcanWindow != null)
+            GatherBuddy.VulcanWindow.IsOpen = true;
     }
 
     private void ResetRemainingEstimateCache()
@@ -308,74 +296,4 @@ public class CraftingStatusWindow : Window
             || state == CraftingQueueProcessor.QueueState.ExtractingMateria;
     }
 
-    private static string GetStateDisplayName(CraftingQueueProcessor.QueueState state)
-    {
-        return state switch
-        {
-            CraftingQueueProcessor.QueueState.Idle => "Idle",
-            CraftingQueueProcessor.QueueState.NavigatingToRetainerBell => "Navigating to Retainer Bell",
-            CraftingQueueProcessor.QueueState.WaitingForGather => "Gathering Materials",
-            CraftingQueueProcessor.QueueState.PlanningAcquisition => "Planning Material Acquisition",
-            CraftingQueueProcessor.QueueState.WaitingForVendorData => "Waiting for Vendor Data / Availability",
-            CraftingQueueProcessor.QueueState.PurchasingMaterials => "Purchasing Materials",
-            CraftingQueueProcessor.QueueState.WaitingForVendorCleanup => "Waiting for Vendor Cleanup",
-            CraftingQueueProcessor.QueueState.BlockedByMaterials => "Blocked by Material Shortages",
-            CraftingQueueProcessor.QueueState.AcquisitionFailed => "Material Acquisition Failed",
-            CraftingQueueProcessor.QueueState.Cancelled => "Cancelled",
-            CraftingQueueProcessor.QueueState.WaitingForJobSwitch => "Switching Job",
-            CraftingQueueProcessor.QueueState.Repairing => "Repairing Equipment",
-            CraftingQueueProcessor.QueueState.ExtractingMateria => "Extracting Materia",
-            CraftingQueueProcessor.QueueState.WaitingForRaphaelSolution => "Solving with Raphael",
-            CraftingQueueProcessor.QueueState.ReadyForCraft => "Ready to Craft",
-            CraftingQueueProcessor.QueueState.Crafting => "Crafting",
-            CraftingQueueProcessor.QueueState.WaitingForCraftResult => "Confirming Craft Output",
-            CraftingQueueProcessor.QueueState.WaitingForPlayerInventory => "Waiting for Player / Inventory",
-            CraftingQueueProcessor.QueueState.WaitingForTravelCompletion => "Waiting for Travel / Preparation Readiness",
-            CraftingQueueProcessor.QueueState.Complete => "Complete",
-            _ => "Unknown"
-        };
-    }
-    
-    private (int currentCraft, int totalCrafts) GetCurrentRecipeCraftNumbers()
-    {
-        if (_queueProcessor == null)
-            return (0, 0);
-        
-        var currentItem = _queueProcessor.CurrentRecipeItem;
-        if (currentItem == null)
-            return (0, 0);
-        
-        var currentIndex = _queueProcessor.CurrentQueueIndex;
-        var currentRecipeId = currentItem.RecipeId;
-        
-        int firstIndex = currentIndex;
-        while (firstIndex > 0)
-        {
-            var prevItem = GetQueueItemAt(firstIndex - 1);
-            if (prevItem == null || prevItem.RecipeId != currentRecipeId)
-                break;
-            firstIndex--;
-        }
-        
-        int lastIndex = currentIndex;
-        while (lastIndex < _queueProcessor.QueueCount - 1)
-        {
-            var nextItem = GetQueueItemAt(lastIndex + 1);
-            if (nextItem == null || nextItem.RecipeId != currentRecipeId)
-                break;
-            lastIndex++;
-        }
-        
-        int currentCraftNumber = currentIndex - firstIndex + 1;
-        int totalCrafts = lastIndex - firstIndex + 1;
-        
-        return (currentCraftNumber, totalCrafts);
-    }
-    
-    private CraftingListItem? GetQueueItemAt(int index)
-    {
-        if (_queueProcessor == null || index < 0 || index >= _queueProcessor.QueueCount)
-            return null;
-        return _queueProcessor.Queue[index];
-    }
 }

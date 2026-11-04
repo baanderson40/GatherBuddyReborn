@@ -23,40 +23,32 @@ public partial class VulcanWindow
         Materia,
         RetainerBell,
         AutoRetainer,
+        Macros,
+        StandardSolver,
         Raphael,
     }
 
     private SettingsSection _selectedSettingsSection = SettingsSection.General;
 
-    private void DrawSettingsTab()
+    private unsafe void DrawSettingsTab()
     {
-        IDisposable tabItem;
-        bool tabOpen;
-
-        if (GatherBuddy.ControllerSupport != null)
+        // Trailing overrides ImGui's retained tab order after a live plugin reload.
+        var navigation = GatherBuddy.ControllerSupport?.TabNavigation;
+        var flags = ImGuiTabItemFlags.Trailing;
+        if (navigation?.ShouldSelectTab((int)VulcanMainTab.Settings) == true)
+            flags |= ImGuiTabItemFlags.SetSelected;
+        fixed (byte* label = "Settings##settingsTab\0"u8)
         {
-            var handle = GatherBuddy.ControllerSupport.TabNavigation.TabItem("Settings##settingsTab", 6, 9);
-            tabItem = handle;
-            tabOpen = handle;
-        }
-        else
-        {
-            var handle = ImRaii.TabItem("Settings##settingsTab");
-            tabItem = handle;
-            tabOpen = handle.Success;
-        }
-
-        using (tabItem)
-        {
-            if (!tabOpen)
-                return;
-
+            using var tab = ImRaii.TabItem(label, flags);
+            if (!tab) return;
+            navigation?.NotifyTabActive((int)VulcanMainTab.Settings);
             DrawSettingsPanels();
         }
     }
 
     private void DrawSettingsPanels()
     {
+        using var panelBackground = VulcanUiStyle.PushPanel();
         var available = ImGui.GetContentRegionAvail();
         var height = Math.Max(1f, available.Y);
         var navigationWidth = Math.Max(1f, Math.Min(VulcanUiScaling.Scaled(220f),
@@ -75,6 +67,8 @@ public partial class VulcanWindow
                 DrawSettingsSectionLink(SettingsSection.Materia);
                 DrawSettingsSectionLink(SettingsSection.RetainerBell);
                 DrawSettingsSectionLink(SettingsSection.AutoRetainer);
+                DrawSettingsSectionLink(SettingsSection.Macros);
+                DrawSettingsSectionLink(SettingsSection.StandardSolver);
                 DrawSettingsSectionLink(SettingsSection.Raphael);
             }
         }
@@ -113,7 +107,13 @@ public partial class VulcanWindow
                     DrawVulcanRetainerBellConfig();
                     break;
                 case SettingsSection.Raphael:
-                    DrawRaphaelSettings();
+                    DrawRaphaelSettingsPanels();
+                    break;
+                case SettingsSection.Macros:
+                    DrawMacrosSettings();
+                    break;
+                case SettingsSection.StandardSolver:
+                    DrawStandardSolverSettings();
                     break;
                 case SettingsSection.AutoRetainer:
                     AutoRetainerSettingsUi.Draw();
@@ -140,6 +140,8 @@ public partial class VulcanWindow
         SettingsSection.Materia => "Materia Extraction",
         SettingsSection.RetainerBell => "Retainer Bell",
         SettingsSection.AutoRetainer => "AutoRetainer",
+        SettingsSection.Macros => "Macros",
+        SettingsSection.StandardSolver => "Standard Solver",
         SettingsSection.Raphael => "Raphael Solver",
         _ => "Unknown",
     };
@@ -235,6 +237,24 @@ public partial class VulcanWindow
         {
             GatherBuddy.Config.Save();
         }
+
+        // Keyboard/gamepad-accessible alternative to the title-bar icon.
+        if (ImGui.Button("Open Debug##settingsDebug")) DebugWindow.OpenOrRestore();
+    }
+
+    private void DrawRaphaelSettingsPanels()
+    {
+        using var tabs = ImRaii.TabBar("##RaphaelSettingsTabs");
+        if (!tabs) return;
+        using (var configuration = ImRaii.TabItem("Configuration##raphaelConfiguration"))
+        {
+            if (configuration)
+            {
+                using var content = ImRaii.Child("##RaphaelConfigurationContent", new Vector2(0, 0));
+                if (content) DrawRaphaelSettings();
+            }
+        }
+        DrawSolutionsTab();
     }
 
     private void DrawRaphaelSettings()

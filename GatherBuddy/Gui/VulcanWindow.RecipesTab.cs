@@ -374,7 +374,7 @@ public partial class VulcanWindow
         
         if (GatherBuddy.ControllerSupport != null && !_recipesTabRequestFocus)
         {
-            var handle = GatherBuddy.ControllerSupport.TabNavigation.TabItem("Recipes##recipesTab", 1, 9);
+            var handle = GatherBuddy.ControllerSupport.TabNavigation.TabItem("Recipes##recipesTab", (int)VulcanMainTab.Recipes, MainTabCount);
             tabItem = handle;
             tabOpen = handle;
         }
@@ -406,6 +406,8 @@ public partial class VulcanWindow
         {
             if (!tabOpen)
                 return;
+
+            GatherBuddy.ControllerSupport?.TabNavigation.NotifyTabActive((int)VulcanMainTab.Recipes);
 
             if (GatherBuddy.Config.ShowRecipeBrowserTooltips)
                 CaptureRecipesTooltipWindowBounds();
