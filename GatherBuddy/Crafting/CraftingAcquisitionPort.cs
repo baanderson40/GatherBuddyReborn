@@ -6,7 +6,6 @@ using FFXIVClientStructs.FFXIV.Client.Game;
 using GatherBuddy.Automation;
 using GatherBuddy.Plugin;
 using GatherBuddy.Vulcan.Vendors;
-using Lumina.Excel.Sheets;
 
 namespace GatherBuddy.Crafting;
 
@@ -46,19 +45,8 @@ internal sealed class CraftingAcquisitionPort(CraftingExecutionPlan executionPla
         {
             VendorShopResolver.InitializeAsync();
             if (VendorShopResolver.IsInitialized) VendorNpcLocationCache.InitializeAsync(VendorShopResolver.AllVendorNpcIds);
-            snapshot = VendorAcquisitionOfferAdapter.Capture(requirements.Keys);
-            var sheet = Dalamud.GameData.GetExcelSheet<Item>();
             // Do not reserve currency for offers the transient executor cannot actually execute.
-            snapshot = snapshot with { Offers = snapshot.Offers.Select(offer =>
-            {
-                var supported = (offer.ShopType != VendorShopType.SpecialCurrency || offer.CurrencyGroup == VendorCurrencyGroup.BicolorGemstones)
-                    && !VendorShopResolver.HousingItemIds.Contains(offer.ItemId) && !VendorShopResolver.EquippableItemIds.Contains(offer.ItemId)
-                    && sheet != null && sheet.TryGetRow(offer.ItemId, out var item) && item.StackSize > 1
-                    && offer.OutputQuantityPerTransaction <= item.StackSize;
-                return supported ? offer : offer with { Supported = false,
-                    RejectionReason = "Integrated execution supports stackable gil/GC and validated gemstone material exchanges only.",
-                    RejectionKind = AcquisitionOfferRejectionKind.Unsupported };
-            }).ToList().AsReadOnly() };
+            snapshot = IntegratedMaterialOfferAdapter.Capture(requirements.Keys);
         }
         var balances = new Dictionary<uint, ulong>();
         var currentSeals = VendorShopResolver.GetCurrentGrandCompanySealCurrencyItemId();

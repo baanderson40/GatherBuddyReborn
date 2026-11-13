@@ -140,6 +140,17 @@ public class CraftingListEditor
     internal bool RetainerRestockEnabled => GetPlanningList().RetainerRestock;
     internal CraftingListDefinition PlanningList => GetPlanningList();
     internal long MaterialCacheVersion  => Interlocked.Read(ref _materialCacheVersion);
+
+    internal MaterialPurchaseDisplayContext GetMaterialPurchaseDisplayContext()
+    {
+        var run = GetActiveExecutionPlan();
+        var queue = CraftingGatherBridge.AutoRetainerQueue;
+        if (queue == null || queue.CurrentState is CraftingQueueProcessor.QueueState.Idle
+            or CraftingQueueProcessor.QueueState.Complete or CraftingQueueProcessor.QueueState.Cancelled)
+            run = null;
+        return MaterialPurchaseDisplayContext.Resolve(_list.ID, GatherBuddy.Config.AutomaticVendorPurchases, _list.VendorPurchases,
+            run?.ListId, run?.AcquisitionRunId, run?.PurchasePolicy);
+    }
     
     public Action<CraftingListDefinition>? OnStartCrafting { get; set; }
 

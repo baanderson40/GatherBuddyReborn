@@ -12,6 +12,7 @@ using ElliLib;
 using ElliLib.Raii;
 using ElliLib.Text;
 using GatherBuddy.Crafting;
+using GatherBuddy.Automation;
 using GatherBuddy.Plugin;
 using GatherBuddy.Vulcan.Vendors;
 using Lumina.Excel;
@@ -26,7 +27,6 @@ public class CraftingMaterialsWindow : Window
     private CraftingListEditor? _editor;
     private bool _matsOvercapPercent;
     private bool _matsShowPrecrafts;
-    private bool _matsPreferVendors;
     private bool _matsKeepFulfilled;
 
     private static readonly Vector4 AccentGather = new(0.45f, 1.00f, 0.45f, 1f);
@@ -59,7 +59,8 @@ public class CraftingMaterialsWindow : Window
         ushort IconId,
         bool IsPrecraft,
         IReadOnlyList<CurrencyOption> CurrencyOptions,
-        MobDropItemInfo DropInfo);
+        MobDropItemInfo DropInfo,
+        MaterialPurchaseCandidate? PurchaseCandidate = null);
     private sealed record MaterialPanel(
         string Id,
         string Label,
@@ -82,7 +83,14 @@ public class CraftingMaterialsWindow : Window
     private CraftingListEditor? _cachedMaterialViewEditor;
     private long _cachedMaterialViewVersion = -1;
     private bool _cachedMaterialViewShowPrecrafts;
-    private bool _cachedMaterialViewPreferVendors;
+    private string _cachedPurchaseContextKey = string.Empty;
+    private int _cachedVendorLocationRevision = -1;
+    private bool _cachedVendorLocationsReady;
+    private uint _cachedCurrentSealCurrency;
+    private ulong _cachedPurchaseCharacter;
+    private DateTime _nextPurchaseViewRefresh;
+    private bool _cachedPurchaseDataPending;
+    private bool _cachedPurchasePlayerReady;
     private bool _cachedMaterialViewKeepFulfilled;
     private bool _cachedMaterialViewShowRetainer;
     private bool _cachedMobDropInfoInitialized;
@@ -152,8 +160,9 @@ public class CraftingMaterialsWindow : Window
             return;
         }
         var showRetainer = AllaganTools.Enabled;
-        if (ShouldRebuildMaterialView(showRetainer))
-            RebuildMaterialView(showRetainer);
+        var purchaseContext = _editor.GetMaterialPurchaseDisplayContext();
+        if (ShouldRebuildMaterialView(showRetainer, purchaseContext))
+            RebuildMaterialView(showRetainer, purchaseContext);
 
         if (!_cachedHasMaterials)
         {
@@ -163,7 +172,6 @@ public class CraftingMaterialsWindow : Window
 
         var overcapCheckboxWidth = GetCheckboxWidth("150%");
         var precraftsCheckboxWidth = GetCheckboxWidth("Precrafts");
-        var preferVendorsCheckboxWidth = GetCheckboxWidth("Prefer Vendors");
         var keepFulfilledCheckboxWidth = GetCheckboxWidth("Keep Fulfilled");
         var refreshRetainersButtonWidth = GetSmallButtonWidth("Refresh Retainers");
 
@@ -176,14 +184,6 @@ public class CraftingMaterialsWindow : Window
         ImGui.Checkbox("Precrafts##precrafts", ref _matsShowPrecrafts);
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Include intermediate craftable components and non-gear final craftables");
-        SameLineIfFits(preferVendorsCheckboxWidth);
-        ImGui.Checkbox("Prefer Vendors##preferVendors", ref _matsPreferVendors);
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(
-                "Default priority:\n" +
-                "  Gather > Fish > Scrip > Drops > Craft > Vendor > Tomes > Other\n\n" +
-                "When ON: Gil Vendor overrides Gather, Fish, Drops, and Craft\n" +
-                "for items also sold at a Gil shop.");
         SameLineIfFits(keepFulfilledCheckboxWidth);
         ImGui.Checkbox("Keep Fulfilled##keepFulfilled", ref _matsKeepFulfilled);
         if (ImGui.IsItemHovered())
@@ -199,6 +199,8 @@ public class CraftingMaterialsWindow : Window
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Refresh retainer NQ/HQ counts. Automatic refresh is disabled here to avoid UI hitching.");
         }
+        if (purchaseContext.Policy.Enabled && _cachedPurchaseDataPending)
+            ImGui.TextWrapped("Automatic offer data pending/unavailable; normal source grouping shown until data is ready.");
         ImGui.Separator();
         if (!VendorShopResolver.IsInitialized)
             ImGui.TextWrapped(VendorShopResolver.IsInitializing
@@ -242,7 +244,7 @@ public class CraftingMaterialsWindow : Window
         _cachedPanels = [];
     }
 
-    private bool ShouldRebuildMaterialView(bool showRetainer)
+    private bool ShouldRebuildMaterialView(bool showRetainer, MaterialPurchaseDisplayContext context)
     {
         if (_editor == null)
             return false;
@@ -252,7 +254,6 @@ public class CraftingMaterialsWindow : Window
         if (_cachedMaterialViewVersion != _editor.MaterialCacheVersion)
             return true;
         if (_cachedMaterialViewShowPrecrafts != _matsShowPrecrafts
-         || _cachedMaterialViewPreferVendors != _matsPreferVendors
          || _cachedMaterialViewKeepFulfilled != _matsKeepFulfilled
          || _cachedMaterialViewShowRetainer != showRetainer)
             return true;
@@ -260,16 +261,27 @@ public class CraftingMaterialsWindow : Window
             return true;
         if (_cachedVendorShopStamp != VendorShopResolver.ViewStamp)
             return true;
+        if (_cachedPurchaseContextKey != context.CacheKey
+            || _cachedVendorLocationRevision != VendorNpcLocationCache.Revision
+            || _cachedVendorLocationsReady != VendorNpcLocationCache.IsInitialized
+            || _cachedCurrentSealCurrency != GetDisplaySealCurrency()
+            || _cachedPurchasePlayerReady != CanReadPurchaseOffers()
+            || _cachedPurchaseCharacter != Dalamud.PlayerState.ContentId)
+            return true;
+        // Quest/access data has no published revision. Recheck in bounded batches, not per row/frame.
+        if (context.Policy.Enabled && DateTime.UtcNow >= _nextPurchaseViewRefresh) return true;
 
         return false;
     }
 
-    private void RebuildMaterialView(bool showRetainer)
+    private void RebuildMaterialView(bool showRetainer, MaterialPurchaseDisplayContext context)
     {
         if (_editor == null)
             return;
         // Capture before reading offers: publication during the build must cause another refresh.
         var vendorStamp = VendorShopResolver.ViewStamp;
+        var locationRevision = VendorNpcLocationCache.Revision;
+        var locationsReady = VendorNpcLocationCache.IsInitialized;
 
         try
         {
@@ -282,14 +294,14 @@ public class CraftingMaterialsWindow : Window
 
             if (!_cachedHasMaterials)
             {
-                UpdateMaterialViewCacheMetadata(showRetainer, vendorStamp);
+                UpdateMaterialViewCacheMetadata(showRetainer, vendorStamp, context, locationRevision, locationsReady);
                 return;
             }
 
             var itemSheet = Dalamud.GameData.GetExcelSheet<Item>();
             if (itemSheet == null)
             {
-                UpdateMaterialViewCacheMetadata(showRetainer, vendorStamp);
+                UpdateMaterialViewCacheMetadata(showRetainer, vendorStamp, context, locationRevision, locationsReady);
                 return;
             }
 
@@ -299,6 +311,20 @@ public class CraftingMaterialsWindow : Window
                 ? _editor.GetDisplayPrecraftMaterials()
                 : null;
             var snapshotItemIds = materials.Keys.Concat(craftMaterials != null ? craftMaterials.Keys : Enumerable.Empty<uint>());
+            if (context.Policy.Enabled)
+            {
+                VendorShopResolver.InitializeAsync();
+                if (VendorShopResolver.IsInitialized) VendorNpcLocationCache.InitializeAsync(VendorShopResolver.AllVendorNpcIds);
+            }
+            var offerSnapshot = context.Policy.Enabled && CanReadPurchaseOffers()
+                ? IntegratedMaterialOfferAdapter.Capture(materials.Keys)
+                : new VendorAcquisitionOfferSnapshot(context.Policy.Enabled ? VendorOfferDataStatus.Unavailable : VendorOfferDataStatus.Ready,
+                    Array.Empty<AcquisitionVendorOffer>());
+            _cachedPurchaseDataPending = context.Policy.Enabled && offerSnapshot.Status != VendorOfferDataStatus.Ready;
+            var offersByItem = offerSnapshot.Offers.ToLookup(o => o.ItemId);
+            var acquisitionItems = _editor.GetCachedMaterials();
+            var qualityDemands = _editor.GetDisplayIngredientDemands();
+            var currentSeals = GetDisplaySealCurrency();
             var retainerSnapshot = showRetainer
                 ? _editor.GetRetainerSnapshot(snapshotItemIds)
                 : RetainerItemSnapshot.Empty;
@@ -311,6 +337,11 @@ public class CraftingMaterialsWindow : Window
 
             void AddEntry(MaterialEntry entry)
             {
+                var demand = qualityDemands.GetValueOrDefault(entry.ItemId);
+                var candidate = MaterialPurchasePresentation.Classify(entry.ItemId, demand,
+                    !entry.IsPrecraft && acquisitionItems.ContainsKey(entry.ItemId), context.Policy, offerSnapshot.Status,
+                    offersByItem[entry.ItemId], currentSeals);
+                entry = entry with { PurchaseCandidate = candidate };
                 if (entry.EffectiveAvailable < entry.Needed)
                     _cachedTotalMissing++;
                 else
@@ -320,7 +351,7 @@ public class CraftingMaterialsWindow : Window
                     return;
 
                 _cachedHasVisibleEntries = true;
-                switch (MaterialSourceClassifier.Classify(entry.ItemId, _matsPreferVendors))
+                switch (candidate.IsCandidate ? MaterialSource.GilVendor : MaterialSourceClassifier.Classify(entry.ItemId))
                 {
                     case MaterialSource.Gatherable:
                     case MaterialSource.Fish:
@@ -373,7 +404,7 @@ public class CraftingMaterialsWindow : Window
             if (vendorList.Count > 0) _cachedPanels.Add(new MaterialPanel("##vendor", "Vendor", AccentVendor, vendorList, nonCraftRetainerMode, BuildVendorBuyListTargets(vendorList)));
             if (craftList is { Count: > 0 }) _cachedPanels.Add(new MaterialPanel("##craft", "Craft", AccentCraft, craftList, craftRetainerMode, null));
 
-            UpdateMaterialViewCacheMetadata(showRetainer, vendorStamp);
+            UpdateMaterialViewCacheMetadata(showRetainer, vendorStamp, context, locationRevision, locationsReady);
         }
         catch (Exception ex)
         {
@@ -382,18 +413,40 @@ public class CraftingMaterialsWindow : Window
         }
     }
 
-    private void UpdateMaterialViewCacheMetadata(bool showRetainer, VendorShopResolver.CacheStamp vendorStamp)
+    private void UpdateMaterialViewCacheMetadata(bool showRetainer, VendorShopResolver.CacheStamp vendorStamp,
+        MaterialPurchaseDisplayContext context, int locationRevision, bool locationsReady)
     {
         _cachedMaterialViewValid = true;
         _cachedMaterialViewEditor = _editor;
         _cachedMaterialViewVersion = _editor?.MaterialCacheVersion ?? -1;
         _cachedMaterialViewShowPrecrafts = _matsShowPrecrafts;
-        _cachedMaterialViewPreferVendors = _matsPreferVendors;
+        _cachedPurchaseContextKey = context.CacheKey;
+        _cachedVendorLocationRevision = locationRevision;
+        _cachedVendorLocationsReady = locationsReady;
+        _cachedCurrentSealCurrency = GetDisplaySealCurrency();
+        _cachedPurchaseCharacter = Dalamud.PlayerState.ContentId;
+        _cachedPurchasePlayerReady = CanReadPurchaseOffers();
+        _nextPurchaseViewRefresh = DateTime.UtcNow.AddSeconds(5);
         _cachedMaterialViewKeepFulfilled = _matsKeepFulfilled;
         _cachedMaterialViewShowRetainer = showRetainer;
         _cachedMobDropInfoInitialized = MobDropInfoCache.IsInitialized;
         _cachedVendorShopStamp = vendorStamp;
     }
+
+    private static uint GetDisplaySealCurrency()
+        => Dalamud.ClientState.IsLoggedIn && Dalamud.Objects.LocalPlayer != null
+            ? VendorShopResolver.GetCurrentGrandCompanySealCurrencyItemId() : 0;
+
+    private static bool CanReadPurchaseOffers()
+        => Dalamud.ClientState.IsLoggedIn && Dalamud.Objects.LocalPlayer != null && GenericHelpers.IsScreenReady();
+
+    private static string GetMaterialDisplayName(MaterialEntry entry)
+        => entry.Name + (entry.PurchaseCandidate?.Kind switch
+        {
+            MaterialPurchaseCandidateKind.Eligible => " [Auto]",
+            MaterialPurchaseCandidateKind.Partial => " [Auto partial]",
+            _ => string.Empty,
+        });
 
     private bool TryCreateMaterialEntry(ExcelSheet<Item> itemSheet, uint itemId, int needed, bool isPrecraft,
         RetainerItemSnapshot retainerSnapshot, bool countRetainersTowardNeed, out MaterialEntry entry)
@@ -575,7 +628,7 @@ public class CraftingMaterialsWindow : Window
                     var maxNameWidth = 0f;
                     for (var i = 0; i < entries.Count; i++)
                     {
-                        var w = ImGui.CalcTextSize(entries[i].Name).X;
+                        var w = ImGui.CalcTextSize(GetMaterialDisplayName(entries[i])).X;
                         if (w > maxNameWidth)
                             maxNameWidth = w;
                     }
@@ -642,12 +695,18 @@ public class CraftingMaterialsWindow : Window
             ImGui.Dummy(iconSize);
         ImGui.SameLine(0, MaterialRowIconSpacing);
         var nameTextStartX = ImGui.GetCursorScreenPos().X;
-        if (ImGui.Selectable(name, false, ImGuiSelectableFlags.AllowItemOverlap))
+        if (ImGui.Selectable(GetMaterialDisplayName(entry), false, ImGuiSelectableFlags.AllowItemOverlap))
         {
             try { ImGui.SetClipboardText(name); } catch { /* ignored */ }
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Click to copy to clipboard.");
+        {
+            var candidate = entry.PurchaseCandidate;
+            var details = candidate == null ? string.Empty : $"\n{candidate.Reason}";
+            if (candidate?.IsCandidate == true)
+                details += $"\nEligible currencies (policy order): {candidate.CurrencyDescription}\n{MaterialPurchaseCandidate.Disclaimer}";
+            ImGui.SetTooltip("Click to copy to clipboard." + details);
+        }
         if (ImGui.BeginPopupContextItem($"##mbctx_{itemId}_{(isPrecraft ? 1 : 0)}_{(int)retainerColumnMode}"))
         {
             if (ImGui.Selectable("Create Link"))
@@ -988,7 +1047,7 @@ public class CraftingMaterialsWindow : Window
                     ImGui.ColorConvertFloat4ToU32(new Vector4(0f, 0f, 0f, 0.55f)));
 
             if (ImGui.IsItemHovered())
-                ImGui.SetTooltip($"{option.Name}: {option.CostPerItem:N0} per item\nClick to use for totals.");
+                ImGui.SetTooltip($"{option.Name}: {option.CostPerItem:N0} per item\nClick to use for manual totals. Does not change automatic purchase policy or currency allocation.");
 
             if (clicked)
                 _userSelectedCurrencyByItem[entry.ItemId] = option.CurrencyItemId;

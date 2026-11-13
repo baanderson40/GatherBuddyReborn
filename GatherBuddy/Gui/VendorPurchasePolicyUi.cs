@@ -22,7 +22,6 @@ internal static class VendorPurchasePolicyUi
 
     public static void DrawGlobal()
     {
-        if (!ImGui.CollapsingHeader("Automatic Vendor Purchases", ImGuiTreeNodeFlags.DefaultOpen)) return;
         ImGui.PushID("GlobalVendorPurchasePolicy");
         if (DrawPolicy(GatherBuddy.Config.AutomaticVendorPurchases)) GatherBuddy.Config.Save();
         ImGui.PopID();

@@ -247,7 +247,8 @@ public static class MaterialAcquisitionPlanner
         return null;
     }
 
-    private static bool IsValid(AcquisitionVendorOffer offer)
+    // Shared by read-only Materials presentation; validation itself does not allocate purchases.
+    internal static bool IsValid(AcquisitionVendorOffer offer)
         => offer.Supported && offer.CurrencyItemId != 0 && offer.CostPerTransaction > 0 && offer.OutputQuantityPerTransaction > 0
         && offer.Vendor is { NpcId: > 0, ShopId: > 0 } && Enum.IsDefined(offer.CurrencyGroup)
         && Enum.IsDefined(offer.ShopType) && Enum.IsDefined(offer.Access)
