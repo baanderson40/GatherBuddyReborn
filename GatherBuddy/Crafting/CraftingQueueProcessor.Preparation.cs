@@ -14,8 +14,64 @@ public partial class CraftingQueueProcessor
     private string _preparationDiagnosticState = string.Empty;
     private string _preparationWaitText = string.Empty;
     private bool _preparationHadWait;
+    private PreCraftHomeTravelHost? _homeTravel;
+    internal PreCraftHomeTravelHost? HomeTravel => _homeTravel;
 
-    private static CraftPreparationBlocker CapturePreparationBlockers()
+    private void UpdateRetainerHomeTravel()
+    {
+        if (_paused || _currentState != QueueState.WaitingForRetainerTravel) return;
+        if (DeferForInventory(QueueState.WaitingForRetainerTravel)) return;
+        var home = _homeTravel?.Tick(allowStart: true) ?? HomeTravelAdmission.Ready;
+        if (home is HomeTravelAdmission.Failed or HomeTravelAdmission.Cancelled)
+        {
+            Pause(_homeTravel?.Status ?? "Pre-retainer home travel cancelled.");
+            return;
+        }
+        if (home != HomeTravelAdmission.Ready)
+        {
+            _preparationGate.Suspend(_runClock.Elapsed);
+            RetainerCoordinationStatus = _homeTravel!.Status;
+            return;
+        }
+        var blockers = CapturePreparationBlockers();
+        var admission = _preparationGate.Tick(_runClock.Elapsed, blockers);
+        RetainerCoordinationStatus = "Waiting for stable readiness before retainer bell access";
+        if (admission == CraftPreparationAdmission.TimedOut)
+        {
+            Pause($"Pre-retainer preparation wait exceeded 120 seconds: {blockers}. Queue retained.");
+            return;
+        }
+        if (admission != CraftPreparationAdmission.Ready) return;
+        _homeTravel?.Consume();
+        RetainerCoordinationStatus = string.Empty;
+        BeginRetainerStage();
+    }
+
+    private void BeginRetainerStage()
+    {
+        // Bell discovery lives inside these deferred tasks, after arrival and AR admission.
+        if (GatherBuddy.Config.VulcanRetainerBellConfig.AutoNavigateToRetainerBell)
+        {
+            GatherBuddy.Log.Debug("[CraftingQueueProcessor] Home travel ready; starting retainer bell navigation");
+            _currentState = QueueState.NavigatingToRetainerBell;
+            QueueRetainerBellNavigationTasks();
+        }
+        else
+        {
+            GatherBuddy.Log.Debug("[CraftingQueueProcessor] Home travel ready; starting retainer withdrawal");
+            _currentState = QueueState.WithdrawingFromRetainer;
+            QueueRetainerWithdrawalTasks();
+        }
+        StateChanged?.Invoke(_currentState);
+    }
+
+    internal void OnGatheringDeparture()
+    {
+        if (_homeTravel?.InvalidateForGathering() == true)
+            _preparationGate.Suspend(_runClock.Elapsed);
+    }
+
+    internal static CraftPreparationBlocker CapturePreparationBlockers()
     {
         var blockers = CraftPreparationBlocker.None;
         if (Dalamud.Conditions[ConditionFlag.BetweenAreas] || Dalamud.Conditions[ConditionFlag.BetweenAreas51])
@@ -41,14 +97,35 @@ public partial class CraftingQueueProcessor
         if (_paused || _currentState is not (QueueState.WaitingForJobSwitch or QueueState.WaitingForRaphaelSolution
             or QueueState.ReadyForCraft or QueueState.WaitingForTravelCompletion)) return false;
         var blockers = CapturePreparationBlockers();
-        var admission = _preparationGate.Tick(_runClock.Elapsed, blockers);
-        if (admission == CraftPreparationAdmission.Cancelled) return false;
         if ((blockers & CraftPreparationGate.InventoryBlockers) != 0)
         {
+            _preparationGate.Suspend(_runClock.Elapsed);
             LogPreparationWait(blockers);
             WaitForInventory(QueueState.WaitingForJobSwitch);
             return false;
         }
+        var home = _homeTravel?.Tick(allowStart: true) ?? HomeTravelAdmission.Ready;
+        if (home is HomeTravelAdmission.Failed or HomeTravelAdmission.Cancelled)
+        {
+            _tasks.Clear();
+            Pause(_homeTravel?.Status ?? "Pre-craft home travel cancelled.");
+            return false;
+        }
+        if (home != HomeTravelAdmission.Ready)
+        {
+            _tasks.Clear();
+            _preparationGate.Suspend(_runClock.Elapsed);
+            AcquisitionStatus = _homeTravel!.Status;
+            if (_currentState != QueueState.WaitingForTravelCompletion)
+            {
+                _currentState = QueueState.WaitingForTravelCompletion;
+                StateChanged?.Invoke(_currentState);
+            }
+            return false;
+        }
+        _homeTravel?.Consume();
+        var admission = _preparationGate.Tick(_runClock.Elapsed, blockers);
+        if (admission == CraftPreparationAdmission.Cancelled) return false;
         if (admission == CraftPreparationAdmission.Ready)
         {
             if (_preparationHadWait)

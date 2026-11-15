@@ -82,3 +82,97 @@ Live checks still required:
 The separate CSCore honk error (`0x80070490`, missing default audio endpoint) is not
 changed here. Disabling Honk Mode remains the workaround. Earlier uncommitted
 Phase 5, unified GC reserve, and inventory-recovery changes are preserved.
+
+## Pre-craft home travel and gather handoff
+
+Vulcan now honors the shared `AutoGatherConfig.GoHomeWhenIdle` setting, also exposed
+in **Vulcan → Settings → General → Go Home When Idle**. There is no separate persisted
+Vulcan toggle. `GoHomeWhenDone` keeps its independent gathering behavior.
+
+- A queue owns one `PreCraftHomeTravelHost` for its run. If retainer restock work is
+  enabled, `WaitingForRetainerTravel` runs before any bell navigation or withdrawal
+  tasks are queued. Travel and stable readiness must finish before selecting a bell
+  at the arrival location. Both automatic bell navigation and direct withdrawal use
+  this gate. With the shared setting off, no command is sent; readiness still applies.
+- Without retainer work, travel remains after material acquisition/gather reconciliation,
+  before job switching and craft preparation. Inventory-ready queues take this path too.
+- A completed pre-retainer receipt is consumed and reused before crafting when no
+  gathering is required. Starting non-complete gather work invalidates that consumed
+  receipt. The final GBR return (or Vulcan, if GBR did not submit one) supplies the new
+  crafting-phase receipt. Creating an already-satisfied or empty gather list does not
+  invalidate it. Resume/repeated gather notifications cannot reset pending, failed,
+  cancelled, or unconsumed travel, so they cannot authorize an implicit retry.
+  Subsequent recipes do not send the command again.
+- At final gathering completion, GBR's `GoHome` uses that same host. It can submit
+  the command or wait on an already submitted request; Vulcan consumes the receipt,
+  rather than dispatching a second command. Idle trips between gathering targets do
+  not satisfy the final handoff. The old `WentHome` flag is not completion evidence.
+- Legacy single gather-and-craft requests have their own host. Direct recipe-browser
+  crafts and quick synthesis wait on a fresh request inside `CraftingGameInterop`;
+  queue/single handoffs explicitly mark travel as already handled, preventing a
+  second request at that boundary. Direct requests already pending cannot be replaced.
+- Blank commands normalize to `auto`; a leading `/li ` is removed case-insensitively.
+  Standalone GBR and collectables use the same normalization.
+- Command submission is reserved before invoking IPC. An exception never authorizes
+  another attempt. Unrelated busy travel is observed, not adopted as this run's trip.
+- After submission, Lifestream must report busy at least once, then idle with player,
+  inventory, screen, crafting/gathering/casting, and navigation readiness continuously
+  clear for 500 ms. Queue preparation still applies its independent read-only gate.
+  An idle crafting stance is exited through the existing recipe-window task before
+  submission; active synthesis is not interrupted by this host.
+- Read-only receipt observation runs before teleport-data admission, including while
+  loading, paused, or yielded. It cannot submit commands or exit crafting UI.
+  Queue inventory recovery remains ahead of pre-craft command admission.
+- No busy observation within 10 seconds, travel/readiness exceeding 120 seconds,
+  missing/disappearing Lifestream, IPC exceptions, character/logout changes, or command
+  changes before receipt consumption fail closed. Queue pauses with retained work;
+  direct/single starts report an error instead of opening the recipe. Resume cannot
+  silently retry a failed command: inspect travel and stop/restart the crafting run.
+  Turning the setting off does not dismiss an already submitted request.
+- Stop/reset/disposal cancels receipts and pending direct craft continuation. A fresh
+  run gets a fresh receipt. Cancellation does not abort Lifestream or unrelated movement.
+
+These are observed IPC/readiness receipts, **not destination verification**. Lifestream
+commands that are invalid or no-op (including already being at the destination) may
+never report busy; they block conservatively instead of being treated as successful.
+Finish/inspect travel and restart with appropriate settings. The receipt applies to
+each admitted retainer/crafting phase until non-complete gathering starts, not a guarantee
+the player remains home after later manual movement or another automation interruption.
+Existing collectables return-home handling is unchanged.
+
+`PreCraftHomeTravelTests` covers ready ingredients, gather receipt reuse, disabled
+settings, pending travel when disabled, busy/unready deferral, stability resets,
+start/completion/readiness timeouts, command/character changes, cancellation/new-run
+isolation, repeated recipes, and ambiguous submission failures. Compiled-plugin boundary
+tests check wiring and shared command normalization. These are managed tests, not native
+travel validation. Attended game checks still required: inventory-ready queue, GBR final
+return with exactly one command, setting off, direct/browser quick synthesis, paused/
+cancelled travel, already-home/no-op commands, and consecutive queue isolation.
+
+Verification: 581 acquisition, 206 compiled-plugin compatibility, and 415 Adaptive
+tests pass (1,202 distinct). Debug and Release solution builds pass with zero warnings
+on this incremental run. Tracked diff and new travel source/test files pass whitespace
+checks. Logs: `/tmp/opencode/pre-craft-travel-{acquisition-tests,compat-tests,adaptive-tests,debug-build,release-build}.log`.
+No in-game travel trial, commit, or push performed.
+
+### Pre-retainer ordering correction
+
+The supplied 22:06 runtime trace showed bell processing at 22:06:18 and home command
+submission only at 22:06:21 after withdrawal. Queue startup now defers the entire
+retainer stage behind its own travel state; there is no departure-location bell target
+to retain across teleport. Inventory recovery returns to this state, pause/AutoRetainer
+yield cannot schedule bell tasks while it waits, and failure/cancellation keeps the
+existing no-retry policy. The status window labels this phase separately from crafting.
+
+Additional managed regressions cover retained pre-retainer receipts without gathering,
+fresh receipts after gathering, repeated departure notifications, disabled phases,
+failed/cancelled/unconsumed receipt protection, deferred bell-stage wiring, and the
+new non-recipe UI state. Native checks still needed: start away from home with restock
+and navigation on/off; verify command before bell discovery; verify no second command
+for retainer-only→craft; verify fresh final return after real gathering; pause/stop/yield
+while traveling; check consecutive-run isolation. No new in-game validation claimed.
+
+Correction verification: 587 acquisition, 207 compiled-plugin compatibility, and 415
+Adaptive tests pass (1,209 distinct). Debug/Release builds pass with zero warnings on
+this incremental run. Logs:
+`/tmp/opencode/pre-retainer-travel-{acquisition-tests,compat-tests,adaptive-tests,debug-build,release-build}.log`.

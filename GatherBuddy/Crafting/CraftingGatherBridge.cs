@@ -35,6 +35,20 @@ public static class CraftingGatherBridge
     private static DateTime _lastCollectablesHardFailLog = DateTime.MinValue;
     private static bool _waitingForCollectablesHomeReturn = false;
     private static bool _collectablesHomeReturnStarted = false;
+    private static PreCraftHomeTravelHost? _singleHomeTravel;
+
+    // Only the final gather handoff can provide a receipt; idle trips between nodes cannot.
+    internal static bool TryHandleGatherHomeReturn(out bool submitted)
+    {
+        submitted = false;
+        if (!_waitingForGatherComplete || !GatherBuddy.Config.AutoGatherConfig.GoHomeWhenIdle || !IsGatheringComplete())
+            return false;
+        var travel = _isQueueMode ? _queueProcessor?.HomeTravel : _singleHomeTravel;
+        if (travel == null) return false;
+        travel.Tick(allowStart: true);
+        submitted = travel.Submitted;
+        return true;
+    }
     
     public static bool PreserveListOnDisable { get; set; } = false;
 
@@ -64,8 +78,8 @@ public static class CraftingGatherBridge
         ? $"Vulcan:{_activeExecutionPlan?.AcquisitionRunId}" : null;
     public static bool IsAcquiringMaterials => _isQueueMode && _queueProcessor?.IsAcquiringMaterials == true;
     public static bool HasAcquisitionOwnership => IsAcquiringMaterials || (_activeExecutionPlan?.PurchasePolicy.Enabled == true
-        && _queueProcessor?.CurrentState is CraftingQueueProcessor.QueueState.NavigatingToRetainerBell
-            or CraftingQueueProcessor.QueueState.WithdrawingFromRetainer);
+         && _queueProcessor?.CurrentState is CraftingQueueProcessor.QueueState.NavigatingToRetainerBell
+            or CraftingQueueProcessor.QueueState.WithdrawingFromRetainer or CraftingQueueProcessor.QueueState.WaitingForRetainerTravel);
     public static bool IsAcquiringMaterialsFor(Guid session)
         => IsAcquiringMaterials && _activeExecutionPlan?.AcquisitionSessionId == session;
     
@@ -97,6 +111,7 @@ public static class CraftingGatherBridge
         {
             _gatherList.Enabled = true;
             _plugin.AutoGatherListsManager.SetActiveItems();
+            _queueProcessor?.OnGatheringDeparture();
             GatherBuddy.AutoGather.Enabled = true;
         }
         return GatherBuddy.AutoGather.Enabled || IsGatheringComplete();
@@ -194,6 +209,9 @@ public static class CraftingGatherBridge
     
     public static void Update()
     {
+        if (!_isQueueMode && _waitingForGatherComplete && !_waitingForJobSwitch
+            && !GatherBuddy.AutoGather.Enabled && _singleHomeTravel != null && IsGatheringComplete())
+            OnGatherComplete();
         if (_isQueueMode && _queueProcessor != null)
         {
             if (GatherBuddy.AutoRetainerIntegration?.Coordinator.YieldRequested != true)
@@ -234,6 +252,9 @@ public static class CraftingGatherBridge
             OnGatherComplete();
         }
     }
+
+    internal static void ObserveHomeTravel()
+        => (_isQueueMode ? _queueProcessor?.HomeTravel : _singleHomeTravel)?.Observe();
     
     public static void OnCraftFinished(Recipe? recipe, bool cancelled)
     {
@@ -260,6 +281,8 @@ public static class CraftingGatherBridge
             return;
         }
         _isQueueMode = false;
+        _singleHomeTravel?.Cancel();
+        _singleHomeTravel = new();
         _recipeIdToCraft = recipeId;
         _waitingForGatherComplete = true;
         CreateGatherListForMissingIngredients(missing);
@@ -276,6 +299,8 @@ public static class CraftingGatherBridge
             return;
         }
         _isQueueMode = true;
+        _singleHomeTravel?.Cancel();
+        _singleHomeTravel = null;
         _retainedGatherTargets = null;
         _ephemeralListId = ephemeralListId;
         _activeExecutionPlan = executionPlan;
@@ -353,6 +378,7 @@ public static class CraftingGatherBridge
                 else
                 {
                     _waitingForGatherComplete = true;
+                    _queueProcessor?.OnGatheringDeparture();
                     GatherBuddy.AutoGather.Enabled = true;
                     GatherBuddy.Log.Information($"Created crafting gather list with {_gatherList.Items.Count} items. Starting auto-gather.");
                 }
@@ -383,6 +409,17 @@ public static class CraftingGatherBridge
         
         if (_recipeIdToCraft == 0)
             return;
+
+        var home = _singleHomeTravel?.Tick(allowStart: true) ?? HomeTravelAdmission.Ready;
+        if (home is HomeTravelAdmission.Failed or HomeTravelAdmission.Cancelled)
+        {
+            Communicator.PrintError($"[Vulcan] {_singleHomeTravel?.Status}");
+            _waitingForGatherComplete = false;
+            _recipeIdToCraft = 0;
+            return;
+        }
+        if (home != HomeTravelAdmission.Ready) return;
+        _singleHomeTravel?.Consume();
         
         var recipeSheet = Dalamud.GameData.GetExcelSheet<Recipe>();
         if (recipeSheet == null || !recipeSheet.TryGetRow(_recipeIdToCraft, out var recipe))
@@ -414,7 +451,7 @@ public static class CraftingGatherBridge
         
         DeleteTemporaryGatherList();
         
-        CraftingGameInterop.StartCraft(recipe, 1);
+        CraftingGameInterop.StartCraft(recipe, 1, homeTravelHandled: true);
         _recipeIdToCraft = 0;
     }
     
@@ -516,7 +553,8 @@ public static class CraftingGatherBridge
               or CraftingQueueProcessor.QueueState.AcquisitionFailed or CraftingQueueProcessor.QueueState.Cancelled
               or CraftingQueueProcessor.QueueState.Crafting or CraftingQueueProcessor.QueueState.WaitingForCraftResult
               or CraftingQueueProcessor.QueueState.WaitingForPlayerInventory
-              or CraftingQueueProcessor.QueueState.WaitingForTravelCompletion
+               or CraftingQueueProcessor.QueueState.WaitingForTravelCompletion
+               or CraftingQueueProcessor.QueueState.WaitingForRetainerTravel
          || _queueProcessor.CurrentState is CraftingQueueProcessor.QueueState.Idle or CraftingQueueProcessor.QueueState.Complete
          || GatherBuddy.CollectableManager == null
          || GatherBuddy.CollectableManager.IsRunning
@@ -787,6 +825,11 @@ public static class CraftingGatherBridge
     
     public static void StopQueue()
     {
+        _singleHomeTravel?.Cancel();
+        _singleHomeTravel = null;
+        _recipeIdToCraft = 0;
+        _waitingForJobSwitch = false;
+        _waitingForGatherComplete = false;
         var arOwner = AutoRetainerOwner;
         if (_queueProcessor != null)
         {
@@ -808,6 +851,7 @@ public static class CraftingGatherBridge
         }
         else
         {
+            if (CraftingGameInterop.HasPendingHomeTravel) CraftingGameInterop.CancelCurrentCraft();
             GatherBuddy.Log.Information("[CraftingGatherBridge] No queue processor running");
         }
         GatherBuddy.AutoRetainerIntegration?.StopVulcanOwner(arOwner);

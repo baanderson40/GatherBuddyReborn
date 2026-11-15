@@ -79,6 +79,7 @@ public class CraftingStatusPresentationTests
     [InlineData(CraftingQueueProcessor.QueueState.ExtractingMateria)]
     [InlineData(CraftingQueueProcessor.QueueState.WaitingForPlayerInventory)]
     [InlineData(CraftingQueueProcessor.QueueState.WaitingForTravelCompletion)]
+    [InlineData(CraftingQueueProcessor.QueueState.WaitingForRetainerTravel)]
     public void NonRecipePhasesDoNotAppendQueuedRecipeOrStaleActionTargets(CraftingQueueProcessor.QueueState state)
     {
         var header = Header(state, recipe: "Spruce Lumber", purchase: "Bomb Ash", gather: "Spruce Log");

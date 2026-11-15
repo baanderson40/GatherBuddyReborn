@@ -495,14 +495,19 @@ namespace GatherBuddy.AutoGather
 
             WentHome = true;
 
+            if (Crafting.CraftingGatherBridge.TryHandleGatherHomeReturn(out var submitted))
+            {
+                if (submitted)
+                    TaskManager.EnqueueImmediate(() => !Lifestream.IsBusy(), 120000, "Wait until Lifestream is done");
+                return submitted;
+            }
+
             if (Dalamud.Conditions[ConditionFlag.BoundByDuty])
                 return false;
 
             if (Lifestream.Enabled && !Lifestream.IsBusy())
             {
-                var command = GatherBuddy.Config.AutoGatherConfig.LifestreamCommand;
-                if (command.Contains("/li "))
-                    command = command.Replace("/li ", "");
+                var command = global::GatherBuddy.Helpers.HomeNavigationHelper.NormalizeCommand(GatherBuddy.Config.AutoGatherConfig.LifestreamCommand);
                 Lifestream.ExecuteCommand(command);
                 TaskManager.EnqueueImmediate(() => !Lifestream.IsBusy(), 120000, "Wait until Lifestream is done");
                 return true;

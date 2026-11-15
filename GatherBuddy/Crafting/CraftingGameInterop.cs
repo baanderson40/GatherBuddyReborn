@@ -5,6 +5,7 @@ using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using GatherBuddy.Automation;
+using GatherBuddy.Plugin;
 using GatherBuddy.Vulcan;
 using Lumina.Excel.Sheets;
 using System;
@@ -169,6 +170,9 @@ public static class CraftingGameInterop
 
     public static void Dispose()
     {
+        _pendingHomeTravel?.Cancel();
+        _pendingHomeTravel = null;
+        _pendingHomeCraft = null;
         _currentRecipe = null;
         _currentRecipeId = null;
         _currentState = CraftState.IdleNormal;
@@ -220,6 +224,9 @@ public static class CraftingGameInterop
 
     public static void CancelCurrentCraft()
     {
+        _pendingHomeTravel?.Cancel();
+        _pendingHomeTravel = null;
+        _pendingHomeCraft = null;
         var previousState = _currentState;
         GatherBuddy.AutoGather?.TaskManager.Abort();
         ResetQuickSynthesisState();
@@ -246,12 +253,25 @@ public static class CraftingGameInterop
             StateChanged?.Invoke(nextState);
     }
     
-    public static void StartCraft(Recipe recipe, uint quantity, bool useQuickSynthesis = false)
+    private static PreCraftHomeTravelHost? _pendingHomeTravel;
+    private static (Recipe Recipe, uint Quantity, bool Quick)? _pendingHomeCraft;
+    internal static bool HasPendingHomeTravel => _pendingHomeCraft != null;
+    internal static void ObserveHomeTravel() => _pendingHomeTravel?.Observe();
+
+    public static void StartCraft(Recipe recipe, uint quantity, bool useQuickSynthesis = false, bool homeTravelHandled = false)
     {
         if (!Marketboard.MarketboardTravelIntegration.CanStartAutomation()) return;
         if (GatherBuddy.AutoRetainerIntegration?.Coordinator.YieldRequested == true) return;
         if (recipe.RowId == 0)
             return;
+        if (_pendingHomeCraft != null) return;
+        if (!homeTravelHandled && GatherBuddy.Config.AutoGatherConfig.GoHomeWhenIdle)
+        {
+            _pendingHomeTravel = new();
+            _pendingHomeCraft = (recipe, quantity, useQuickSynthesis);
+            if (_currentState == CraftState.IdleNormal) _currentState = CraftState.PreparingCraft;
+            return;
+        }
 
         ResetQuickSynthesisState();
         _currentRecipe = recipe;
@@ -1044,6 +1064,25 @@ public static class CraftingGameInterop
     public static void Update()
     {
         CheckGatherToCraftTransition();
+        if (_pendingHomeCraft is { } pending)
+        {
+            if (GatherBuddy.AutoRetainerIntegration?.Coordinator.YieldRequested == true) return;
+            var admission = _pendingHomeTravel!.Tick(allowStart: true);
+            if (admission is HomeTravelAdmission.Failed or HomeTravelAdmission.Cancelled)
+            {
+                Communicator.PrintError($"[Vulcan] {_pendingHomeTravel.Status}");
+                _pendingHomeTravel.Cancel();
+                _pendingHomeTravel = null;
+                _pendingHomeCraft = null;
+                _currentState = CraftState.IdleNormal;
+                return;
+            }
+            if (admission != HomeTravelAdmission.Ready) return;
+            _pendingHomeTravel.Consume();
+            _pendingHomeTravel = null;
+            _pendingHomeCraft = null;
+            StartCraft(pending.Recipe, pending.Quantity, pending.Quick, homeTravelHandled: true);
+        }
         
         if (_currentState != CraftState.IdleNormal)
             GatherBuddy.Log.Verbose($"[Crafting] Update: state={_currentState}, Crafting={Dalamud.Conditions[ConditionFlag.Crafting]}, ExecutingAction={Dalamud.Conditions[ConditionFlag.ExecutingCraftingAction]}");

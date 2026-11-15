@@ -222,7 +222,8 @@ public class CraftingStatusWindow : Window
             }
             if (handoff != null) ImGui.TextWrapped(handoff.Status);
             if (!string.IsNullOrEmpty(_queueProcessor.RetainerCoordinationStatus)
-                && currentState is CraftingQueueProcessor.QueueState.NavigatingToRetainerBell or CraftingQueueProcessor.QueueState.WithdrawingFromRetainer)
+                && currentState is CraftingQueueProcessor.QueueState.NavigatingToRetainerBell or CraftingQueueProcessor.QueueState.WithdrawingFromRetainer
+                    or CraftingQueueProcessor.QueueState.WaitingForRetainerTravel)
                 ImGui.TextWrapped(_queueProcessor.RetainerCoordinationStatus);
             // Preserve useful failure/shortage diagnostics, not routine acquisition chatter.
             if (currentState is CraftingQueueProcessor.QueueState.BlockedByMaterials or CraftingQueueProcessor.QueueState.AcquisitionFailed)

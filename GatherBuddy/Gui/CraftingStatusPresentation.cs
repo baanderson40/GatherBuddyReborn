@@ -66,6 +66,7 @@ internal static class CraftingStatusPresentation
             CraftingQueueProcessor.QueueState.WaitingForCraftResult => "Confirming output",
             CraftingQueueProcessor.QueueState.WaitingForPlayerInventory => "Waiting for inventory",
             CraftingQueueProcessor.QueueState.WaitingForTravelCompletion => "Preparing / traveling",
+            CraftingQueueProcessor.QueueState.WaitingForRetainerTravel => "Traveling before retainer restock",
             CraftingQueueProcessor.QueueState.Complete => "Complete",
             _ => "Unknown",
         };

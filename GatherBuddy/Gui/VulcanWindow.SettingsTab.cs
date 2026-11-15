@@ -210,6 +210,8 @@ public partial class VulcanWindow
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Delay in milliseconds between each crafting action (0 = instant, max 1000ms)");
 
+        DrawGoHomeSettings();
+
         var ctxMenuEntries = GatherBuddy.Config.VulcanContextMenuEntries;
         if (ImGui.Checkbox("Context Menu Entries (Vs in context menus)", ref ctxMenuEntries))
         {
@@ -240,6 +242,18 @@ public partial class VulcanWindow
 
         // Keyboard/gamepad-accessible alternative to the title-bar icon.
         if (ImGui.Button("Open Debug##settingsDebug")) DebugWindow.OpenOrRestore();
+    }
+
+    private static void DrawGoHomeSettings()
+    {
+        var goHome = GatherBuddy.Config.AutoGatherConfig.GoHomeWhenIdle;
+        if (ImGui.Checkbox("Go Home When Idle##VulcanGoHome", ref goHome))
+        {
+            GatherBuddy.Config.AutoGatherConfig.GoHomeWhenIdle = goHome;
+            GatherBuddy.Config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Use the configured Lifestream command before crafting. Reuses the same run's completed gather-to-craft travel instead of sending it twice. Shared with GBR's Go home when idle setting and return home after Vulcan queue turn-ins.");
     }
 
     private void DrawRaphaelSettingsPanels()

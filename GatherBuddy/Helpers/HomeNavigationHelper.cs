@@ -6,6 +6,14 @@ namespace GatherBuddy.Helpers;
 
 public static class HomeNavigationHelper
 {
+    public static string NormalizeCommand(string? command)
+    {
+        command = command?.Trim();
+        if (command?.StartsWith("/li ", StringComparison.OrdinalIgnoreCase) == true)
+            command = command[4..].Trim();
+        return string.IsNullOrWhiteSpace(command) ? "auto" : command;
+    }
+
     public static bool ShouldReturnHomeAfterCollectables()
         => GatherBuddy.Config.AutoGatherConfig.GoHomeWhenIdle;
 
@@ -27,11 +35,7 @@ public static class HomeNavigationHelper
         if (Lifestream.IsBusy())
             return false;
 
-        var command = GatherBuddy.Config.AutoGatherConfig.LifestreamCommand;
-        if (string.IsNullOrWhiteSpace(command))
-            command = "auto";
-        if (command.Contains("/li ", StringComparison.OrdinalIgnoreCase))
-            command = command.Replace("/li ", string.Empty, StringComparison.OrdinalIgnoreCase);
+        var command = NormalizeCommand(GatherBuddy.Config.AutoGatherConfig.LifestreamCommand);
 
         Lifestream.ExecuteCommand(command);
         return true;

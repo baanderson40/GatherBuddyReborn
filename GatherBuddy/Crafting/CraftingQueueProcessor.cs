@@ -39,7 +39,8 @@ public partial class CraftingQueueProcessor
         Cancelled,
         WaitingForCraftResult,
         WaitingForPlayerInventory,
-        WaitingForTravelCompletion
+        WaitingForTravelCompletion,
+        WaitingForRetainerTravel
     }
 
     private QueueState _currentState = QueueState.Idle;
@@ -119,6 +120,8 @@ public partial class CraftingQueueProcessor
         _pausedDuringGather = false;
         _tasks.Clear();
         ResetPreparationGate();
+        _homeTravel?.Cancel();
+        _homeTravel = new();
         _currentQueueIndex = 0;
         _raphaelCoordinator = raphaelCoordinator;
         _listConsumables = listConsumables;
@@ -137,18 +140,9 @@ public partial class CraftingQueueProcessor
         if (hasRetainerWork)
         {
             GatherBuddy.Log.Information("[CraftingQueueProcessor] Retainer restock enabled");
-            if (GatherBuddy.Config.VulcanRetainerBellConfig.AutoNavigateToRetainerBell)
-            {
-                GatherBuddy.Log.Debug("[CraftingQueueProcessor] Auto-navigation to retainer bell enabled");
-                _currentState = QueueState.NavigatingToRetainerBell;
-                QueueRetainerBellNavigationTasks();
-            }
-            else
-            {
-                GatherBuddy.Log.Debug("[CraftingQueueProcessor] Proceeding directly to retainer withdrawal");
-                _currentState = QueueState.WithdrawingFromRetainer;
-                QueueRetainerWithdrawalTasks();
-            }
+            // Do not select a bell or acquire withdrawal protection at the departure location.
+            _currentState = QueueState.WaitingForRetainerTravel;
+            RetainerCoordinationStatus = "Returning home before retainer bell access";
         }
         else
         {
@@ -197,6 +191,11 @@ public partial class CraftingQueueProcessor
         if (_currentState == QueueState.WaitingForPlayerInventory)
         {
             UpdateInventoryRecovery();
+            return;
+        }
+        if (_currentState == QueueState.WaitingForRetainerTravel)
+        {
+            UpdateRetainerHomeTravel();
             return;
         }
         if (_currentState is QueueState.WaitingForJobSwitch or QueueState.WaitingForRaphaelSolution
@@ -720,7 +719,7 @@ public partial class CraftingQueueProcessor
             return;
         }
         GatherBuddy.Log.Information($"[CraftingQueueProcessor] Starting craft {_currentQueueIndex + 1}/{QueueItems.Count}: {recipe.Value.ItemResult.Value.Name} x{craftQuantity}");
-        CraftingGameInterop.StartCraft(recipe.Value, craftQuantity, useQuickSynthesis);
+        CraftingGameInterop.StartCraft(recipe.Value, craftQuantity, useQuickSynthesis, homeTravelHandled: true);
         _currentState = QueueState.Crafting;
         StateChanged?.Invoke(_currentState);
     }
@@ -1533,6 +1532,7 @@ public partial class CraftingQueueProcessor
 
     public void Stop()
     {
+        _homeTravel?.Cancel();
         _retainerRestartAfterAr = false;
         ReleaseRetainerWithdrawalProtection();
         var arOwner = _executionPlan == null ? null : $"Vulcan:{_executionPlan.AcquisitionRunId}";
@@ -1591,6 +1591,8 @@ public partial class CraftingQueueProcessor
     
     public void Reset()
     {
+        _homeTravel?.Cancel();
+        _homeTravel = null;
         _retainerBellNavigator?.Stop();
         _retainerRestartAfterAr = false;
         ReleaseRetainerWithdrawalProtection();

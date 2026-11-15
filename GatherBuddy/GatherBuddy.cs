@@ -283,6 +283,9 @@ public partial class GatherBuddy : IDalamudPlugin
     private unsafe void Update(IFramework framework)
     {
         Config.SaveIfDirty();
+        // Read-only travel receipts must see busy/logout even while inventory/teleport data is unavailable.
+        CraftingGatherBridge.ObserveHomeTravel();
+        CraftingGameInterop.ObserveHomeTravel();
         SeFunctions.TeleportData.Update();
         var prev = LastObjectsLength;
         LastObjectsLength = Dalamud.Objects.Length;
