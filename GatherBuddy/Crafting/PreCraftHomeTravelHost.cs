@@ -12,21 +12,38 @@ internal sealed class PreCraftHomeTravelHost
     private static readonly Stopwatch Clock = Stopwatch.StartNew();
     private readonly ulong _character = Dalamud.PlayerState.ContentId;
     private readonly PreCraftHomeTravel _receipt;
+    private readonly HomeTravelArrivalReadiness _arrival = new();
     private TimeSpan _nextExitAt;
     public PreCraftHomeTravelHost() => _receipt = new(_character);
-    public string Status => _receipt.Error ?? "Waiting for pre-craft Lifestream travel and stable player readiness.";
+    public string Status => _receipt.Error ?? "Waiting for Lifestream idle and player readiness (2 seconds outdoors; housing interior fast path).";
     public bool Submitted => _receipt.Submitted;
     public void Consume() => _receipt.Consume();
     public void Cancel() => _receipt.Cancel();
+    public bool SuspendForAutoRetainer(Guid handoff)
+    {
+        if (!_receipt.SuspendForAutoRetainer(handoff, Clock.Elapsed,
+                Dalamud.ClientState.IsLoggedIn ? Dalamud.PlayerState.ContentId : 0)) return false;
+        _arrival.Reset();
+        return true;
+    }
+    public bool ResumeFromAutoRetainer(Guid handoff)
+    {
+        if (!_receipt.ResumeFromAutoRetainer(handoff, Clock.Elapsed,
+                Dalamud.ClientState.IsLoggedIn ? Dalamud.PlayerState.ContentId : 0)) return false;
+        _arrival.Reset();
+        return true;
+    }
     public bool InvalidateForGathering()
     {
         if (!_receipt.InvalidateForGathering()) return false;
+        _arrival.Reset();
         GatherBuddy.Log.Debug("[Vulcan] Gathering departure invalidated home travel receipt; final return required before crafting");
         return true;
     }
 
     public void Observe()
     {
+        if (_receipt.Suspended) return; // Only the bound coordinator release may validate the returning character.
         if (!Dalamud.ClientState.IsLoggedIn || Dalamud.PlayerState.ContentId != _character)
             _receipt.Fail("Character changed or logged out. Stop and restart crafting.");
         else if (Submitted)
@@ -37,6 +54,8 @@ internal sealed class PreCraftHomeTravelHost
     {
         try
         {
+            if (_receipt.Suspended)
+                return _receipt.Observe(Clock.Elapsed, 0, string.Empty, false, false, false);
             var command = HomeNavigationHelper.NormalizeCommand(GatherBuddy.Config.AutoGatherConfig.LifestreamCommand);
             var enabled = GatherBuddy.Config.AutoGatherConfig.GoHomeWhenIdle;
             var character = Dalamud.ClientState.IsLoggedIn ? Dalamud.PlayerState.ContentId : 0;
@@ -45,24 +64,26 @@ internal sealed class PreCraftHomeTravelHost
             if (_receipt.Submitted && !Lifestream.Enabled)
                 return _receipt.Fail("Lifestream disappeared during pre-craft travel. Inspect travel and restart crafting.");
             var busy = Lifestream.Enabled && Lifestream.IsBusy();
-            var ready = CraftingQueueProcessor.CapturePreparationBlockers() == CraftPreparationBlocker.None
-                && !Dalamud.Conditions[ConditionFlag.Gathering] && !Dalamud.Conditions[ConditionFlag.Fishing]
-                && !Dalamud.Conditions[ConditionFlag.Casting] && !Dalamud.Conditions[ConditionFlag.OccupiedInQuestEvent]
-                && !Dalamud.Conditions[ConditionFlag.Crafting] && !Dalamud.Conditions[ConditionFlag.PreparingToCraft]
-                && !Dalamud.Conditions[ConditionFlag.ExecutingCraftingAction];
-            var admission = _receipt.Observe(Clock.Elapsed, character, command, enabled, busy, ready);
-            if (admission == HomeTravelAdmission.Waiting && allowStart && enabled && !Submitted && !busy
-                && CraftingGameInterop.CurrentState == CraftingGameInterop.CraftState.IdleBetween
-                && Clock.Elapsed >= _nextExitAt)
+            var ready = CapturePlayerReady();
+            var arrivalReady = !Submitted ? ready : ObserveArrival(busy, ready);
+            var admission = _receipt.Observe(Clock.Elapsed, character, command, enabled, busy, arrivalReady);
+            if (admission is not (HomeTravelAdmission.Failed or HomeTravelAdmission.Cancelled)
+                && allowStart && !Submitted && !busy && !ready
+                && CraftingGameInterop.CurrentState == CraftingGameInterop.CraftState.IdleBetween)
             {
-                _nextExitAt = Clock.Elapsed + TimeSpan.FromMilliseconds(500);
-                CraftingTasks.TaskExitCraft();
+                if (Clock.Elapsed >= _nextExitAt)
+                {
+                    _nextExitAt = Clock.Elapsed + TimeSpan.FromMilliseconds(500);
+                    CraftingTasks.TaskExitCraft();
+                }
+                return HomeTravelAdmission.Waiting; // Also exit an old crafting stance when home travel is disabled.
             }
             if (admission != HomeTravelAdmission.NeedsCommand || !allowStart) return admission;
             if (Dalamud.Conditions[ConditionFlag.BoundByDuty]) return _receipt.Fail("Cannot return home while bound by duty.");
             if (!Lifestream.Enabled) return _receipt.Fail("Lifestream is not available. Enable it or turn off Go Home When Idle before restarting crafting.");
             // Reserve before IPC. An exception may occur after the command took effect.
             if (!_receipt.RecordSubmission(Clock.Elapsed, command)) return HomeTravelAdmission.Waiting;
+            _arrival.Reset(); // Idle time before submission cannot count as arrival.
             GatherBuddy.Log.Information($"[Vulcan] Pre-craft Lifestream command submitted: {command}");
             Lifestream.ExecuteCommand(command);
             // Capture synchronous busy as well as subsequent framework observations.
@@ -73,4 +94,27 @@ internal sealed class PreCraftHomeTravelHost
             return _receipt.Fail($"Pre-craft travel status/submission failed ({ex.GetType().Name}). No automatic retry; inspect travel and restart crafting.");
         }
     }
+
+    // Call only before bell selection/withdrawal, not while our own bell navigation is moving.
+    public bool CheckBellArrival()
+    {
+        if (Tick(allowStart: false) != HomeTravelAdmission.Ready) return false;
+        try
+        {
+            var busy = Lifestream.Enabled && Lifestream.IsBusy();
+            return ObserveArrival(busy, CapturePlayerReady());
+        }
+        catch (Exception) { _arrival.Reset(); return false; }
+    }
+
+    private bool ObserveArrival(bool busy, bool ready)
+        => _arrival.Observe(Clock.Elapsed, busy, ready,
+            !busy && ready && SeFunctions.HousingManager.IsInsideHousing());
+
+    private static bool CapturePlayerReady()
+        => CraftingQueueProcessor.CapturePreparationBlockers() == CraftPreparationBlocker.None
+            && !Dalamud.Conditions[ConditionFlag.Gathering] && !Dalamud.Conditions[ConditionFlag.Fishing]
+            && !Dalamud.Conditions[ConditionFlag.Casting] && !Dalamud.Conditions[ConditionFlag.OccupiedInQuestEvent]
+            && !Dalamud.Conditions[ConditionFlag.Crafting] && !Dalamud.Conditions[ConditionFlag.PreparingToCraft]
+            && !Dalamud.Conditions[ConditionFlag.ExecutingCraftingAction];
 }

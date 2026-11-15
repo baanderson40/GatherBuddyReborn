@@ -22,6 +22,9 @@ public sealed partial class AutoRetainerIntegration : IAutoRetainerCoordinationP
     private bool _disposed;
     private DateTime _nextCancelDisable, _nextCancelClose;
     private bool _cancelIdleDisabled;
+    private PreCraftHomeTravelHost? _parkedHomeTravel;
+    private Guid _parkedHomeHandoff;
+    private string? _parkedHomeOwner;
     public AutoRetainerCoordinator Coordinator { get; }
     public AutoRetainerIntegration()
     {
@@ -182,6 +185,15 @@ public sealed partial class AutoRetainerIntegration : IAutoRetainerCoordinationP
         if (Lifestream.Enabled && Lifestream.IsBusy()) { reason = "Travel in progress"; return false; }
         if (VNavmesh.Enabled && (VNavmesh.Path.IsRunning() || VNavmesh.SimpleMove.PathfindInProgress() || VNavmesh.Nav.PathfindInProgress()))
         { reason = "Navigation in progress (no unrelated movement stopped)"; return false; }
+        var home = CraftingGatherBridge.HomeTravelForAutoRetainer(Coordinator.Owner);
+        if (home != null)
+        {
+            if (!home.SuspendForAutoRetainer(Coordinator.HandoffId))
+            { reason = home.Status; return false; }
+            _parkedHomeTravel = home;
+            _parkedHomeHandoff = Coordinator.HandoffId;
+            _parkedHomeOwner = Coordinator.Owner;
+        }
         _parkedQueue?.ParkForAutoRetainer();
         YesAlready.Unlock();
         return true;
@@ -269,6 +281,20 @@ public sealed partial class AutoRetainerIntegration : IAutoRetainerCoordinationP
 
     public void Release(bool resume)
     {
+        if (_parkedHomeTravel is { } home)
+        {
+            var sameRun = _parkedHomeOwner == Coordinator.Owner && _parkedHomeHandoff == Coordinator.HandoffId
+                && ReferenceEquals(home, CraftingGatherBridge.HomeTravelForAutoRetainer(_parkedHomeOwner));
+            if (!sameRun)
+            {
+                home.Cancel();
+                resume = false;
+            }
+            else if (!home.ResumeFromAutoRetainer(_parkedHomeHandoff)) resume = false;
+            _parkedHomeTravel = null;
+            _parkedHomeOwner = null;
+            _parkedHomeHandoff = Guid.Empty;
+        }
         var queue = _parkedQueue ?? CraftingGatherBridge.AutoRetainerQueue;
         queue?.ReleaseFromAutoRetainer(resume && ReferenceEquals(queue, CraftingGatherBridge.AutoRetainerQueue));
         if (_gatherWasEnabled || !resume && GatherBuddy.AutoGather.Enabled)
@@ -298,6 +324,8 @@ public sealed partial class AutoRetainerIntegration : IAutoRetainerCoordinationP
     public void Dispose()
     {
         if (_disposed) return;
+        _parkedHomeTravel?.Cancel();
+        _parkedHomeTravel = null;
         if (Withdrawal.Owner is { } owner)
         {
             Withdrawal.RequestRelease(owner);

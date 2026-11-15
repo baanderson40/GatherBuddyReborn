@@ -12,6 +12,8 @@ public partial class CraftingQueueProcessor
 
     private bool EnsureRetainerNavigationAdmission()
     {
+        if (_retainerBellNavigator == null && _homeTravel?.CheckBellArrival() == false)
+        { RetainerCoordinationStatus = _homeTravel.Status; return false; }
         if (GatherBuddy.AutoRetainerIntegration is not { } integration)
             return !RetainerBellNavigator.CleanupPending && SeFunctions.TeleportData.IsReady;
         var admitted = integration.CanNavigateToRetainerBell(out var reason);
@@ -29,6 +31,8 @@ public partial class CraftingQueueProcessor
     {
         if (RetainerBellNavigator.HasOutstanding)
         { RetainerCoordinationStatus = "Settling bell movement before withdrawal"; return false; }
+        if ((_retainerExecutor == null || _retainerExecutor.NeedsBellInteraction) && _homeTravel?.CheckBellArrival() == false)
+        { RetainerCoordinationStatus = _homeTravel.Status; return false; }
         var integration = GatherBuddy.AutoRetainerIntegration;
         if (integration == null) return true;
         if (integration.Coordinator.YieldRequested)

@@ -103,4 +103,38 @@ public class RetainerCoordinationBoundaryTests
         Assert.Contains("IsSuppressedForHandoff", Calls("AutoRetainerIntegration", "get_CanRequestHandoff"));
         Assert.Contains("RequestRelease", Calls("AutoRetainerIntegration", "Dispose"));
     }
+
+    [Fact]
+    public void CoordinatedHomeReceiptSuspendsBeforeParkingAndResumesBeforeQueueRelease()
+    {
+        var yieldCalls = Calls("AutoRetainerIntegration", "TryYield").ToList();
+        Assert.Contains("HomeTravelForAutoRetainer", yieldCalls);
+        Assert.Contains("SuspendForAutoRetainer", yieldCalls);
+        Assert.True(yieldCalls.IndexOf("SuspendForAutoRetainer") < yieldCalls.IndexOf("ParkForAutoRetainer"));
+        var release = Calls("AutoRetainerIntegration", "Release").ToList();
+        Assert.Contains("get_HandoffId", release);
+        Assert.Contains("get_Owner", release);
+        Assert.Contains("HomeTravelForAutoRetainer", release); // ReferenceEquals is lowered to IL reference comparison.
+        Assert.Contains("Cancel", release);
+        Assert.Contains("ResumeFromAutoRetainer", release);
+        Assert.True(release.IndexOf("ResumeFromAutoRetainer") < release.IndexOf("ReleaseFromAutoRetainer"));
+        Assert.Contains("get_Suspended", Calls("PreCraftHomeTravelHost", "Observe"));
+        Assert.Contains("get_Suspended", Calls("PreCraftHomeTravelHost", "Tick"));
+        Assert.Contains("get_AutoRetainerOwner", Calls("CraftingGatherBridge", "HomeTravelForAutoRetainer"));
+    }
+
+    [Fact]
+    public void ArrivalHeuristicUsesHousingStateAndRechecksBeforeBellAccess()
+    {
+        Assert.Contains("ObserveArrival", Calls("PreCraftHomeTravelHost", "Tick"));
+        Assert.Contains("IsInsideHousing", Calls("PreCraftHomeTravelHost", "ObserveArrival"));
+        Assert.Contains("IsInside", Calls("HousingManager", "IsInsideHousing"));
+        Assert.DoesNotContain("get_TerritoryType", Calls("HousingManager", "IsInsideHousing"));
+        foreach (var method in new[] { "SuspendForAutoRetainer", "ResumeFromAutoRetainer", "InvalidateForGathering" })
+            Assert.Contains("Reset", Calls("PreCraftHomeTravelHost", method));
+        Assert.Contains("CheckBellArrival", Calls("CraftingQueueProcessor", "EnsureRetainerNavigationAdmission"));
+        Assert.Contains("CheckBellArrival", Calls("CraftingQueueProcessor", "EnsureRetainerWithdrawalProtection"));
+        Assert.Contains("get_NeedsBellInteraction", Calls("CraftingQueueProcessor", "EnsureRetainerWithdrawalProtection"));
+        Assert.DoesNotContain("RecordSubmission", Calls("PreCraftHomeTravelHost", "CheckBellArrival"));
+    }
 }

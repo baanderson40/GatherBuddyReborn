@@ -76,6 +76,7 @@ internal unsafe class RetainerTaskExecutor
 
     public bool IsComplete => _phase == Phase.Complete;
     public bool IsAborted  => _phase == Phase.Aborted;
+    public bool NeedsBellInteraction => _phase == Phase.InteractBell;
 
     public RetainerTaskExecutor(
         Dictionary<uint, int> materials,

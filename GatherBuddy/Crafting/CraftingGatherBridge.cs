@@ -255,6 +255,14 @@ public static class CraftingGatherBridge
 
     internal static void ObserveHomeTravel()
         => (_isQueueMode ? _queueProcessor?.HomeTravel : _singleHomeTravel)?.Observe();
+
+    internal static PreCraftHomeTravelHost? HomeTravelForAutoRetainer(string? owner)
+    {
+        if (owner == null) return null;
+        if (_isQueueMode) return owner == AutoRetainerOwner ? _queueProcessor?.HomeTravel : null;
+        return _waitingForGatherComplete && owner == $"AutoGather:{GatherBuddy.AutoGather.AutomationRunId}"
+            ? _singleHomeTravel : null;
+    }
     
     public static void OnCraftFinished(Recipe? recipe, bool cancelled)
     {

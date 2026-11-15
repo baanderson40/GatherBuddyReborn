@@ -1,4 +1,5 @@
 using GatherBuddy.Automation;
+using GatherBuddy.Crafting;
 using Xunit;
 
 namespace GatherBuddy.Acquisition.Tests;
@@ -29,10 +30,12 @@ public class AutoRetainerCoordinatorTests
         public bool CancelThrows { get; set; }
         public bool? Resumed;
         public Action? DuringStart;
+        public Action? DuringYield;
+        public Action<bool>? DuringRelease;
         public AutoRetainerProcessingMode StartedMode;
         public void VerifyAvailable() { if (!Available) throw new InvalidOperationException("IPC missing"); }
         public string? FindReadyWork(AutoRetainerProcessingMode mode) => Work;
-        public bool TryYield(out string reason) { reason = "current transaction"; return YieldReady; }
+        public bool TryYield(out string reason) { reason = "current transaction"; if (YieldReady) DuringYield?.Invoke(); return YieldReady; }
         public void StartPass(AutoRetainerProcessingMode mode)
         {
             Starts++;
@@ -48,8 +51,69 @@ public class AutoRetainerCoordinatorTests
             MultiModeEnabled = false;
         }
         public bool TryFinishCancellation(out string reason) { reason = "Retainer menu still closing"; return CancellationClean; }
-        public void Release(bool resume) { Releases++; Resumed = resume; }
+        public void Release(bool resume) { Releases++; Resumed = resume; DuringRelease?.Invoke(resume); }
         public void Log(string message) { }
+    }
+
+    [Fact]
+    public void QueueArRelogThenReturnAllowsOnePreRetainerTeleportWithoutStickyLogoutError()
+    {
+        var port = new Port();
+        var home = new PreCraftHomeTravel(42);
+        var now = TimeSpan.Zero;
+        var coordinator = new AutoRetainerCoordinator(port);
+        port.DuringYield = () => Assert.True(home.SuspendForAutoRetainer(coordinator.HandoffId, now, port.Character!.ContentId));
+        port.DuringStart = () =>
+        {
+            port.Character = null;
+            port.CharacterReady = false;
+            Assert.Equal(HomeTravelAdmission.Waiting, home.Observe(now, 0, "auto", true, false, false));
+        };
+        port.DuringRelease = resume =>
+        {
+            Assert.True(resume);
+            Assert.True(port.CharacterReady);
+            Assert.True(home.ResumeFromAutoRetainer(coordinator.HandoffId, now, port.Character!.ContentId));
+        };
+        coordinator.Tick(now);
+        Assert.Equal(AutoRetainerHandoffState.RunningPass, coordinator.State);
+        now = TimeSpan.FromMinutes(3);
+        port.Character = new(84, "Other@World");
+        port.CharacterReady = true;
+        Assert.Equal(HomeTravelAdmission.Waiting, home.Observe(now, 84, "auto", true, true, true));
+        coordinator.Tick(now);
+        port.MultiModeEnabled = false;
+        coordinator.OnPassFinished();
+        now = TimeSpan.FromMinutes(4);
+        coordinator.Tick(now);
+        Assert.Equal(AutoRetainerHandoffState.Returning, coordinator.State);
+        Assert.Equal(1, port.Returns);
+        port.Character = new(42, "Original@World");
+        port.CharacterReady = false;
+        now = TimeSpan.FromMinutes(5);
+        coordinator.Tick(now);
+        Assert.True(home.Suspended);
+        Assert.Equal(AutoRetainerHandoffState.Settling, coordinator.State);
+        port.CharacterReady = true;
+        now += TimeSpan.FromSeconds(1);
+        coordinator.Tick(now);
+        now += TimeSpan.FromMilliseconds(500);
+        coordinator.Tick(now);
+        Assert.Equal(AutoRetainerHandoffState.Monitoring, coordinator.State);
+        Assert.False(home.Suspended);
+        Assert.Null(home.Error);
+        Assert.Equal(HomeTravelAdmission.NeedsCommand, home.Observe(now, 42, "auto", true, false, true));
+        Assert.True(home.RecordSubmission(now, "auto"));
+        Assert.Equal(HomeTravelAdmission.Waiting, home.Observe(now, 42, "auto", true, true, true));
+        now += TimeSpan.FromSeconds(2);
+        Assert.Equal(HomeTravelAdmission.Waiting, home.Observe(now, 42, "auto", true, false, true));
+        now += TimeSpan.FromMilliseconds(500);
+        Assert.Equal(HomeTravelAdmission.Ready, home.Observe(now, 42, "auto", true, false, true));
+        home.Consume(); // Bell navigation/withdrawal may now start; later crafting shares the receipt.
+        Assert.Equal(HomeTravelAdmission.Ready, home.Observe(now, 42, "auto", true, false, true));
+        Assert.False(home.RecordSubmission(now, "auto"));
+        Assert.Equal(1, port.Starts);
+        Assert.Equal(1, port.Releases);
     }
 
     [Theory]

@@ -4,6 +4,12 @@ namespace GatherBuddy.SeFunctions;
 
 public static unsafe class HousingManager
 {
+    public static bool IsInsideHousing()
+    {
+        var housingManager = SeHousingManager.Instance();
+        return housingManager != null && housingManager->IsInside();
+    }
+
     public static bool IsInHousing()
     {
         var housingManager = SeHousingManager.Instance();

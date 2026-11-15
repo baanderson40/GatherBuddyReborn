@@ -85,8 +85,10 @@ public class RetainerBellNavigator
             var bell = Dalamud.Objects.FirstOrDefault(o => o.GameObjectId == _bellId && o.IsTargetable);
             var player = Dalamud.Objects.LocalPlayer;
             if (player == null || bell == null || _character != Dalamud.PlayerState.ContentId
-                || _territory != Dalamud.ClientState.TerritoryType || !SeFunctions.TeleportData.IsReady)
+                || _territory != Dalamud.ClientState.TerritoryType || !SeFunctions.TeleportData.IsReady
+                || CraftingQueueProcessor.GetPlayerInventoryAvailability() != PlayerInventoryAvailability.Ready)
             { Finish(true); return; }
+            if (Lifestream.Enabled && Lifestream.IsBusy()) { Finish(true); return; }
             if (RetainerBellGeometry.InRange(player.Position, bell.Position, bell.HitboxRadius))
             { Finish(false); return; }
             if (DateTime.UtcNow - _started > TimeSpan.FromSeconds(60)) { Finish(true); return; }

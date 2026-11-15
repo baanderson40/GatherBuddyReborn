@@ -176,3 +176,89 @@ Correction verification: 587 acquisition, 207 compiled-plugin compatibility, and
 Adaptive tests pass (1,209 distinct). Debug/Release builds pass with zero warnings on
 this incremental run. Logs:
 `/tmp/opencode/pre-retainer-travel-{acquisition-tests,compat-tests,adaptive-tests,debug-build,release-build}.log`.
+
+### Coordinated AR relog before home travel
+
+The supplied 08:36–08:37 trace completed an AR single pass and original-character
+return, then immediately paused `WaitingForRetainerTravel` with "Character changed
+or logged out". Root cause: framework home-receipt observation correctly ran during
+loading, but incorrectly treated the coordinated AR logout as an unowned character
+change. Queue preparation reset could not clear that sticky receipt error.
+
+The integration now binds the run's exact home-travel host to coordinator owner and
+handoff ID after safe yield, before parking and AR submission. Queue and legacy
+single gather→craft hosts support this lifecycle. While suspended, neither observer
+nor command admission reads alternate-character travel/player status or submits
+work. The pure receipt returns Waiting before character checks, cannot consume/reset
+or submit, and does not collect AR return travel as home-command busy evidence.
+
+Coordinator release must match owner, handoff ID, receipt instance, and original
+content ID. It occurs after the coordinator's original-character readiness gate.
+Only that suspension interval is excluded from readiness/start/completion deadlines;
+already-spent budget, pending submission, busy evidence, and consumed state survive.
+Partially established readiness is reset. An unsubmitted trip still needs its normal
+home command after return; a submitted trip cannot be automatically reissued.
+
+Stop/reset/unload still cancel, wrong return identity fails closed, and suspension
+cannot erase an existing error. Manual/uncoordinated logout remains an error. Already
+poisoned queues from the old code require a stop/restart; this patch does not heal
+arbitrary failed travel transactions. No native acceptance claimed: repeat AR-before-
+teleport→return→home→bell, cancellation/recovery, and no-AR/manual-logout checks in game.
+
+Managed regression drives the production AR coordinator through pass startup, logout,
+alternate-character work, original-character return/settling, and one subsequent home
+submission without a sticky logout error. Other cases cover pre-spent readiness/start/
+completion budgets, duplicate park, exact handoff/character validation, cancellation,
+existing errors, consumed receipts, and compiled yield/release/observer wiring.
+Verification: 620 acquisition, 211 compatibility, and 415 Adaptive tests pass (1,246
+distinct). Debug/Release builds pass with zero warnings on this incremental run;
+tracked diff and affected suspension files pass whitespace checks. Logs:
+`/tmp/opencode/ar-home-suspension-{acquisition,compat,adaptive,debug-build,release-build}.log`.
+No in-game test, commit, or push performed for this fix.
+
+### Idle polling with housing-interior fast path
+
+Arrival now additionally requires `!Lifestream.IsBusy()` and live player readiness,
+plus either native `HousingManager.IsInside()` or two continuously idle/ready
+seconds. The existing final 500 ms receipt/preparation checks remain conservative
+additional gates; the interior branch skips the new outdoor two-second interval,
+not all existing stability checks. Housing state is read only after readiness and
+idle checks. This is not the older `IsInHousing()` helper, which can include housing
+district outdoors. No territory-ID list, selected-address inference, or change to
+Lifestream's `auto` destination/entry settings is used. Inns/outdoor routes can use
+the timed fallback, so indoor entry is not universally required.
+
+Busy, zoning/loading, inventory/player unreadiness, or navigation blockers reset
+the arrival timer. Idle before command submission does not count. New submissions,
+gathering-departure invalidation, and coordinated AR suspension/release reset it.
+A Ready receipt is revocable until consumed if another busy/unready stage begins;
+this does not authorize reissuing its command. Start acknowledgement, timeouts,
+deduplication, and no-op/uncertain-command failure rules remain unchanged.
+
+Recheck arrival before selecting a new bell navigator and before initial withdrawal
+planning/bell interaction. Once the executor owns its UI session, its existing
+withdrawal guard continues instead of requiring an unoccupied player between every
+menu step. Likewise, do not block our own active bell movement as unrelated nav work.
+The navigator rechecks Lifestream busy plus current player/inventory, territory, and
+object identity before taking a completed path into movement. A returning travel stage
+therefore blocks new bell access even after the original receipt was consumed.
+
+The supplied trace's 1.327-second apartment-selection→zoning gap fits inside the new
+two-second outdoor window. This is still a heuristic: an idle/ready gap longer than
+two seconds can admit outdoors, and being inside housing is not exact-address proof.
+Managed regressions cover that gap, mid-route busy resumption, exact timer boundaries,
+readiness resets, mandatory idle on the interior branch, final receipt stability,
+Ready revocation, native housing-reader wiring, and bell-entry gating. Attended
+checks remain needed for apartment entry, outdoor housing, inns, active withdrawal,
+and AR-before-home-return. No native acceptance, commit, or push claimed here.
+
+Verification: 632 acquisition, 212 compatibility, and 415 Adaptive tests pass (1,259
+distinct). Debug/Release solution builds pass with zero warnings on this incremental
+run; tracked diff and new arrival files pass whitespace checks. Logs:
+`/tmp/opencode/arrival-readiness-{acquisition,compat,adaptive,debug-build,release-build}.log`.
+
+Supplied inn trace: Lifestream's final task ended at 09:44:17.221, inn territory
+transition followed at 09:44:19.218, player/teleport readiness returned at 09:44:21.430,
+and bell navigation began at 09:44:23.969. Craft startup followed at 09:44:26.393,
+with no duplicate home command in the supplied segment. This supports the timed inn
+arrival path only: no actual item withdrawal or full-queue completion was shown.

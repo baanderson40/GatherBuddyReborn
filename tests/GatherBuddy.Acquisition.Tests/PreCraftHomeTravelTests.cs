@@ -221,4 +221,130 @@ public class PreCraftHomeTravelTests
         Assert.Equal(HomeTravelAdmission.Ready, Tick(gate, 1000, enabled: false));
         Assert.False(gate.RecordSubmission(TimeSpan.FromSeconds(1), "auto"));
     }
+
+    [Fact]
+    public void CoordinatedRelogBeforeSubmissionWaitsThenAllowsOriginalTeleport()
+    {
+        var gate = new PreCraftHomeTravel(7); var handoff = Guid.NewGuid();
+        Assert.True(gate.SuspendForAutoRetainer(handoff, TimeSpan.Zero, 7));
+        Assert.Equal(HomeTravelAdmission.Waiting, Tick(gate, 1000, character: 0));
+        Assert.Equal(HomeTravelAdmission.Waiting, Tick(gate, 300000, character: 8, busy: true));
+        Assert.False(gate.RecordSubmission(TimeSpan.FromMinutes(5), "auto"));
+        Assert.Null(gate.Error);
+        Assert.True(gate.ResumeFromAutoRetainer(handoff, TimeSpan.FromMinutes(6), 7));
+        Assert.Equal(HomeTravelAdmission.NeedsCommand, Tick(gate, 360000));
+        Assert.True(gate.RecordSubmission(TimeSpan.FromMinutes(6), "auto"));
+        Assert.Equal(HomeTravelAdmission.Waiting, Tick(gate, 360100)); // AR travel was not counted as this command's busy evidence.
+        Tick(gate, 360200, busy: true);
+        Tick(gate, 361000);
+        Assert.Equal(HomeTravelAdmission.Ready, Tick(gate, 361500));
+    }
+
+    [Fact]
+    public void SuspensionExcludesOnlyOwnedAbsenceFromUnsubmittedReadinessBudget()
+    {
+        var gate = new PreCraftHomeTravel(7); var handoff = Guid.NewGuid();
+        Tick(gate, 0, ready: false);
+        Assert.True(gate.SuspendForAutoRetainer(handoff, TimeSpan.FromSeconds(100), 7));
+        Assert.True(gate.ResumeFromAutoRetainer(handoff, TimeSpan.FromSeconds(1100), 7));
+        Assert.Equal(HomeTravelAdmission.Waiting, Tick(gate, 1119999, ready: false));
+        Assert.Equal(HomeTravelAdmission.Failed, Tick(gate, 1120000, ready: false));
+    }
+
+    [Fact]
+    public void PendingSubmissionSurvivesRelogWithoutRetryAndKeepsStartBudget()
+    {
+        var gate = new PreCraftHomeTravel(7); var handoff = Guid.NewGuid();
+        gate.RecordSubmission(TimeSpan.Zero, "auto");
+        Assert.True(gate.SuspendForAutoRetainer(handoff, TimeSpan.FromSeconds(9), 7));
+        Tick(gate, 500000, character: 0, busy: true);
+        Assert.True(gate.ResumeFromAutoRetainer(handoff, TimeSpan.FromSeconds(1009), 7));
+        Assert.True(gate.Submitted);
+        Assert.False(gate.RecordSubmission(TimeSpan.FromSeconds(1009), "auto"));
+        Assert.Equal(HomeTravelAdmission.Waiting, Tick(gate, 1009999));
+        Assert.Equal(HomeTravelAdmission.Failed, Tick(gate, 1010000)); // Previous nine seconds were not erased.
+    }
+
+    [Fact]
+    public void PendingCompletionBudgetAndFreshReadinessSurviveSuspension()
+    {
+        var gate = new PreCraftHomeTravel(7); var handoff = Guid.NewGuid();
+        gate.RecordSubmission(TimeSpan.Zero, "auto");
+        Tick(gate, 0, busy: true);
+        Tick(gate, 1000);
+        Assert.True(gate.SuspendForAutoRetainer(handoff, TimeSpan.FromMilliseconds(1400), 7));
+        Assert.True(gate.SuspendForAutoRetainer(handoff, TimeSpan.FromSeconds(100), 7)); // Duplicate park must not move pause origin.
+        Assert.True(gate.ResumeFromAutoRetainer(handoff, TimeSpan.FromMilliseconds(1001400), 7));
+        Assert.Equal(HomeTravelAdmission.Waiting, Tick(gate, 1001400));
+        Assert.Equal(HomeTravelAdmission.Waiting, Tick(gate, 1001899));
+        Assert.Equal(HomeTravelAdmission.Ready, Tick(gate, 1001900));
+        var timed = new PreCraftHomeTravel(7);
+        timed.RecordSubmission(TimeSpan.Zero, "auto");
+        Tick(timed, 0, busy: true);
+        timed.SuspendForAutoRetainer(handoff, TimeSpan.FromSeconds(100), 7);
+        timed.ResumeFromAutoRetainer(handoff, TimeSpan.FromSeconds(1100), 7);
+        Assert.Equal(HomeTravelAdmission.Failed, Tick(timed, 1120000, busy: true));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void WrongReturnCharacterOrHandoffCannotReleaseReceipt(bool wrongCharacter)
+    {
+        var gate = new PreCraftHomeTravel(7); var handoff = Guid.NewGuid();
+        gate.SuspendForAutoRetainer(handoff, TimeSpan.Zero, 7);
+        Assert.False(gate.ResumeFromAutoRetainer(wrongCharacter ? handoff : Guid.NewGuid(), TimeSpan.FromSeconds(1), wrongCharacter ? 8UL : 7UL));
+        Assert.Equal(HomeTravelAdmission.Failed, Tick(gate, 1000));
+        Assert.False(gate.RecordSubmission(TimeSpan.FromSeconds(1), "auto"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SuspensionCannotHealExistingFailureOrCancellation(bool cancelled)
+    {
+        var gate = new PreCraftHomeTravel(7); var handoff = Guid.NewGuid();
+        gate.SuspendForAutoRetainer(handoff, TimeSpan.Zero, 7);
+        if (cancelled) gate.Cancel(); else gate.Fail("Existing uncertainty");
+        Assert.False(gate.ResumeFromAutoRetainer(handoff, TimeSpan.FromSeconds(1), 7));
+        Assert.False(gate.SuspendForAutoRetainer(handoff, TimeSpan.FromSeconds(2), 7));
+        Assert.Equal(cancelled ? HomeTravelAdmission.Cancelled : HomeTravelAdmission.Failed, Tick(gate, 2000));
+    }
+
+    [Theory]
+    [InlineData(0UL)]
+    [InlineData(8UL)]
+    public void SuspensionRequiresOriginalCharacter(ulong character)
+    {
+        var gate = new PreCraftHomeTravel(7);
+        Assert.False(gate.SuspendForAutoRetainer(Guid.NewGuid(), TimeSpan.Zero, character));
+        Assert.False(gate.Suspended);
+        Assert.Equal(HomeTravelAdmission.Failed, Tick(gate, 1000));
+    }
+
+    [Fact]
+    public void ConsumedReceiptIsPreservedButCannotBeInvalidatedDuringForeignCharacterVisit()
+    {
+        var gate = CompletedRetainerTravel(); var handoff = Guid.NewGuid();
+        gate.SuspendForAutoRetainer(handoff, TimeSpan.FromSeconds(2), 7);
+        Assert.False(gate.InvalidateForGathering());
+        Assert.Equal(HomeTravelAdmission.Waiting, Tick(gate, 3000, character: 8));
+        Assert.True(gate.ResumeFromAutoRetainer(handoff, TimeSpan.FromSeconds(4), 7));
+        Assert.Equal(HomeTravelAdmission.Ready, Tick(gate, 4000));
+        Assert.False(gate.RecordSubmission(TimeSpan.FromSeconds(4), "auto"));
+    }
+
+    [Fact]
+    public void UnconsumedReadyReceiptIsRevokedIfAnotherTravelStageStarts()
+    {
+        var gate = new PreCraftHomeTravel(7);
+        gate.RecordSubmission(TimeSpan.Zero, "auto");
+        Tick(gate, 0, busy: true);
+        Tick(gate, 1000);
+        Assert.Equal(HomeTravelAdmission.Ready, Tick(gate, 1500));
+        Assert.Equal(HomeTravelAdmission.Waiting, Tick(gate, 1600, busy: true));
+        Assert.False(gate.RecordSubmission(TimeSpan.FromSeconds(2), "auto"));
+        Assert.Equal(HomeTravelAdmission.Waiting, Tick(gate, 2000));
+        Assert.Equal(HomeTravelAdmission.Ready, Tick(gate, 2500));
+    }
 }

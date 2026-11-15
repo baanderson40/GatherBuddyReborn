@@ -33,6 +33,7 @@
     <Compile Include="../../GatherBuddy/Crafting/InventoryRecovery.cs" Link="Production/InventoryRecovery.cs" />
     <Compile Include="../../GatherBuddy/Crafting/CraftPreparationGate.cs" Link="Production/CraftPreparationGate.cs" />
     <Compile Include="../../GatherBuddy/Crafting/PreCraftHomeTravel.cs" Link="Production/PreCraftHomeTravel.cs" />
+    <Compile Include="../../GatherBuddy/Crafting/HomeTravelArrivalReadiness.cs" Link="Production/HomeTravelArrivalReadiness.cs" />
     <Compile Include="../../GatherBuddy/Crafting/CraftingQueueProgress.cs" Link="Production/CraftingQueueProgress.cs" />
     <Compile Include="../../GatherBuddy/Crafting/AutomaticVendorPurchasePolicy.cs" Link="Production/AutomaticVendorPurchasePolicy.cs" />
     <Compile Include="../../GatherBuddy/Crafting/MaterialPurchasePresentation.cs" Link="Production/MaterialPurchasePresentation.cs" />

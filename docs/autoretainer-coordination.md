@@ -43,6 +43,14 @@ purchase reserve, or spending cap is changed by this feature.
    original saved list and resurrect completed crafts. A suspended retainer stage
    rebuilds withdrawal requirements from current inventory after AR settles.
 
+Home-travel receipts participate in safe yield/release. Bind the exact queue or
+legacy gather→craft receipt to owner/handoff identity before AR starts. Expected
+logout/alternate-character observations are suspended until the matching coordinator
+returns the original character ready. Freeze only that absence from travel deadlines;
+preserve issued-command state and never retry it. Unowned logout, stale releases,
+existing errors, and cancellation remain fail-closed. See the coordinated-relog
+regression in `docs/crafting-preparation-gate.md`.
+
 Yielding is not immediate preemption: a long withdrawal or repair task chain can
 delay AR. Unrelated vendor lists/collectable runs/navigation block handoff and are
 not stopped. Starting new plugin automation during an active handoff is rejected.
