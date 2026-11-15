@@ -19,6 +19,7 @@ public class AutoRetainerCompatibilityTests
             + ",\"AutoRetainerMultiModeThreshold\":127,\"AutoRetainerDelayForTimedNodes\":false,\"FoodItemId\":123}";
         var config = JsonConvert.DeserializeObject<AutoGatherConfig>(json)!;
         Assert.Equal(enabled, config.AutoRetainerMultiMode);
+        Assert.False(config.EnableAutoRetainerWhenFinished);
         Assert.Equal(AutoRetainerProcessingMode.Ventures, config.AutoRetainerMode);
         Assert.Equal(127, config.AutoRetainerMultiModeThreshold);
         Assert.False(config.AutoRetainerDelayForTimedNodes);
@@ -35,6 +36,17 @@ public class AutoRetainerCompatibilityTests
         var restored = JsonConvert.DeserializeObject<AutoGatherConfig>(JsonConvert.SerializeObject(config))!;
         Assert.True(restored.AutoRetainerMultiMode);
         Assert.Equal(mode, restored.AutoRetainerMode);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void CompletionSettingRoundTripsIndependentlyOfSinglePass(bool enabled)
+    {
+        var config = new AutoGatherConfig { EnableAutoRetainerWhenFinished = enabled, AutoRetainerMultiMode = !enabled };
+        var restored = JsonConvert.DeserializeObject<AutoGatherConfig>(JsonConvert.SerializeObject(config))!;
+        Assert.Equal(enabled, restored.EnableAutoRetainerWhenFinished);
+        Assert.Equal(!enabled, restored.AutoRetainerMultiMode);
     }
 
     [Theory]

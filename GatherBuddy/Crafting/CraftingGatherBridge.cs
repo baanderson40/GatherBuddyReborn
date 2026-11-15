@@ -223,6 +223,7 @@ public static class CraftingGatherBridge
             
             if (_queueProcessor.CurrentState == CraftingQueueProcessor.QueueState.Complete && !_queueProcessor.HasPendingTasks())
             {
+                var completion = _queueProcessor.SuccessfulCompletionTicket;
                 GatherBuddy.Log.Information("[CraftingGatherBridge] All completion tasks done, cleaning up");
                 RestoreDisabledGatherLists();
                 GatherBuddy.CraftingStatusWindow?.SetQueueProcessor(null);
@@ -237,6 +238,7 @@ public static class CraftingGatherBridge
                     GatherBuddy.CraftingListManager.DeleteList(_ephemeralListId.Value);
                     _ephemeralListId = null;
                 }
+                GatherBuddy.AutoRetainerIntegration?.RequestCompletion(completion);
             }
         }
         
@@ -275,7 +277,9 @@ public static class CraftingGatherBridge
     public static void StartGatherAndCraft(uint recipeId, Dictionary<uint, int> missing)
     {
         if (GatherBuddy.AutoRetainerIntegration?.CanStartAutomation() == false) return;
-        if (ResolvedVendorPurchasePolicy.Resolve(GatherBuddy.Config.AutomaticVendorPurchases).Enabled)
+        // Completion handoff requires the queue's confirmed-output accounting, not a bare craft-finished callback.
+        if (ResolvedVendorPurchasePolicy.Resolve(GatherBuddy.Config.AutomaticVendorPurchases).Enabled
+            || GatherBuddy.Config.AutoGatherConfig.EnableAutoRetainerWhenFinished)
         {
             var list = new CraftingListDefinition { ID = -1, Name = "Quick Gather + Craft", Recipes = [new(recipeId, 1)] };
             StartQueueCraftAndGather(CraftingExecutionPlan.Create(list));

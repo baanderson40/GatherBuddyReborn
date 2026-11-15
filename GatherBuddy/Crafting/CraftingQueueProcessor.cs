@@ -64,6 +64,17 @@ public partial class CraftingQueueProcessor
     private Dictionary<string, RaphaelSolveRequest> _enqueuedRaphaelRequests = new();
     private Dictionary<uint, int> _missingIngredientFailures = new();
     private string _pauseReason = string.Empty;
+    private AutoRetainerCompletionTicket? _completionTicket;
+    internal AutoRetainerCompletionTicket? SuccessfulCompletionTicket
+    {
+        get
+        {
+            if (_currentState != QueueState.Complete || _paused) return null;
+            var progress = Progress;
+            return AutoRetainerCompletionEligibility.Queue(true, false, progress.ConfirmedCrafts, progress.RemainingCrafts)
+                ? _completionTicket : null;
+        }
+    }
 
     private List<CraftingListItem> QueueItems => _executionPlan?.Queue ?? EmptyQueue;
     private Dictionary<uint, int> MaterialTargets => _executionPlan?.Materials ?? EmptyCounts;
@@ -109,6 +120,8 @@ public partial class CraftingQueueProcessor
             throw new InvalidOperationException("Wait for previous Vulcan bell cleanup before starting another queue.");
         YesAlready.Lock();
         _executionPlan = executionPlan;
+        _completionTicket = new($"Vulcan:{executionPlan.AcquisitionRunId}", Dalamud.PlayerState.ContentId,
+            GatherBuddy.Config.AutoGatherConfig.EnableAutoRetainerWhenFinished);
         _acquisition = null;
         _acquisitionPort = null;
         _inventoryRecovery?.Cancel();
@@ -1532,6 +1545,8 @@ public partial class CraftingQueueProcessor
 
     public void Stop()
     {
+        _completionTicket = null;
+        GatherBuddy.AutoRetainerIntegration?.Completion.Cancel();
         _homeTravel?.Cancel();
         _retainerRestartAfterAr = false;
         ReleaseRetainerWithdrawalProtection();
@@ -1591,6 +1606,8 @@ public partial class CraftingQueueProcessor
     
     public void Reset()
     {
+        _completionTicket = null;
+        GatherBuddy.AutoRetainerIntegration?.Completion.Cancel();
         _homeTravel?.Cancel();
         _homeTravel = null;
         _retainerBellNavigator?.Stop();

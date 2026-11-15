@@ -401,6 +401,7 @@ namespace GatherBuddy.AutoGather
                     Communicator.PrintError("[GatherBuddyReborn] Stop transient vendor execution before starting AutoGather.");
                     return;
                 }
+                if (!value) GatherBuddy.AutoRetainerIntegration?.Completion.Cancel($"AutoGather:{AutomationRunId}");
                 if (_enabled == value)
                     return;
                 if (value) AutomationRunId = Guid.NewGuid();
@@ -467,6 +468,9 @@ namespace GatherBuddy.AutoGather
                 {
                     return;
                 }
+                _completionTicket = new($"AutoGather:{AutomationRunId}", Dalamud.PlayerState.ContentId,
+                    GatherBuddy.Config.AutoGatherConfig.EnableAutoRetainerWhenFinished);
+                _completionHadGatherWork = false;
                 
                 WentHome = true; //Prevents going home right after enabling auto-gather
                 if (AutoHook.Enabled)
@@ -893,6 +897,7 @@ namespace GatherBuddy.AutoGather
             if (TryUseAetherCannon()) return;
 
             var next = _activeItemList.GetNextOrDefault();
+            if (_activeItemList.IsInitialized && _activeItemList.HasItemsToGather) _completionHadGatherWork = true;
             _currentRequestedTarget = next != default ? next.Item : null;
 
             if (next.Fish == null || next.FishingSpot?.Spearfishing == true)
@@ -934,7 +939,7 @@ namespace GatherBuddy.AutoGather
             {
                 if (!_activeItemList.HasItemsToGather)
                 {
-                    AbortAutoGather();
+                    AbortAutoGather(completed: _activeItemList.IsInitialized && _completionHadGatherWork);
                     return;
                 }
 
@@ -2256,7 +2261,7 @@ namespace GatherBuddy.AutoGather
             TaskManager.Enqueue(() => GenericHelpers.IsScreenReady());
         }
 
-        private void AbortAutoGather(string? status = null)
+        private void AbortAutoGather(string? status = null, bool completed = false)
         {
             ResetFishingApproachState();
             _currentRequestedTarget = null;
@@ -2296,14 +2301,14 @@ namespace GatherBuddy.AutoGather
                         
                         ReduceItems(true, () =>
                         {
-                            AbortAutoGather(status);
+                            AbortAutoGather(status, completed);
                         });
                     }
                     else
                     {
                         ReduceItems(true, () =>
                         {
-                            AbortAutoGather(status);
+                            AbortAutoGather(status, completed);
                         });
                     }
                     
@@ -2318,10 +2323,16 @@ namespace GatherBuddy.AutoGather
             CloseGatheringAddons();
             if (GatherBuddy.Config.AutoGatherConfig.GoHomeWhenDone)
                 EnqueueActionWithDelay(() => { GoHome(); });
+            var finishingRun = AutomationRunId;
             TaskManager.Enqueue(() =>
             {
+                if (!Enabled || AutomationRunId != finishingRun) return;
+                var completion = AutoRetainerCompletionEligibility.Gathering(completed, _completionHadGatherWork,
+                    CraftingGatherBridge.WaitingForGatherComplete || CraftingGatherBridge.AutoRetainerQueue != null)
+                    ? _completionTicket : null;
                 Enabled    = false;
                 AutoStatus = status ?? AutoStatus;
+                GatherBuddy.AutoRetainerIntegration?.RequestCompletion(completion);
             });
         }
 

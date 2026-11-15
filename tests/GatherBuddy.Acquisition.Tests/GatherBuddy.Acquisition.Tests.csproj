@@ -22,6 +22,7 @@
     <Compile Include="../../GatherBuddy/Marketboard/MarketboardTravelCoordinator.cs" Link="Production/MarketboardTravelCoordinator.cs" />
     <Compile Include="../../GatherBuddy/Marketboard/UniversalisService.cs" Link="Production/UniversalisService.cs" />
     <Compile Include="../../GatherBuddy/Automation/AutoRetainerCoordinator.cs" Link="Production/AutoRetainerCoordinator.cs" />
+    <Compile Include="../../GatherBuddy/Automation/AutoRetainerCompletion.cs" Link="Production/AutoRetainerCompletion.cs" />
     <Compile Include="../../GatherBuddy/Automation/AutoRetainerReadiness.cs" Link="Production/AutoRetainerReadiness.cs" />
     <Compile Include="../../GatherBuddy/Automation/RetainerWithdrawalGuard.cs" Link="Production/RetainerWithdrawalGuard.cs" />
     <Compile Include="../../GatherBuddy/Automation/RetainerNavigationAdmission.cs" Link="Production/RetainerNavigationAdmission.cs" />

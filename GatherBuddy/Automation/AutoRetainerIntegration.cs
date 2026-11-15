@@ -29,6 +29,7 @@ public sealed partial class AutoRetainerIntegration : IAutoRetainerCoordinationP
     public AutoRetainerIntegration()
     {
         Coordinator = new(this);
+        Completion = new(this);
         Withdrawal = new(new WithdrawalPort(this));
         _finished = Dalamud.PluginInterface.GetIpcSubscriber<object>(Prefix + "OnSingleMultiModeFinished");
         _finished.Subscribe(Coordinator.OnPassFinished);
@@ -94,6 +95,8 @@ public sealed partial class AutoRetainerIntegration : IAutoRetainerCoordinationP
 
     public bool CanStartAutomation()
     {
+        if (Completion.Pending || Completion.State == AutoRetainerCompletionState.Submitted)
+        { Communicator.PrintError("Completion AutoRetainer handoff pending. Turn off Enable AutoRetainer Multi-mode when finished to cancel it before starting new work."); return false; }
         if (!Marketboard.MarketboardTravelIntegration.CanStartAutomation()) return false;
         if (Withdrawal.Owner.HasValue)
         { Communicator.PrintError($"Wait for Vulcan retainer cleanup. {Withdrawal.Status}"); return false; }
@@ -104,14 +107,19 @@ public sealed partial class AutoRetainerIntegration : IAutoRetainerCoordinationP
                 : "Finish/recover the AutoRetainer handoff before starting automation.");
             return false;
         }
-        if (!Enabled || !IPCSubscriber.IsReady("AutoRetainer")) return true;
+        if (!IPCSubscriber.IsReady("AutoRetainer")) return true;
         try
         {
             if (!MultiModeEnabled && !Busy) return true;
             Communicator.PrintError("AutoRetainer/travel is active. Wait or stop it before starting automation.");
             return false;
         }
-        catch (Exception) { return true; } // Missing APIs are reported by the coordinator; existing automation remains usable.
+        catch (Exception)
+        {
+            if (CompletionEnabled || Completion.SubmissionAttempted)
+            { Communicator.PrintError("Cannot verify AutoRetainer mode/tasks after completion handoff. Restore its IPC and stop AR before starting new work."); return false; }
+            return true; // Preserve legacy behavior when terminal handoff was not requested.
+        }
     }
 
     private static void Require(ICallGateSubscriber gate, bool action = false)
@@ -260,6 +268,7 @@ public sealed partial class AutoRetainerIntegration : IAutoRetainerCoordinationP
 
     public void StopOwner(string? owner)
     {
+        Completion.Cancel(owner);
         if (!_disposed) Coordinator.StopOwner(owner, _clock.Elapsed);
     }
 
@@ -314,6 +323,7 @@ public sealed partial class AutoRetainerIntegration : IAutoRetainerCoordinationP
         Withdrawal.Tick(Environment.TickCount64);
         LogWithdrawalStatus();
         if (GatherBuddy.MarketboardTravel?.Coordinator.BlocksAutomation == true) return;
+        UpdateCompletion();
         Coordinator.Tick(_clock.Elapsed);
         if (Coordinator.YieldRequested && GatherBuddy.AutoGather.Enabled)
             GatherBuddy.AutoGather.SetAutoRetainerStatus(Coordinator.Status);
@@ -323,6 +333,7 @@ public sealed partial class AutoRetainerIntegration : IAutoRetainerCoordinationP
     public void Log(string message) => GatherBuddy.Log.Information(message);
     public void Dispose()
     {
+        Completion.Cancel();
         if (_disposed) return;
         _parkedHomeTravel?.Cancel();
         _parkedHomeTravel = null;

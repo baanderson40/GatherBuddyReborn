@@ -19,7 +19,62 @@ standalone AutoGather and Vulcan queues. The same controls appear in
 Disabled configurations remain disabled. No saved shopping list, AR configuration,
 purchase reserve, or spending cap is changed by this feature.
 
-## Handoff
+## Continuous multi-mode after successful completion
+
+**Enable AutoRetainer Multi-mode when finished** is a separate shared GBR/Vulcan
+setting, default **off**. It does not require **Wait for AutoRetainer Multi-mode**
+and does not use its single-pass category, venture threshold, timed-node priority,
+return-to-character, or resume behavior. AR's own configuration governs continuous
+operation and which characters/retainers/vessels it processes.
+
+- New runs capture the opt-in and original content ID in a one-use completion ticket.
+  Enabling the option mid-run does not arm old work. Turning it off cancels pending
+  handoff immediately from the UI, or on the next coordination tick for other changes.
+- Standalone gathering signals success only from the explicit no-remaining-targets
+  path after observing actual pending gather work. Error/abort/manual-disable paths
+  do not signal success. Empty/already-satisfied starts and timed-node waiting do not
+  enable AR. Existing gathering reduction/home-return/shutdown tasks finish first.
+- Gathering owned by Vulcan never signals completion at the gather→craft boundary.
+  Vulcan waits for confirmed non-skipped craft output, no remaining work, queue
+  completion tasks, disabled-list restoration, and bridge cleanup before requesting.
+  All-skipped/empty queues, incomplete/failed queues, and manual Stop do not request.
+- Gather + Craft uses the existing queue path when this option is on, even if
+  automatic vendor purchasing is off. This gives the legacy single-craft entry point
+  inventory-confirmed output accounting instead of treating a craft-finished callback
+  as proof of success. Purchase policy remains unchanged. Ordinary direct/manual
+  recipe-browser crafts outside a queue do not arm this completion option.
+- The shared integration waits for all local action queues and automation owners to
+  disappear, recipe UI to close, bell withdrawal protection/suppression to settle,
+  vendor/collectable operations to finish, and travel/navigation/player readiness.
+  External suppression and unrelated movement are not cleared or stopped. Require
+  another 500 ms stable readiness and AR idle before the sole enable submission.
+- Continuous IPC is `AutoRetainer.PluginState.EnableMultiMode`, an action with no
+  arguments. Checked reference source routes it to `/autoretainer multi enable`.
+  Verify that action and `GetMultiModeStatus`/`IsBusy` at runtime; no single-pass,
+  chat-command, or legacy-setter fallback. Already-enabled mode is left untouched.
+- Reserve the submission before invoking IPC. Missing APIs, status-read failures,
+  ambiguous submission exceptions, character/logout changes, or 120-second cleanup
+  timeout produce one terminal status/error, not automatic retries. A ticket cannot
+  be submitted twice. A genuinely new run has a new ticket.
+- Pending completion blocks new GBR/Vulcan work. Existing active AR mode/tasks also
+  block new starts even if the single-pass integration checkbox is off. Explicit
+  Stop or unload cancels an unsubmitted completion request. After submission, AR is
+  external: GBR does not disable it, return to the old character, resume old work,
+  or interpret `OnSingleMultiModeFinished` as ownership of this continuous run.
+
+The UI reports **requested**, not verified scheduler execution: an IPC action returning
+does not prove AR accepted the request or completed work. This is managed-tested;
+native AR compatibility/relogging remains an attended acceptance step. Check standalone
+gather completion, gather→craft deferral, successful multi-recipe queue cleanup,
+Stop/failure/empty/skipped work, setting independence, already-active AR, missing IPC,
+and consecutive runs. No in-game acceptance claimed by these tests.
+
+Verification: 608 acquisition, 210 compiled-plugin compatibility, and 415 Adaptive
+tests pass (1,233 distinct). Debug/Release solution builds pass with zero warnings
+on this incremental run; tracked diff and new completion files pass whitespace
+checks. Logs: `/tmp/opencode/ar-completion-{acquisition,compat,adaptive,debug-build,release-build}.log`.
+
+## Single-pass interruption handoff
 
 1. Poll AR readiness at most every two seconds while an automation owner is active.
 2. Request a safe yield. Drain queued native actions; finish repair/extraction

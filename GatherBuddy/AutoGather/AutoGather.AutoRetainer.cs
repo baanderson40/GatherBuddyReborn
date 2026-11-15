@@ -11,6 +11,8 @@ public partial class AutoGather
 {
     internal Guid AutomationRunId { get; private set; } = Guid.NewGuid();
     private bool _arAutoHookStopped;
+    private AutoRetainerCompletionTicket? _completionTicket;
+    private bool _completionHadGatherWork;
     internal bool DeferAutoRetainerForTimedNode
     {
         get

@@ -8,6 +8,15 @@ internal static class AutoRetainerSettingsUi
     public static void Draw()
     {
         var config = GatherBuddy.Config.AutoGatherConfig;
+        var whenFinished = config.EnableAutoRetainerWhenFinished;
+        if (ImGui.Checkbox("Enable AutoRetainer Multi-mode when finished", ref whenFinished))
+        {
+            config.EnableAutoRetainerWhenFinished = whenFinished;
+            if (!whenFinished) GatherBuddy.AutoRetainerIntegration?.Completion.Cancel();
+            GatherBuddy.Config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Shared by GBR and Vulcan. After successful gathering or an entire crafting queue and cleanup, enable continuous AutoRetainer using its own settings. Gather + Craft waits for crafting. No forced character return or GBR/Vulcan resume. Takes effect for new runs; turning this off cancels a pending handoff.");
         var enabled = config.AutoRetainerMultiMode;
         if (ImGui.Checkbox("Wait for AutoRetainer Multi-mode", ref enabled))
         {
@@ -50,6 +59,8 @@ internal static class AutoRetainerSettingsUi
         if (GatherBuddy.AutoRetainerIntegration is not { } integration) return;
         if (integration.Enabled || integration.Coordinator.YieldRequested)
             ImGui.TextWrapped(integration.Coordinator.Status);
+        if (integration.Completion.State != AutoRetainerCompletionState.Idle)
+            ImGui.TextWrapped(integration.Completion.Status);
         if (integration.Coordinator.State == AutoRetainerHandoffState.Failed)
         {
             ImGui.TextWrapped("Stop AutoRetainer and return to the original character. Restore required AR IPC if unavailable. Recovery releases retained work paused; resume manually after inspection.");
