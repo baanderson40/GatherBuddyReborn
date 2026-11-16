@@ -7,8 +7,19 @@ public sealed class AutoRetainerCompletionTicket(string owner, ulong characterId
 {
     public string Owner { get; } = owner;
     public ulong CharacterId { get; } = characterId;
-    public bool Armed { get; } = armed;
+    public bool Armed { get; private set; } = armed;
     public bool Claimed { get; internal set; }
+    public bool Invalidated { get; private set; }
+
+    public bool TrySetArmed(bool armed)
+    {
+        if (Claimed || Invalidated) return false;
+        Armed = armed;
+        return true;
+    }
+
+    public void Invalidate()
+        => Invalidated = true;
 }
 
 public interface IAutoRetainerCompletionPort
@@ -46,7 +57,8 @@ public sealed class AutoRetainerCompletion(IAutoRetainerCompletionPort port)
 
     public bool Request(AutoRetainerCompletionTicket? ticket, TimeSpan now)
     {
-        if (ticket is not { Armed: true, Claimed: false, CharacterId: not 0 } || Pending || State == AutoRetainerCompletionState.Submitted) return false;
+        if (ticket is not { Armed: true, Claimed: false, Invalidated: false, CharacterId: not 0 }
+            || Pending || State == AutoRetainerCompletionState.Submitted) return false;
         ticket.Claimed = true;
         _ticket = ticket;
         _deadline = now + TimeSpan.FromSeconds(120);

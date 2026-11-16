@@ -72,6 +72,8 @@ public static class CraftingGatherBridge
     public static uint RecipeToCraft => _recipeIdToCraft;
     public static bool WaitingForGatherComplete => _waitingForGatherComplete;
     internal static CraftingQueueProcessor? AutoRetainerQueue => _isQueueMode ? _queueProcessor : null;
+    internal static bool SetActiveQueueCompletionPreference(bool enabled)
+        => _isQueueMode && _queueProcessor?.SetCompletionPreference(enabled) == true;
     internal static string? AutoRetainerOwner => _isQueueMode && _queueProcessor is { } queue
         && queue.CurrentState is not (CraftingQueueProcessor.QueueState.Idle or CraftingQueueProcessor.QueueState.Complete or CraftingQueueProcessor.QueueState.Cancelled)
         ? $"Vulcan:{_activeExecutionPlan?.AcquisitionRunId}" : null;

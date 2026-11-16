@@ -107,6 +107,56 @@ public class AutoRetainerCompletionTests
         Assert.Equal(initiallyArmed ? AutoRetainerCompletionState.Cancelled : AutoRetainerCompletionState.Idle, completion.State);
     }
 
+    [Fact]
+    public void DisabledQueueCanBeArmedBeforeSuccessfulCompletion()
+    {
+        var port = new Port();
+        var completion = new AutoRetainerCompletion(port);
+        var ticket = Ticket(armed: false);
+
+        Assert.True(ticket.TrySetArmed(true));
+        Assert.True(completion.Request(ticket, TimeSpan.Zero));
+        completion.Tick(TimeSpan.Zero);
+        completion.Tick(TimeSpan.FromMilliseconds(500));
+
+        Assert.Equal(AutoRetainerCompletionState.HandedOff, completion.State);
+        Assert.Equal(1, port.Submissions);
+    }
+
+    [Fact]
+    public void DisarmedOrInvalidatedQueueCannotRequestCompletion()
+    {
+        var port = new Port();
+        var completion = new AutoRetainerCompletion(port);
+        var ticket = Ticket();
+
+        Assert.True(ticket.TrySetArmed(false));
+        Assert.False(completion.Request(ticket, TimeSpan.Zero));
+        Assert.True(ticket.TrySetArmed(true));
+        ticket.Invalidate();
+        Assert.False(ticket.TrySetArmed(true));
+        Assert.False(completion.Request(ticket, TimeSpan.Zero));
+        Assert.Equal(0, port.Submissions);
+    }
+
+    [Fact]
+    public void ClaimedTicketCannotBeRearmedAndCancelledHandoffCannotBeRevived()
+    {
+        var port = new Port();
+        var completion = new AutoRetainerCompletion(port);
+        var ticket = Ticket();
+
+        Assert.True(completion.Request(ticket, TimeSpan.Zero));
+        Assert.False(ticket.TrySetArmed(false));
+        completion.Cancel();
+        Assert.False(ticket.TrySetArmed(true));
+        Assert.False(completion.Request(ticket, TimeSpan.FromSeconds(1)));
+        completion.Tick(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(AutoRetainerCompletionState.Cancelled, completion.State);
+        Assert.Equal(0, port.Submissions);
+    }
+
     [Theory]
     [InlineData(0UL)]
     [InlineData(8UL)]

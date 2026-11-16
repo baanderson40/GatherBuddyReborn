@@ -201,6 +201,14 @@ public class CraftingStatusWindow : M3Window
             return;
         }
 
+        var completionEnabled = GatherBuddy.Config.AutoGatherConfig.EnableAutoRetainerWhenFinished;
+        if (M3Widgets.RowSwitch("AutoRetainer when finished##craftCompletionHandoff", ref completionEnabled,
+                "Enable continuous AutoRetainer after this queue finishes successfully and cleanup completes. Shared with GBR and Vulcan settings. Turning this off cancels a pending handoff but does not stop AutoRetainer already running."))
+        {
+            AutoRetainerCompletionPreference.SetEnabled(completionEnabled);
+            GatherBuddy.Config.Save();
+        }
+
         if (ImGui.CollapsingHeader("Details"))
         {
             if (currentItem != null)

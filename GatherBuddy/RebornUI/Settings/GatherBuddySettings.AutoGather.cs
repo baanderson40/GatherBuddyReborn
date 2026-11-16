@@ -1,6 +1,7 @@
 using Dalamud.Interface;
 using Dalamud.Utility;
 using GatherBuddy.AutoGather;
+using GatherBuddy.Automation;
 using GatherBuddy.Classes;
 using GatherBuddy.RebornUI.Settings;
 using GatherBuddy.Utilities;
@@ -170,6 +171,10 @@ internal sealed partial class GatherBuddySettings
                         "Wait to process retainers until after active and upcoming timed nodes are gathered.",
                         AutoCfg.AutoRetainerDelayForTimedNodes, v => AutoCfg.AutoRetainerDelayForTimedNodes = v);
                 }),
+                Custom("Enable AutoRetainer Multi-mode when finished", () =>
+                    SettingRows.Switch("Enable AutoRetainer Multi-mode when finished",
+                        "Shared with Vulcan. After successful gathering or a completed crafting queue and cleanup, enable continuous AutoRetainer using its own settings. Changes update an active crafting queue; gathering captures this preference when it starts. Turning this off cancels a pending handoff.",
+                        AutoCfg.EnableAutoRetainerWhenFinished, AutoRetainerCompletionPreference.SetEnabled)),
                 Toggle("Diadem auto-aethercannon",
                     "Automatically target and fire the aethercannon at nearby enemies when the gauge is ready (200 or more). "
                   + "Only fires while not pathing, with a 2 second cooldown between uses.",

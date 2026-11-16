@@ -11,12 +11,11 @@ internal static class AutoRetainerSettingsUi
         var whenFinished = config.EnableAutoRetainerWhenFinished;
         if (ImGui.Checkbox("Enable AutoRetainer Multi-mode when finished", ref whenFinished))
         {
-            config.EnableAutoRetainerWhenFinished = whenFinished;
-            if (!whenFinished) GatherBuddy.AutoRetainerIntegration?.Completion.Cancel();
+            AutoRetainerCompletionPreference.SetEnabled(whenFinished);
             GatherBuddy.Config.Save();
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Shared by GBR and Vulcan. After successful gathering or an entire crafting queue and cleanup, enable continuous AutoRetainer using its own settings. Gather + Craft waits for crafting. No forced character return or GBR/Vulcan resume. Takes effect for new runs; turning this off cancels a pending handoff.");
+            ImGui.SetTooltip("Shared by GBR and Vulcan. After successful gathering or a completed crafting queue and cleanup, enable continuous AutoRetainer using its own settings. Changes update an active crafting queue; gathering captures this preference when it starts. Turning this off cancels a pending handoff. Does not alter mid-run AutoRetainer waiting.");
         var enabled = config.AutoRetainerMultiMode;
         if (ImGui.Checkbox("Wait for AutoRetainer Multi-mode", ref enabled))
         {

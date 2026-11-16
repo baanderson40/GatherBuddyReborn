@@ -74,6 +74,13 @@ public partial class CraftingQueueProcessor
         }
     }
 
+    internal bool SetCompletionPreference(bool enabled)
+    {
+        if (_executionPlan == null || _currentState is QueueState.Idle or QueueState.Complete or QueueState.Cancelled)
+            return false;
+        return _completionTicket?.TrySetArmed(enabled) == true;
+    }
+
     private List<CraftingListItem> QueueItems => _executionPlan?.Queue ?? EmptyQueue;
     private Dictionary<uint, int> MaterialTargets => _executionPlan?.Materials ?? EmptyCounts;
     private Dictionary<uint, int> RetainerPrecraftTargets => _executionPlan?.RetainerConsumedCraftables ?? EmptyCounts;
@@ -1728,6 +1735,7 @@ public partial class CraftingQueueProcessor
 
     public void Stop()
     {
+        _completionTicket?.Invalidate();
         _completionTicket = null;
         GatherBuddy.AutoRetainerIntegration?.Completion.Cancel();
         _homeTravel?.Cancel();
@@ -1791,6 +1799,7 @@ public partial class CraftingQueueProcessor
 
     public void Reset()
     {
+        _completionTicket?.Invalidate();
         _completionTicket = null;
         GatherBuddy.AutoRetainerIntegration?.Completion.Cancel();
         _homeTravel?.Cancel();

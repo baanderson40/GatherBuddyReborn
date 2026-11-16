@@ -39,7 +39,17 @@ public class AutoRetainerCompletionBoundaryTests
         Assert.Contains("UpdateCompletion", Calls("AutoRetainerIntegration", "Update"));
         Assert.Contains("get_Pending", Calls("AutoRetainerIntegration", "CanStartAutomation"));
         Assert.Contains("get_EnableAutoRetainerWhenFinished", Calls("AutoRetainerSettingsUi", "Draw"));
-        Assert.Contains("set_EnableAutoRetainerWhenFinished", Calls("AutoRetainerSettingsUi", "Draw"));
+        Assert.Contains("SetEnabled", Calls("AutoRetainerSettingsUi", "Draw"));
+        var preference = Calls("AutoRetainerCompletionPreference", "SetEnabled");
+        Assert.Contains("set_EnableAutoRetainerWhenFinished", preference);
+        Assert.Contains("SetActiveQueueCompletionPreference", preference);
+        Assert.Contains("Cancel", preference);
+        Assert.Contains("SetCompletionPreference", Calls("CraftingGatherBridge", "SetActiveQueueCompletionPreference"));
+        var status = Calls("CraftingStatusWindow", "Draw");
+        Assert.Contains("RowSwitch", status);
+        Assert.Contains("SetEnabled", status);
+        Assert.Contains("Save", status);
+        Assert.Contains("TrySetArmed", Calls("CraftingQueueProcessor", "SetCompletionPreference"));
         Assert.Contains("get_EnableAutoRetainerWhenFinished", Calls("CraftingGatherBridge", "StartGatherAndCraft"));
         Assert.Contains("get_ConfirmedCrafts", Calls("CraftingQueueProcessor", "get_SuccessfulCompletionTicket"));
         Assert.Contains("get_RemainingCrafts", Calls("CraftingQueueProcessor", "get_SuccessfulCompletionTicket"));
