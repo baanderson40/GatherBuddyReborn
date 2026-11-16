@@ -137,4 +137,14 @@ public class RetainerCoordinationBoundaryTests
         Assert.Contains("get_NeedsBellInteraction", Calls("CraftingQueueProcessor", "EnsureRetainerWithdrawalProtection"));
         Assert.DoesNotContain("RecordSubmission", Calls("PreCraftHomeTravelHost", "CheckBellArrival"));
     }
+
+    [Fact]
+    public void HousingInteriorIsCheckedBeforeHomeCommandReservation()
+    {
+        var tick = Calls("PreCraftHomeTravelHost", "Tick").ToList();
+        Assert.Contains("IsInsideHousing", tick);
+        Assert.Contains("get_SkippedInsideHousing", tick);
+        Assert.True(tick.IndexOf("IsInsideHousing") < tick.IndexOf("RecordSubmission"));
+        Assert.DoesNotContain("get_TerritoryType", tick);
+    }
 }

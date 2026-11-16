@@ -66,7 +66,11 @@ internal sealed class PreCraftHomeTravelHost
             var busy = Lifestream.Enabled && Lifestream.IsBusy();
             var ready = CapturePlayerReady();
             var arrivalReady = !Submitted ? ready : ObserveArrival(busy, ready);
-            var admission = _receipt.Observe(Clock.Elapsed, character, command, enabled, busy, arrivalReady);
+            var alreadyInside = enabled && !Submitted && !busy && ready && SeFunctions.HousingManager.IsInsideHousing();
+            var skippedBefore = _receipt.SkippedInsideHousing;
+            var admission = _receipt.Observe(Clock.Elapsed, character, command, enabled, busy, arrivalReady, alreadyInside);
+            if (!skippedBefore && _receipt.SkippedInsideHousing)
+                GatherBuddy.Log.Information("[Vulcan] Already inside housing; skipping pre-craft Lifestream command for this phase");
             if (admission is not (HomeTravelAdmission.Failed or HomeTravelAdmission.Cancelled)
                 && allowStart && !Submitted && !busy && !ready
                 && CraftingGameInterop.CurrentState == CraftingGameInterop.CraftState.IdleBetween)

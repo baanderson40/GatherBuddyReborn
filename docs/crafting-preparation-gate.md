@@ -262,3 +262,36 @@ transition followed at 09:44:19.218, player/teleport readiness returned at 09:44
 and bell navigation began at 09:44:23.969. Craft startup followed at 09:44:26.393,
 with no duplicate home command in the supplied segment. This supports the timed inn
 arrival path only: no actual item withdrawal or full-queue completion was shown.
+
+### Skip Vulcan home command when already inside housing
+
+Before reserving/submitting a Vulcan home command, check the existing native
+`HousingManager.IsInside()` reader with Lifestream idle and player readiness. If
+already inside housing, record `SkippedInsideHousing` and admit without command
+submission or busy-start acknowledgement. This applies to the shared pre-retainer/
+pre-craft host, including ready-ingredient and direct managed-craft starts. Ordinary
+standalone gathering home commands are unchanged. Outdoor residential areas and inns
+do not gain a new skip rule; no inn territory-ID classification was added.
+
+The skipped phase still waits if Lifestream becomes busy or readiness is lost before
+consumption, with the existing 120-second readiness bound. It cannot dispatch a
+command on a later poll or before a subsequent recipe in the same phase. Gathering
+departure invalidates a consumed skip just like a consumed travel receipt. Fresh
+runs get fresh state; coordinated AR suspension preserves the phase and excludes
+only its owned absence from the wait budget. Unowned logout, cancellation, and prior
+errors remain fail-closed. A command already submitted can never be retroactively
+classified as skipped merely because the player is now inside housing.
+
+The skip honors Go Home When Idle and does not claim exact-address arrival: any
+housing interior qualifies, even if it differs from the configured command's usual
+destination. A missing Lifestream plugin does not require teleporting when this skip
+already qualifies; outside housing its existing availability/failure rules remain.
+Existing live bell-arrival and craft-preparation checks still apply after the skip.
+Runtime logs identify the skip once per phase. Attended checks remain needed for
+inside-house/apartment starts, busy/unready interior starts, outside/inn starts, and
+gathering departure after a skipped retainer stage. No native acceptance claimed.
+
+Verification: current-tree acquisition (642), compatibility (309), and Adaptive
+(557) suites pass. Debug/Release solution builds pass with zero warnings on this
+incremental run; tracked diff passes whitespace checks. Logs:
+`/tmp/opencode/housing-skip-{acquisition,compat,adaptive,debug-build,release-build}.log`.
