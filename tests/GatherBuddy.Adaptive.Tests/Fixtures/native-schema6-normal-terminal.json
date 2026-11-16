@@ -1,0 +1,46 @@
+{
+  "Evidence": "Compact projection of supplied post-fix schema-6 Normal-terminal trace, session 7a95f7fd-d133-493e-88fc-6f03ea91bdb2. Native packets 12–16 and Finish below are retained scalar projections; earlier raw packet envelopes were evicted. Tests synthesize earlier acknowledgements and start-context watermark explicitly, not as captured evidence. Not a complete export or independent simulator oracle.",
+  "SchemaVersion": 6,
+  "RecipeId": 5618,
+  "JobId": 15,
+  "MainHandItemId": 51785,
+  "GoodQualityPercent": 175,
+  "TestStartContext": { "Stream": 1, "RecipeId": 5618, "StartingQuality": 0, "Sequence": 3 },
+  "Roots": [
+    { "StepIndex": 2, "Progress": 948, "Quality": 0, "Durability": 70, "CP": 658, "Condition": "Normal", "MuscleMemory": 5 },
+    { "StepIndex": 3, "Progress": 948, "Quality": 0, "Durability": 70, "CP": 562, "Condition": "Normal", "Manipulation": 8, "MuscleMemory": 4 },
+    { "StepIndex": 4, "Progress": 948, "Quality": 0, "Durability": 75, "CP": 544, "Condition": "Normal", "Manipulation": 7, "Veneration": 4, "MuscleMemory": 3 },
+    { "StepIndex": 5, "Progress": 948, "Quality": 0, "Durability": 80, "CP": 446, "Condition": "Normal", "WasteNot": 8, "Manipulation": 6, "Veneration": 3, "MuscleMemory": 2 },
+    { "StepIndex": 6, "Progress": 3792, "Quality": 0, "Durability": 75, "CP": 428, "Condition": "Normal", "WasteNot": 7, "Manipulation": 5, "Veneration": 2 },
+    { "StepIndex": 7, "Progress": 5498, "Quality": 0, "Durability": 70, "CP": 410, "Condition": "Normal", "WasteNot": 6, "Manipulation": 4, "Veneration": 1 },
+    { "StepIndex": 8, "Progress": 6209, "Quality": 300, "Durability": 70, "CP": 378, "Condition": "Normal", "InnerQuiet": 1, "WasteNot": 5, "Manipulation": 3 },
+    { "StepIndex": 9, "Progress": 6209, "Quality": 300, "Durability": 75, "CP": 360, "Condition": "Normal", "InnerQuiet": 1, "WasteNot": 4, "Manipulation": 2, "Innovation": 4 },
+    { "StepIndex": 10, "Progress": 6209, "Quality": 1290, "Durability": 70, "CP": 320, "Condition": "Normal", "InnerQuiet": 3, "WasteNot": 3, "Manipulation": 1, "Innovation": 3 },
+    { "StepIndex": 11, "Progress": 6209, "Quality": 2460, "Durability": 65, "CP": 280, "Condition": "Normal", "InnerQuiet": 5, "WasteNot": 2, "Innovation": 2 },
+    { "StepIndex": 12, "Progress": 6209, "Quality": 3810, "Durability": 55, "CP": 240, "Condition": "Normal", "InnerQuiet": 7, "WasteNot": 1, "Innovation": 1 },
+    { "StepIndex": 13, "Progress": 6209, "Quality": 5340, "Durability": 45, "CP": 200, "Condition": "Normal", "InnerQuiet": 9 },
+    { "StepIndex": 14, "Progress": 6209, "Quality": 5340, "Durability": 45, "CP": 182, "Condition": "Normal", "InnerQuiet": 9, "Innovation": 4 },
+    { "StepIndex": 15, "Progress": 6209, "Quality": 7050, "Durability": 25, "CP": 142, "Condition": "Good", "InnerQuiet": 10, "Innovation": 3 },
+    { "StepIndex": 16, "Progress": 6209, "Quality": 7050, "Durability": 25, "CP": 110, "Condition": "Normal", "InnerQuiet": 10, "GreatStrides": 3, "Innovation": 2 },
+    { "StepIndex": 17, "Progress": 6209, "Quality": 11550, "Durability": 15, "CP": 86, "Condition": "Normal", "Innovation": 1 }
+  ],
+  "NativePackets": {
+    "12": { "Stream": 1, "Sequence": 16, "Operation": 10, "RecipeId": 5618, "StartingQuality": 0, "ActionId": 19011, "StepIndex": 14, "Progress": 6209, "Quality": 5340, "Durability": 45, "ConditionPlusOne": 1, "Flags": 18 },
+    "13": { "Stream": 1, "Sequence": 17, "Operation": 9, "RecipeId": 5618, "StartingQuality": 0, "ActionId": 100306, "StepIndex": 15, "Progress": 6209, "Quality": 7050, "Durability": 25, "ConditionPlusOne": 2, "Flags": 18 },
+    "14": { "Stream": 1, "Sequence": 18, "Operation": 10, "RecipeId": 5618, "StartingQuality": 0, "ActionId": 267, "StepIndex": 16, "Progress": 6209, "Quality": 7050, "Durability": 25, "ConditionPlusOne": 1, "Flags": 18 },
+    "15": { "Stream": 1, "Sequence": 19, "Operation": 9, "RecipeId": 5618, "StartingQuality": 0, "ActionId": 100346, "StepIndex": 17, "Progress": 6209, "Quality": 11550, "Durability": 15, "ConditionPlusOne": 1, "Flags": 18 },
+    "16": { "Stream": 1, "Sequence": 20, "Operation": 9, "RecipeId": 5618, "StartingQuality": 0, "ActionId": 100330, "StepIndex": 17, "Progress": 6600, "Quality": 12000, "Durability": 5, "ConditionPlusOne": 1, "Flags": 22 }
+  },
+  "Finish": { "Stream": 1, "Sequence": 21, "Operation": 4, "RecipeId": 5618, "StartingQuality": 0, "ActionId": 0, "StepIndex": 0, "Progress": 0, "Quality": 0, "Durability": 0, "ConditionPlusOne": 0, "Flags": 0 },
+  "NativeSummaryAfterFix": {
+    "CorrelatedActions": 16,
+    "MatchedAcknowledgements": 17,
+    "TerminalObservation": "ExperimentalPacketSuccess",
+    "BlockedReason": null,
+    "LastMismatch": null,
+    "HistoricalPlans": 16,
+    "DesiredQualityPlans": 16,
+    "TotalEvents": 234,
+    "DroppedEvents": 170
+  }
+}

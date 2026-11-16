@@ -1,0 +1,32 @@
+{
+  "Source": "https://v2.xivapi.com/api/search?sheets=Item&query=Description~%221.75%22&fields=Name,Description&limit=500",
+  "DataVersion": "a72e645591e5bf8b",
+  "Schema": "exdschema@2:rev:e773c41a90aed788cf4c1c48469fa85618ef01fb",
+  "Note": "17 unique English effect descriptions across 136 crafting items. Extracted metadata, not a runtime lookup or independent simulator reference.",
+  "Descriptions": [
+    "Adaptive splendorous tool.\n\nIncreases to quality are 1.75 times higher than normal when material condition is Good.",
+    "Brilliant splendorous tool.\n\nIncreases to quality are 1.75 times higher than normal when material condition is Good.",
+    "Perfected splendorous tool.\n\nIncreases to quality are 1.75 times higher than normal when material condition is Good.",
+    "Customized splendorous tool.\n\nIncreases to quality are 1.75 times higher than normal when material condition is Good.",
+    "Inspirational splendorous tool.\n\nIncreases to quality are 1.75 times higher than normal when material condition is Good.",
+    "Phase 9 cosmic tool.\nIncreases to quality are 1.75 times higher than normal when material condition is Good.\nCompleting a stellar mission from start to finish with this tool equipped grants a bonus to earned rewards.\nLunar Credit Bonus: +35%",
+    "Perfected cosmic tool.\nIncreases to quality are 1.75 times higher than normal when material condition is Good.\nCompleting a stellar mission from start to finish with this tool equipped grants a bonus to earned rewards.\nLunar/Phaenna/Oizys/Auxesia Credit Bonus: +35%",
+    "Phase 10 cosmic tool.\nIncreases to quality are 1.75 times higher than normal when material condition is Good.\nCompleting a stellar mission from start to finish with this tool equipped grants a bonus to earned rewards.\nLunar Credit Bonus: +35%\nPhaenna Credit Bonus: +10%",
+    "Phase 11 cosmic tool.\nIncreases to quality are 1.75 times higher than normal when material condition is Good.\nCompleting a stellar mission from start to finish with this tool equipped grants a bonus to earned rewards.\nLunar Credit Bonus: +35%\nPhaenna Credit Bonus: +15%",
+    "Phase 12 cosmic tool.\nIncreases to quality are 1.75 times higher than normal when material condition is Good.\nCompleting a stellar mission from start to finish with this tool equipped grants a bonus to earned rewards.\nLunar Credit Bonus: +35%\nPhaenna Credit Bonus: +20%",
+    "Phase 13 cosmic tool.\nIncreases to quality are 1.75 times higher than normal when material condition is Good.\nCompleting a stellar mission from start to finish with this tool equipped grants a bonus to earned rewards.\nLunar Credit Bonus: +35%\nPhaenna Credit Bonus: +25%",
+    "Phase 14 cosmic tool.\nIncreases to quality are 1.75 times higher than normal when material condition is Good.\nCompleting a stellar mission from start to finish with this tool equipped grants a bonus to earned rewards.\nLunar Credit Bonus: +35%\nPhaenna Credit Bonus: +35%",
+    "Phase 18 cosmic tool.\nIncreases to quality are 1.75 times higher than normal when material condition is Good.\nCompleting a stellar mission from start to finish with this tool equipped grants a bonus to earned rewards.\nAuxesia Credit Bonus: +10%\nLunar/Phaenna/Oizys Credit Bonus: +35%",
+    "Phase 19 cosmic tool.\nIncreases to quality are 1.75 times higher than normal when material condition is Good.\nCompleting a stellar mission from start to finish with this tool equipped grants a bonus to earned rewards.\nAuxesia Credit Bonus: +20%\nLunar/Phaenna/Oizys Credit Bonus: +35%",
+    "Phase 15 cosmic tool.\nIncreases to quality are 1.75 times higher than normal when material condition is Good.\nCompleting a stellar mission from start to finish with this tool equipped grants a bonus to earned rewards.\nLunar Credit Bonus: +35%\nPhaenna Credit Bonus: +35%\nOizys Credit Bonus: +10%",
+    "Phase 16 cosmic tool.\nIncreases to quality are 1.75 times higher than normal when material condition is Good.\nCompleting a stellar mission from start to finish with this tool equipped grants a bonus to earned rewards.\nLunar Credit Bonus: +35%\nPhaenna Credit Bonus: +35%\nOizys Credit Bonus: +20%",
+    "Phase 17 cosmic tool.\nIncreases to quality are 1.75 times higher than normal when material condition is Good.\nCompleting a stellar mission from start to finish with this tool equipped grants a bonus to earned rewards.\nLunar Credit Bonus: +35%\nPhaenna Credit Bonus: +35%\nOizys Credit Bonus: +35%"
+  ],
+  "ItemExamples": [
+    { "ItemId": 45686, "Name": "Cosmic Frypan", "JobId": 15, "DescriptionIndex": 5, "GoodQualityPercent": 175 },
+    { "ItemId": 38744, "Name": "Crystalline Frypan", "JobId": 15, "DescriptionIndex": 0, "GoodQualityPercent": 175 },
+    { "ItemId": 39739, "Name": "Chora-Zoi's Crystalline Frypan", "JobId": 15, "DescriptionIndex": 3, "GoodQualityPercent": 175 },
+    { "ItemId": 39761, "Name": "Replica Crystalline Frypan", "JobId": 15, "DescriptionIndex": null, "GoodQualityPercent": 150 },
+    { "ItemId": 49060, "Name": "Stellar Frypan", "JobId": 15, "DescriptionIndex": 11, "GoodQualityPercent": 175 }
+  ]
+}

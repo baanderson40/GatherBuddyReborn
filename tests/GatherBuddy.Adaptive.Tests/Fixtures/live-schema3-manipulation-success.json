@@ -1,0 +1,55 @@
+{
+  "Evidence": "Compact projection of second supplied live schema-3 success. Source ring retained64/183 events, evicted119. Only suffix input frames steps12–18 and packets15–21 are preserved; fresh start and first eleven input roots NOT reconstructed. Summary totals18 acknowledgements/17 full-frame correlations are source reports, not reproduced by suffix replay. Innovation request/return was evicted and remains null. Unknown flag bit0x100 is preserved without interpretation. Different conditions/routes mean this18-action craft and prior16-action craft are not controlled A/B. No fabricated final CP/buffs/full frame.",
+  "SchemaVersion": 3,
+  "DecisionSessionId": "4c4f7b5b-a45f-42ab-9e18-d78f98d14061",
+  "EvidenceSessionId": "53cd4342-e840-4f23-8127-6673a84b7069",
+  "Craft": {
+    "GoodQualityPercent": 175,
+    "Tool": {
+      "MainHandItemId": 51785, "JobId": 15, "GoodQualityPercent": 175,
+      "DetectionSource": "English Item.Description: exact audited 1.75x effect template; other effect channels empty",
+      "EffectDescription": "Perfected cosmic tool.\nIncreases to quality are 1.75 times higher than normal when material condition is Good.\nCompleting a stellar mission from start to finish with this tool equipped grants a bonus to earned rewards.\nLunar/Phaenna/Oizys/Auxesia Credit Bonus: +35%"
+    },
+    "RecipeId": 5618, "Craftsmanship": 5953, "Control": 5490, "MaxCP": 664,
+    "Level": 100, "RecipeLevel": 100, "MaxDurability": 80, "RequiredProgress": 6600,
+    "MaxQuality": 12000, "RequiredQuality": 0, "ProgressDivider": 170, "ProgressModifier": 90,
+    "QualityDivider": 150, "QualityModifier": 75,
+    "Collectability1": 0, "Collectability2": 0, "Collectability3": 0,
+    "CanHQ": true, "Collectable": false, "ManipulationUnlocked": true
+  },
+  "Roots": [
+    { "StepIndex": 12, "Progress": 0, "Quality": 7560, "Durability": 70, "CP": 200, "Condition": "Good", "InnerQuiet": 10, "Manipulation": 5, "GreatStrides": 3 },
+    { "StepIndex": 13, "Progress": 0, "Quality": 7560, "Durability": 75, "CP": 182, "Condition": "Normal", "InnerQuiet": 10, "Manipulation": 4, "GreatStrides": 2, "Innovation": 4 },
+    { "StepIndex": 14, "Progress": 0, "Quality": 12000, "Durability": 70, "CP": 158, "Condition": "Normal", "Manipulation": 3, "Innovation": 3 },
+    { "StepIndex": 15, "Progress": 0, "Quality": 12000, "Durability": 75, "CP": 140, "Condition": "Normal", "Manipulation": 2, "Innovation": 2, "Veneration": 4 },
+    { "StepIndex": 16, "Progress": 1706, "Quality": 12000, "Durability": 60, "CP": 122, "Condition": "Normal", "Manipulation": 1, "Innovation": 1, "Veneration": 3 },
+    { "StepIndex": 17, "Progress": 3412, "Quality": 12000, "Durability": 45, "CP": 104, "Condition": "Normal", "Veneration": 2 },
+    { "StepIndex": 18, "Progress": 5118, "Quality": 12000, "Durability": 25, "CP": 86, "Condition": "Normal", "Veneration": 1 }
+  ],
+  "Actions": [19004, 100339, 19297, 100403, 100403, 100403, 100403],
+  "RawNativeReturns": [null, true, true, true, true, true, true],
+  "NativePackets": [
+    { "Stream": 1, "Sequence": 15, "Operation": 10, "RecipeId": 5618, "StartingQuality": 0, "ActionId": 19011, "StepIndex": 13, "Progress": 0, "Quality": 7560, "Durability": 75, "ConditionPlusOne": 1, "Flags": 274 },
+    { "Stream": 1, "Sequence": 16, "Operation": 9, "RecipeId": 5618, "StartingQuality": 0, "ActionId": 100346, "StepIndex": 14, "Progress": 0, "Quality": 12000, "Durability": 70, "ConditionPlusOne": 1, "Flags": 274 },
+    { "Stream": 1, "Sequence": 17, "Operation": 10, "RecipeId": 5618, "StartingQuality": 0, "ActionId": 19304, "StepIndex": 15, "Progress": 0, "Quality": 12000, "Durability": 75, "ConditionPlusOne": 1, "Flags": 274 },
+    { "Stream": 1, "Sequence": 18, "Operation": 9, "RecipeId": 5618, "StartingQuality": 0, "ActionId": 100410, "StepIndex": 16, "Progress": 1706, "Quality": 12000, "Durability": 60, "ConditionPlusOne": 1, "Flags": 274 },
+    { "Stream": 1, "Sequence": 19, "Operation": 9, "RecipeId": 5618, "StartingQuality": 0, "ActionId": 100410, "StepIndex": 17, "Progress": 3412, "Quality": 12000, "Durability": 45, "ConditionPlusOne": 1, "Flags": 274 },
+    { "Stream": 1, "Sequence": 20, "Operation": 9, "RecipeId": 5618, "StartingQuality": 0, "ActionId": 100410, "StepIndex": 18, "Progress": 5118, "Quality": 12000, "Durability": 25, "ConditionPlusOne": 1, "Flags": 274 },
+    { "Stream": 1, "Sequence": 21, "Operation": 9, "RecipeId": 5618, "StartingQuality": 0, "ActionId": 100410, "StepIndex": 18, "Progress": 6600, "Quality": 12000, "Durability": 5, "ConditionPlusOne": 1, "Flags": 278 }
+  ],
+  "Finish": { "Stream": 1, "Sequence": 22, "Operation": 4, "RecipeId": 5618, "StartingQuality": 0, "ActionId": 0, "StepIndex": 0, "Progress": 0, "Quality": 0, "Durability": 0, "ConditionPlusOne": 0, "Flags": 0 },
+  "Transaction": {
+    "Request": { "SessionId": "53cd4342-e840-4f23-8127-6673a84b7069", "RequestId": 18 },
+    "Action": 100403, "NativeActionId": 100410, "Ordinal": 18, "StartedAt": "01:03:56.5882991",
+    "InvocationBegan": true, "NativeReturn": true, "Outcome": "TerminalConfirmed", "Error": null,
+    "AcknowledgementMatched": true, "FullFrameCorrelated": false
+  },
+  "SourceSummary": {
+    "OriginalStatus": "ExperimentalPacketSuccess; managed craft ended. No final full frame invented.",
+    "TerminalObservation": "ExperimentalPacketSuccess", "ManagedCraftEnded": true,
+    "CorrelatedActions": 17, "MatchedAcknowledgements": 18, "BlockedReason": null,
+    "LastMismatch": null, "NativeLastMismatch": null, "RejectedResults": 0, "PredictionMismatches": 0,
+    "HistoricalSearchesDispatched": 0, "OutstandingTransaction": false, "PreDispatchNativeQueueOccupied": false,
+    "TotalEvents": 183, "DroppedEvents": 119, "NativeLayoutValidated": false, "EvidenceExecutionAuthorized": false
+  }
+}

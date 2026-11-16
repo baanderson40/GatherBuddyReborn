@@ -654,6 +654,14 @@ public class RecipeCraftSettingsPopup
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Use only progress-building actions, no quality steps. Fast NQ crafts.");
 
+            if (ImGui.Selectable("Adaptive (Experimental)", _editingSettings.SolverOverride == SolverOverrideMode.AdaptiveSolver))
+            {
+                _editingSettings.SelectedMacroId = null;
+                _editingSettings.SolverOverride = SolverOverrideMode.AdaptiveSolver;
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Automatically runs Adaptive for each selected craft, including queues. Experimental native integration; no retry or legacy fallback after uncertainty.");
+
             if (allMacros.Count > 0)
             {
                 ImGui.Separator();
@@ -686,6 +694,7 @@ public class RecipeCraftSettingsPopup
             SolverOverrideMode.StandardSolver     => "Standard Solver",
             SolverOverrideMode.RaphaelSolver      => "Raphael Solver",
             SolverOverrideMode.ProgressOnlySolver => "Progress Only",
+            SolverOverrideMode.AdaptiveSolver     => "Adaptive (Experimental)",
             _ when !string.IsNullOrEmpty(macroId) => allMacros.FirstOrDefault(m => m.Id == macroId)?.Name ?? "(Macro Not Found)",
             _                                     => "Default (Use Solver)",
         };

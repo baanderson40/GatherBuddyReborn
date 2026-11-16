@@ -85,6 +85,8 @@ public static class CraftingGameInterop
     private static DateTime _taskManagerIdleSince = DateTime.MinValue;
     private static DateTime _nextActionAllowedAt = DateTime.MinValue;
     private static CraftPreparationFailure? _lastPreparationFailure = null;
+    private static VulcanSolverMode _effectiveSolverMode;
+    private static bool _adaptiveCraftRequired; // Latched before synthesis; stop/configuration cannot enable legacy fallback.
 
 
     public static Vulcan.UserMacroLibrary UserMacroLibrary => _userMacroLibrary ??= new();
@@ -96,6 +98,51 @@ public static class CraftingGameInterop
 
     public static CraftState CurrentState => _currentState;
     public static Recipe? CurrentRecipe => _currentRecipe;
+
+    internal static bool AdaptiveSelected => _effectiveSolverMode == VulcanSolverMode.Adaptive;
+
+    internal static bool CanStartSolver(VulcanSolverMode mode, uint recipeId, string? selectedMacroId,
+        bool quickSynthesis, out string reason)
+    {
+        reason = "";
+        if (quickSynthesis || mode != VulcanSolverMode.Adaptive) return true;
+        return AdaptiveSolverSelection.CanStart(mode, quickSynthesis,
+            AdaptiveLiveDiagnostics.OwnsCraft || AdaptiveLiveDiagnostics.Preparing, !string.IsNullOrEmpty(selectedMacroId)
+                || (UserMacroLibrary.GetMacrosForRecipe(recipeId).Count > 0), out reason);
+    }
+
+    internal static bool TryResolveAdaptiveGoal(Vulcan.Adaptive.AdaptiveCraftSnapshot craft,
+        out Vulcan.Adaptive.AdaptiveCraftGoal? goal, out string source, out string reason)
+    {
+        goal = null;
+        source = "";
+        reason = "Selected macro has no declared quality goal; live trial refuses to override it.";
+        if (!string.IsNullOrEmpty(_currentSelectedMacroId)
+            || CraftingProcessor.SolverDefinitions.Any(definition => definition is UserMacroSolverDefinition)
+                && (_userMacroLibrary?.GetMacrosForRecipe(craft.RecipeId).Count ?? 0) > 0) return false;
+        try
+        {
+            var mode = _effectiveSolverMode switch
+            {
+                VulcanSolverMode.ProgressOnly => Vulcan.Adaptive.AdaptiveLivePolicyMode.ProgressOnly,
+                VulcanSolverMode.StandardSolver => Vulcan.Adaptive.AdaptiveLivePolicyMode.Standard,
+                VulcanSolverMode.PureRaphael => Vulcan.Adaptive.AdaptiveLivePolicyMode.Raphael,
+                VulcanSolverMode.Adaptive => Vulcan.Adaptive.AdaptiveLivePolicyMode.Adaptive,
+                _ => throw new NotSupportedException("Unsupported selected solver policy."),
+            };
+            var config = GatherBuddy.Config.StandardSolverConfig;
+            var policy = new Vulcan.Adaptive.AdaptiveLiveGoalPolicy(mode,
+                mode == Vulcan.Adaptive.AdaptiveLivePolicyMode.Standard ? config.MaxPercentage : 100,
+                mode == Vulcan.Adaptive.AdaptiveLivePolicyMode.Standard ? config.SolverCollectibleMode
+                    : mode == Vulcan.Adaptive.AdaptiveLivePolicyMode.Adaptive ? GatherBuddy.Config.RaphaelSolverConfig.AdaptiveCollectabilityTier : 3);
+            goal = policy.Resolve(craft);
+            source = $"Active per-craft solver policy: {policy}; ingredient override={_currentQualityPolicy?.OverrideMode}; delayMs={GatherBuddy.Config.VulcanExecutionDelayMs}";
+            reason = "Active policy captured; not diagnostic full raw quality.";
+            return true;
+        }
+        catch (Exception error) when (error is ArgumentException or NotSupportedException)
+        { reason = error.Message; return false; }
+    }
 
     public static void Initialize()
     {
@@ -109,6 +156,7 @@ public static class CraftingGameInterop
         CraftingProcessor.RegisterSolver(new Vulcan.UserMacroSolverDefinition(_userMacroLibrary));
         
         var solverMode = GatherBuddy.Config.RaphaelSolverConfig.SolverMode;
+        _effectiveSolverMode = solverMode;
         switch (solverMode)
         {
             case VulcanSolverMode.PureRaphael:
@@ -118,11 +166,15 @@ public static class CraftingGameInterop
                 CraftingProcessor.RegisterSolver(new Vulcan.StandardSolverDefinition());
                 GatherBuddy.Log.Debug($"[CraftingGameInterop] Registered StandardSolver");
                 break;
+            case VulcanSolverMode.Adaptive:
+                CraftingProcessor.UnregisterSolver(new Vulcan.ProgressOnlySolverDefinition());
+                break;
         }
     }
 
     public static void ReloadSolvers()
     {
+        if (AdaptiveLiveDiagnostics.OwnsCraft || AdaptiveLiveDiagnostics.Preparing) AdaptiveLiveDiagnostics.Stop("Solver configuration changed during Adaptive craft preparation/execution.");
         CraftingProcessor.Setup();
         
         // Re-register UserMacro solver first (highest priority)
@@ -132,6 +184,7 @@ public static class CraftingGameInterop
         }
         
         var solverMode = GatherBuddy.Config.RaphaelSolverConfig.SolverMode;
+        _effectiveSolverMode = solverMode;
         switch (solverMode)
         {
             case VulcanSolverMode.PureRaphael:
@@ -141,11 +194,16 @@ public static class CraftingGameInterop
                 CraftingProcessor.RegisterSolver(new Vulcan.StandardSolverDefinition());
                 GatherBuddy.Log.Debug($"[CraftingGameInterop] Reloaded: Registered StandardSolver");
                 break;
+            case VulcanSolverMode.Adaptive:
+                CraftingProcessor.UnregisterSolver(new Vulcan.ProgressOnlySolverDefinition());
+                break;
         }
     }
 
     public static void ReloadSolversForCraft(VulcanSolverMode mode, bool registerUserMacroSolver = true)
     {
+        if (AdaptiveLiveDiagnostics.OwnsCraft || AdaptiveLiveDiagnostics.Preparing) AdaptiveLiveDiagnostics.Stop("Per-craft solver configuration changed during Adaptive craft preparation/execution.");
+        _effectiveSolverMode = mode;
         GatherBuddy.Log.Debug($"[CraftingGameInterop] ReloadSolversForCraft: {mode}");
         CraftingProcessor.Setup();
         if (registerUserMacroSolver && _userMacroLibrary != null)
@@ -165,6 +223,9 @@ public static class CraftingGameInterop
                 CraftingProcessor.RegisterSolver(new Vulcan.StandardSolverDefinition());
                 GatherBuddy.Log.Debug($"[CraftingGameInterop] Registered StandardSolver");
                 break;
+            case VulcanSolverMode.Adaptive:
+                CraftingProcessor.UnregisterSolver(new Vulcan.ProgressOnlySolverDefinition());
+                break;
         }
     }
 
@@ -173,6 +234,9 @@ public static class CraftingGameInterop
         _pendingHomeTravel?.Cancel();
         _pendingHomeTravel = null;
         _pendingHomeCraft = null;
+        AdaptiveLiveDiagnostics.Shutdown();
+        AdaptiveShadowDiagnostics.Shutdown();
+        _adaptiveCraftRequired = false;
         _currentRecipe = null;
         _currentRecipeId = null;
         _currentState = CraftState.IdleNormal;
@@ -187,6 +251,7 @@ public static class CraftingGameInterop
 
     public static void SetIngredientPreferences(Dictionary<uint, int>? preferences, bool useAllNQ = false)
     {
+        if (AdaptiveLiveDiagnostics.OwnsCraft || AdaptiveLiveDiagnostics.Preparing) AdaptiveLiveDiagnostics.Stop("Ingredient policy changed during Adaptive craft preparation/execution.");
         _currentIngredientPreferences = preferences;
         _currentUseAllNQ = useAllNQ;
         _currentQualityPolicy = null;
@@ -194,6 +259,7 @@ public static class CraftingGameInterop
 
     public static void SetQualityPolicy(CraftingQualityPolicy? qualityPolicy)
     {
+        if (AdaptiveLiveDiagnostics.OwnsCraft || AdaptiveLiveDiagnostics.Preparing) AdaptiveLiveDiagnostics.Stop("Quality policy changed during Adaptive craft preparation/execution.");
         _currentQualityPolicy = qualityPolicy;
         _currentIngredientPreferences = qualityPolicy?.BuildGuaranteedHQPreferences();
         _currentUseAllNQ = false;
@@ -201,12 +267,20 @@ public static class CraftingGameInterop
     
     public static void SetSelectedMacro(string? macroId)
     {
+        if (AdaptiveLiveDiagnostics.OwnsCraft || AdaptiveLiveDiagnostics.Preparing) AdaptiveLiveDiagnostics.Stop("Macro selection changed during Adaptive craft preparation/execution.");
         _currentSelectedMacroId = macroId;
     }
     
     public static string? GetSelectedMacro()
     {
         return _currentSelectedMacroId;
+    }
+
+    internal static bool TryGetAdaptiveExpectedInitialQuality(Recipe recipe, out int quality)
+    {
+        var policy = GetActiveQualityPolicy();
+        quality = policy?.CalculateGuaranteedInitialQuality(recipe) ?? 0;
+        return policy != null; // A solve estimate, never a reported native observation.
     }
 
     public static bool TryConsumePreparationFailure(out CraftPreparationFailure failure)
@@ -227,6 +301,10 @@ public static class CraftingGameInterop
         _pendingHomeTravel?.Cancel();
         _pendingHomeTravel = null;
         _pendingHomeCraft = null;
+        AdaptiveLiveDiagnostics.Stop("Managed crafting cancelled; no fallback.");
+        AdaptiveLiveDiagnostics.End(false);
+        _adaptiveCraftRequired = false;
+        AdaptiveShadowDiagnostics.EndCraft("Managed crafting cancelled; shadow session revoked.");
         var previousState = _currentState;
         GatherBuddy.AutoGather?.TaskManager.Abort();
         ResetQuickSynthesisState();
@@ -264,6 +342,12 @@ public static class CraftingGameInterop
         if (GatherBuddy.AutoRetainerIntegration?.Coordinator.YieldRequested == true) return;
         if (recipe.RowId == 0)
             return;
+        if (!CanStartSolver(_effectiveSolverMode, recipe.RowId, _currentSelectedMacroId, useQuickSynthesis, out var solverReason))
+        {
+            AdaptiveLiveDiagnostics.Stop(solverReason, recipe.RowId);
+            GatherBuddy.Log.Warning($"[Crafting] {solverReason}");
+            return;
+        }
         if (_pendingHomeCraft != null) return;
         if (!homeTravelHandled && GatherBuddy.Config.AutoGatherConfig.GoHomeWhenIdle)
         {
@@ -279,11 +363,17 @@ public static class CraftingGameInterop
         _currentState = CraftState.PreparingCraft;
         _taskManagerIdleSince = DateTime.MinValue;
         _lastPreparationFailure = null;
+        _adaptiveCraftRequired = !useQuickSynthesis && AdaptiveSelected;
         GatherBuddy.Log.Debug($"[Crafting] StartCraft - entering PreparingCraft state (QuickSynth={useQuickSynthesis})");
         
         var tm = GatherBuddy.AutoGather?.TaskManager;
         if (tm == null)
             return;
+
+        var preparation = _adaptiveCraftRequired ? AdaptiveLiveDiagnostics.BeginSeedPreparation(recipe.RowId) : default;
+        if (_adaptiveCraftRequired)
+            tm.Enqueue(() => AdaptiveLiveDiagnostics.PrepareCaptureForCraft(preparation, recipe.RowId),
+                AdaptiveLiveDiagnostics.PreparationTimeoutMs + 30_000, true, "PrepareAdaptiveCapture");
         
         tm.Enqueue(() => OpenRecipe(recipe.RowId), 3000, "OpenRecipe");
         tm.Enqueue(() => WaitForRecipeOpen(), 3000, true, "WaitForRecipeOpen");
@@ -297,7 +387,13 @@ public static class CraftingGameInterop
         {
             tm.DelayNext(1500);
             tm.Enqueue(() => WaitForIngredientsAssigned(), 3000, true, "WaitForIngredientsAssigned");
-            tm.Enqueue(() => ExecuteCraft(), 3000, "ExecuteCraft");
+            if (_adaptiveCraftRequired)
+            {
+                tm.Enqueue(() => WaitForAdaptiveSeed(preparation, recipe), AdaptiveLiveDiagnostics.PreparationTimeoutMs + 30_000,
+                    true, "PrepareAdaptiveSeed");
+                tm.Enqueue(() => ExecuteAdaptivePreparedCraft(preparation, recipe), 3000, "ExecuteAdaptivePreparedCraft");
+            }
+            else tm.Enqueue(() => ExecuteCraft(), 3000, "ExecuteCraft");
         }
         
         GatherBuddy.Log.Information($"[Crafting] Starting craft of {recipe.ItemResult.Value.Name.ExtractText()} (qty: {quantity}, QuickSynth={useQuickSynthesis})");
@@ -770,8 +866,34 @@ public static class CraftingGameInterop
         }
     }
 
+    private static unsafe bool? WaitForAdaptiveSeed(Guid ticket, Recipe recipe)
+    {
+        if (!Dalamud.Framework.IsInFrameworkUpdateThread) return null;
+        if (!AdaptiveLiveDiagnostics.IsSeedPreparationCurrent(ticket, recipe.RowId)) return null;
+        if (_currentRecipeId != recipe.RowId) return null;
+        var note = FFXIVClientStructs.FFXIV.Client.Game.UI.RecipeNote.Instance();
+        if (note == null || note->RecipeList == null || note->RecipeList->SelectedRecipe == null) return false;
+        if (note->RecipeList->SelectedRecipe->RecipeId != recipe.RowId)
+        {
+            AdaptiveLiveDiagnostics.Stop("Selected recipe changed during Adaptive preparation; synthesis not sent.");
+            return null;
+        }
+        return AdaptiveLiveDiagnostics.PrepareSeed(ticket, recipe);
+    }
+
+    private static bool? ExecuteAdaptivePreparedCraft(Guid ticket, Recipe recipe)
+    {
+        var ready = WaitForAdaptiveSeed(ticket, recipe); // Recheck ticket, pause and context immediately before synthesis.
+        return ready == true ? ExecuteCraft() : ready;
+    }
+
     private static unsafe bool ExecuteCraft()
     {
+        if (_adaptiveCraftRequired && (!AdaptiveSelected || !AdaptiveLiveDiagnostics.CaptureReady))
+        {
+            AdaptiveLiveDiagnostics.Stop("Adaptive startup stopped or unavailable before synthesis; no fallback or synthesis sent.");
+            return false;
+        }
         try
         {
             var addon = Dalamud.GameGui.GetAddonByName("RecipeNote");
@@ -1006,9 +1128,11 @@ public static class CraftingGameInterop
 
     private static async void ExecuteSolverRecommendation(Vulcan.CraftState craft, Vulcan.StepState step, Solver.Recommendation recommendation)
     {
+        if (AdaptiveLiveDiagnostics.OwnsCraft) return;
         if (_actionExecutor == null || recommendation.Action == VulcanSkill.None)
             return;
 
+        var shadowRequest = default(Vulcan.Adaptive.AdaptiveShadowRequest);
         try
         {
             var canExecute = _actionExecutor.CanExecuteAction(recommendation.Action, craft, step);
@@ -1018,7 +1142,9 @@ public static class CraftingGameInterop
                 return;
             }
 
+            shadowRequest = AdaptiveShadowDiagnostics.RecordRequest(recommendation.Action);
             var success = await _actionExecutor.TryExecuteActionAsync(recommendation.Action);
+            AdaptiveShadowDiagnostics.ReportRequest(shadowRequest, success);
             if (!success)
             {
                 GatherBuddy.Log.Debug($"[Crafting] Solver recommendation {recommendation.Action} failed to execute after passing pre-check");
@@ -1033,6 +1159,7 @@ public static class CraftingGameInterop
         }
         catch (Exception ex)
         {
+            AdaptiveShadowDiagnostics.ReportRequest(shadowRequest, false);
             GatherBuddy.Log.Error($"[Crafting] Error executing solver action: {ex.Message}");
         }
     }
@@ -1449,6 +1576,12 @@ public static class CraftingGameInterop
         CraftStarted?.Invoke(recipe, _currentRecipeId.Value);
 
         var actualRecipe = recipe.Value;
+        if (AdaptiveLiveDiagnostics.TryBegin(actualRecipe, _adaptiveCraftRequired || _effectiveSolverMode == VulcanSolverMode.Adaptive))
+        {
+            CraftingProcessor.Dispose(); // Trial never starts legacy executor or requests a mid-craft Raphael solve.
+            _nextActionAllowedAt = DateTime.MinValue;
+            return CraftState.InProgress;
+        }
         GatherBuddy.Log.Debug($"[Crafting] Building craft state for recipe {_currentRecipeId}");
         _vulcanCraftState = CraftingStateBuilder.BuildCraftState(actualRecipe);
         var qualityPolicy = GetActiveQualityPolicy();
@@ -1471,6 +1604,7 @@ public static class CraftingGameInterop
             : null;
         if (_vulcanCraftState != null && _vulcanStepState != null)
         {
+            AdaptiveShadowDiagnostics.BeginCraft(actualRecipe, _vulcanCraftState);
             CraftingProcessor.OnCraftStarted(_vulcanCraftState, _vulcanStepState, _currentRecipeId.Value, false);
             var recommendation = CraftingProcessor.NextRecommendation;
             GatherBuddy.Log.Debug($"[Crafting] OnCraftStarted recommendation: {recommendation.Action}");
@@ -1485,6 +1619,14 @@ public static class CraftingGameInterop
 
     private static CraftState TransitionFromInProgress()
     {
+        if (AdaptiveLiveDiagnostics.OwnsCraft)
+        {
+            if (!Dalamud.Conditions[ConditionFlag.Crafting])
+                return Finish(cancelled: !AdaptiveLiveDiagnostics.HasTerminal);
+            if (AdaptiveLiveDiagnostics.HasTerminal) return CraftState.WaitFinish;
+            AdaptiveLiveDiagnostics.DispatchIfReady();
+            return CraftState.InProgress; // Stopped trials retain ownership; never enter legacy fallback.
+        }
         if (!Dalamud.Conditions[ConditionFlag.Crafting])
             return Finish(cancelled: true);
 
@@ -1591,6 +1733,9 @@ public static class CraftingGameInterop
 
     private static unsafe CraftState Finish(bool cancelled)
     {
+        AdaptiveLiveDiagnostics.End(true);
+        _adaptiveCraftRequired = false;
+        AdaptiveShadowDiagnostics.EndCraft(cancelled ? "Managed craft cancelled." : "Managed craft finished; inspect trace for observed terminal outcome.", managedCraftEnded: true);
         _nextActionAllowedAt = DateTime.MinValue;
         _lastPreparationFailure = null;
 

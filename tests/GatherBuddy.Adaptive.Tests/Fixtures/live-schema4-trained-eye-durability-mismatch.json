@@ -1,0 +1,23 @@
+{
+  "Evidence": "Compact projection of supplied recipe5282 failure, not a successful post-fix native trial. Original model expected durability30; actual native Trained Eye packet reports40. Only initial full frame and first acknowledgement retained here. No post-action CP/status/full frame or terminal outcome was supplied. AR yield log followed startup by about40 seconds; no AR causation inferred.",
+  "DecisionSessionId": "ecb7dbab-e2b8-4749-8731-3960367c9e1f",
+  "ConfirmationSessionId": "6e43e3dc-384c-4ca9-a623-5336d83245fa",
+  "Craft": {
+    "GoodQualityPercent": 175,
+    "Tool": { "MainHandItemId": 51785, "JobId": 15, "GoodQualityPercent": 175, "DetectionSource": "English Item.Description: exact audited 1.75x effect template; other effect channels empty" },
+    "RecipeId": 5282, "Craftsmanship": 5953, "Control": 5490, "MaxCP": 664,
+    "Level": 100, "RecipeLevel": 81, "MaxDurability": 40, "RequiredProgress": 1000,
+    "MaxQuality": 5200, "RequiredQuality": 0, "ProgressDivider": 121, "ProgressModifier": 100,
+    "QualityDivider": 105, "QualityModifier": 100,
+    "CanHQ": true, "Collectable": false, "ManipulationUnlocked": true
+  },
+  "Initial": { "StepIndex": 1, "Progress": 0, "Quality": 0, "Durability": 40, "CP": 664, "Condition": 0 },
+  "Plan": [100283, 100403],
+  "NativeActionId": 100290,
+  "NativeContext": { "Stream": 1, "RecipeId": 5282, "StartingQuality": 0, "Sequence": 3 },
+  "Packet": { "Stream": 1, "Sequence": 4, "Operation": 9, "RecipeId": 5282, "StartingQuality": 0, "ActionId": 100290, "StepIndex": 2, "Progress": 0, "Quality": 5200, "Durability": 40, "ConditionPlusOne": 1, "Flags": 19 },
+  "OriginalExpectedDurability": 30,
+  "OriginalDifferences": ["Durability"],
+  "ManagedCraftEnded": false,
+  "TerminalObservation": "Unobserved"
+}

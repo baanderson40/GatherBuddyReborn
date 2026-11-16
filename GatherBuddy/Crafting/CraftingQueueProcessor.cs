@@ -427,7 +427,8 @@ public partial class CraftingQueueProcessor
             if (currentRecipe != null)
             {
                 var executionContext = CraftingContextResolver.ResolveExecutionContext(currentItem, currentRecipe.Value, _listConsumables);
-                if (_raphaelCoordinator == null || !CraftingContextResolver.UsesRaphaelSolver(executionContext))
+                if (_raphaelCoordinator == null || !CraftingContextResolver.UsesRaphaelSolver(executionContext)
+                    || (executionContext.EffectiveSolverMode == VulcanSolverMode.Adaptive && !executionContext.UseQuickSynthesis))
                 {
                     _currentState = QueueState.ReadyForCraft;
                     StateChanged?.Invoke(_currentState);
@@ -501,6 +502,12 @@ public partial class CraftingQueueProcessor
 
         var recipeItem = QueueItems[_currentQueueIndex];
 
+        if (UsesAdaptiveSeedPreparation(recipeItem))
+        {
+            _currentState = QueueState.ReadyForCraft;
+            StateChanged?.Invoke(_currentState);
+            return;
+        }
         if (IsRaphaelSolutionReady(recipeItem))
         {
             GatherBuddy.Log.Information($"[CraftingQueueProcessor] Raphael solution ready for recipe {recipeItem.RecipeId}");
@@ -541,6 +548,7 @@ public partial class CraftingQueueProcessor
 
     private bool EnsureRaphaelSolutionReadyForCurrentCraft(CraftingListItem recipeItem, Recipe recipe, CraftingExecutionContext executionContext)
     {
+        if (executionContext.EffectiveSolverMode == VulcanSolverMode.Adaptive && !executionContext.UseQuickSynthesis) return true;
         if (_raphaelCoordinator == null || !CraftingContextResolver.UsesRaphaelSolver(executionContext))
             return true;
 
@@ -576,6 +584,14 @@ public partial class CraftingQueueProcessor
         _currentState = QueueState.WaitingForRaphaelSolution;
         StateChanged?.Invoke(_currentState);
         return false;
+    }
+
+    private bool UsesAdaptiveSeedPreparation(CraftingListItem item)
+    {
+        var recipe = RecipeManager.GetRecipe(item.RecipeId);
+        if (!recipe.HasValue) return false;
+        var context = CraftingContextResolver.ResolveExecutionContext(item, recipe.Value, _listConsumables);
+        return context.EffectiveSolverMode == VulcanSolverMode.Adaptive && !context.UseQuickSynthesis;
     }
 
     private unsafe void StartNextCraft()
@@ -633,6 +649,12 @@ public partial class CraftingQueueProcessor
         }
 
         var executionContext = CraftingContextResolver.ResolveExecutionContext(recipeItem, recipe.Value, _listConsumables);
+        if (!CraftingGameInterop.CanStartSolver(executionContext.EffectiveSolverMode, recipe.Value.RowId,
+                executionContext.SelectedMacroId, executionContext.UseQuickSynthesis, out var solverReason))
+        {
+            Pause(solverReason); // Retain queue intent on ownership/macro conflict.
+            return;
+        }
         if (!RevalidateCurrentCraft(recipeItem, recipe.Value)) return;
         var consumableSettings = executionContext.ConsumableSettings;
         if (consumableSettings != null)

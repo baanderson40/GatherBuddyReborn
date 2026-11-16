@@ -54,6 +54,10 @@ public static class CraftingTimeEstimator
             return DefaultActionCount;
 
         var resolvedExecutionContext = executionContext ?? CraftingContextResolver.ResolveExecutionContext(item, recipe.Value, listConsumables);
+        // Adaptive routes depend on actual confirmed roots. Do not present a macro or
+        // run native/worker startup as an estimate; retain the generic estimate.
+        if (resolvedExecutionContext.EffectiveSolverMode == VulcanSolverMode.Adaptive)
+            return DefaultActionCount;
         if (!CraftingContextResolver.TryBuildSimulationContext(recipe.Value, resolvedExecutionContext, CraftingStatsSource.PreferCurrentJobStats, out var simulationContext))
             return DefaultActionCount;
 

@@ -1,0 +1,14 @@
+{
+  "RecipeId": 35829,
+  "ItemId": 44232,
+  "MaximumQuality": 12000,
+  "Source": "CollectablesShopItem/30/27; CollectablesShopRefine/187",
+  "LowRating": 660,
+  "MidRating": 900,
+  "HighRating": 1140,
+  "Schema": "exdschema@2:rev:e773c41a90aed788cf4c1c48469fa85618ef01fb",
+  "Version": "a72e645591e5bf8b",
+  "RecipeUrl": "https://v2.xivapi.com/api/sheet/Recipe/35829?fields=ItemResult,RecipeLevelTable,QualityFactor,DifficultyFactor,DurabilityFactor",
+  "RewardUrl": "https://v2.xivapi.com/api/search?sheets=CollectablesShopItem&query=Item=44232&fields=Item.Name,CollectablesShopRefine.LowCollectability,CollectablesShopRefine.MidCollectability,CollectablesShopRefine.HighCollectability",
+  "Usage": "Frozen external game-data evidence; not native execution evidence or runtime lookup."
+}

@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" PrivateAssets="all" />
+  </ItemGroup>
+  <!-- Compile the actual game-independent production sources, not test doubles. -->
+  <ItemGroup>
+    <Compile Include="../../GatherBuddy/Vulcan/Vulcan.State.cs" Link="Production/State.cs" />
+    <Compile Include="../../GatherBuddy/Vulcan/Vulcan.Skills.cs" Link="Production/Skills.cs" />
+    <Compile Include="../../GatherBuddy/Vulcan/Vulcan.Condition.cs" Link="Production/Condition.cs" />
+    <Compile Include="../../GatherBuddy/Vulcan/Vulcan.Calculations.cs" Link="Production/Calculations.cs" />
+    <Compile Include="../../GatherBuddy/Vulcan/Vulcan.Simulator.cs" Link="Production/Simulator.cs" />
+    <Compile Include="../../GatherBuddy/Vulcan/Adaptive/*.cs" Link="Production/Adaptive/%(Filename)%(Extension)" />
+    <Compile Include="../../GatherBuddy/Crafting/AdaptiveSolveCoordinator.cs" Link="Production/AdaptiveSolveCoordinator.cs" />
+    <Compile Include="../../GatherBuddy/Crafting/AdaptiveLiveTrial.cs" Link="Production/AdaptiveLiveTrial.cs" />
+    <Compile Include="../../GatherBuddy/Crafting/AdaptiveShadowSession.cs" Link="Production/AdaptiveShadowSession.cs" />
+    <Compile Include="../../GatherBuddy/Crafting/AdaptiveShadowAnalysisRunner.cs" Link="Production/AdaptiveShadowAnalysisRunner.cs" />
+    <Compile Include="../../GatherBuddy/Crafting/AdaptiveSeedTracker.cs" Link="Production/AdaptiveSeedTracker.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="Fixtures/collectable-tacos.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fixtures/raphael-reference.jsonl" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fixtures/tool-effects.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fixtures/native-schema5-seeded-all-nq.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fixtures/native-schema6-poor-terminal.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fixtures/native-schema6-normal-terminal.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fixtures/live-schema2-groundwork-success.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fixtures/live-schema3-manipulation-success.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fixtures/live-schema4-root-history-success.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fixtures/live-schema4-seeded-cache-success.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fixtures/live-schema4-trained-eye-durability-mismatch.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fixtures/raphael-three-way-macros.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../tools/raphael-dependency.json" Link="Fixtures/raphael-dependency.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

@@ -19,6 +19,7 @@ public class RaphaelSolveCoordinator
 {
     private readonly RaphaelSolveCoordinatorConfig _config;
     private readonly ConcurrentDictionary<string, CachedRaphaelSolution> _cachedSolutions = new();
+    private readonly RaphaelAdaptiveSeedCache _adaptiveSeeds = new();
     private readonly ConcurrentDictionary<string, SolveTask> _inProgressTasks = new();
     private readonly object _queueLock = new();
     private Queue<RaphaelSolveRequest> _urgentQueue = new();
@@ -131,7 +132,8 @@ public class RaphaelSolveCoordinator
             {
                 if (solution.IsFailed || solution.GeneratedAt < cutoff)
                     continue;
-                _cachedSolutions.TryAdd(solution.Key, solution);
+                if (_cachedSolutions.TryAdd(solution.Key, solution))
+                    _adaptiveSeeds.Publish(solution, solution.ActionIds);
                 loaded++;
             }
 
@@ -333,6 +335,12 @@ public class RaphaelSolveCoordinator
         return false;
     }
 
+    public bool TryGetAdaptiveSeed(RaphaelSolveRequest request, out global::GatherBuddy.Vulcan.Adaptive.AdaptivePlanSeed? seed, out string reason)
+    {
+        _cachedSolutions.TryGetValue(request.GetKey(), out var current);
+        return _adaptiveSeeds.TryGet(request, current, out seed, out reason);
+    }
+
     public IEnumerable<CachedRaphaelSolution> GetAllCachedSolutions()
     {
         return _cachedSolutions.Values.Where(s => !s.IsFailed).ToList();
@@ -372,6 +380,7 @@ public class RaphaelSolveCoordinator
             return;
         GatherBuddy.Log.Debug($"[RaphaelSolveCoordinator] Auto-clearing solution cache on queue start ({_cachedSolutions.Count} solutions)");
         _cachedSolutions.Clear();
+        _adaptiveSeeds.Clear();
     }
 
     public void ReenqueueIfMissing(RaphaelSolveRequest request)
@@ -386,6 +395,7 @@ public class RaphaelSolveCoordinator
     {
         CancelAllPendingSolves();
         _cachedSolutions.Clear();
+        _adaptiveSeeds.Clear();
         Save();
     }
 
@@ -420,6 +430,7 @@ public class RaphaelSolveCoordinator
         var key = request.GetKey();
         if (_cachedSolutions.TryRemove(key, out _))
         {
+            _adaptiveSeeds.Remove(key);
             Save();
             return true;
         }
@@ -718,7 +729,8 @@ public class RaphaelSolveCoordinator
                 return;
             }
 
-        cacheEntry.ActionIds = actionIds;
+            cacheEntry.ActionIds = actionIds;
+            _adaptiveSeeds.Publish(cacheEntry, actionIds);
             _cachedSolutions[key] = cacheEntry;
             GatherBuddy.Log.Information($"[RaphaelSolveCoordinator] SUCCESS: Raphael solved recipe {request.RecipeId} with {actionIds.Count} actions");
             Save();

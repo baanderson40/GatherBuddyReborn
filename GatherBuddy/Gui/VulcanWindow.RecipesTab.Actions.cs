@@ -74,6 +74,13 @@ public partial class VulcanWindow
             CraftSettings = settings?.Clone(),
         };
         var executionContext = CraftingContextResolver.ResolveExecutionContext(item, recipe, null);
+        if (!CraftingGameInterop.CanStartSolver(executionContext.EffectiveSolverMode, recipe.RowId,
+                executionContext.SelectedMacroId, false, out var solverReason))
+        {
+            AdaptiveLiveDiagnostics.Stop(solverReason, recipe.RowId);
+            GatherBuddy.Log.Warning($"[VulcanWindow] {solverReason}");
+            return;
+        }
         var qualityPolicy = executionContext.QualityPolicy;
         if (settings != null && settings.HasAnySettings())
         {

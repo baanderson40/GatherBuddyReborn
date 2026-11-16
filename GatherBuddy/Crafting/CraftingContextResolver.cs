@@ -50,13 +50,7 @@ public static class CraftingContextResolver
         var craftSolverOverride = forceProgressOnlyUnlockCraft
             ? SolverOverrideMode.ProgressOnlySolver
             : item.CraftSettings?.SolverOverride ?? SolverOverrideMode.Default;
-        var effectiveSolverMode = craftSolverOverride switch
-        {
-            SolverOverrideMode.StandardSolver => VulcanSolverMode.StandardSolver,
-            SolverOverrideMode.RaphaelSolver => VulcanSolverMode.PureRaphael,
-            SolverOverrideMode.ProgressOnlySolver => VulcanSolverMode.ProgressOnly,
-            _ => GatherBuddy.Config.RaphaelSolverConfig.SolverMode,
-        };
+        var effectiveSolverMode = AdaptiveSolverSelection.ResolveMode(GatherBuddy.Config.RaphaelSolverConfig.SolverMode, craftSolverOverride);
         var selectedMacroId = forceProgressOnlyUnlockCraft ? null : item.CraftSettings?.SelectedMacroId;
         return new(
             consumableSettings,

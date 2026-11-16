@@ -26,6 +26,7 @@ public partial class VulcanWindow
         Macros,
         StandardSolver,
         Raphael,
+        AdaptiveSolver,
     }
 
     private SettingsSection _selectedSettingsSection = SettingsSection.General;
@@ -70,6 +71,7 @@ public partial class VulcanWindow
                 DrawSettingsSectionLink(SettingsSection.Macros);
                 DrawSettingsSectionLink(SettingsSection.StandardSolver);
                 DrawSettingsSectionLink(SettingsSection.Raphael);
+                DrawSettingsSectionLink(SettingsSection.AdaptiveSolver);
             }
         }
         finally
@@ -118,6 +120,9 @@ public partial class VulcanWindow
                 case SettingsSection.AutoRetainer:
                     AutoRetainerSettingsUi.Draw();
                     break;
+                case SettingsSection.AdaptiveSolver:
+                    DrawAdaptiveSolverSettings();
+                    break;
             }
         }
         finally
@@ -143,6 +148,7 @@ public partial class VulcanWindow
         SettingsSection.Macros => "Macros",
         SettingsSection.StandardSolver => "Standard Solver",
         SettingsSection.Raphael => "Raphael Solver",
+        SettingsSection.AdaptiveSolver => "Adaptive Solver",
         _ => "Unknown",
     };
 
@@ -151,9 +157,9 @@ public partial class VulcanWindow
         var raphaelConfig = GatherBuddy.Config.RaphaelSolverConfig;
 
         var currentMode = raphaelConfig.SolverMode;
-        var modeNames = new[] { "Pure Raphael", "Standard Solver", "Progress Only" };
+        var modeNames = new[] { "Pure Raphael", "Standard Solver", "Progress Only", "Adaptive (Experimental)" };
         var safeModeIndex = Math.Clamp((int)currentMode, 0, modeNames.Length - 1);
-        ImGui.SetNextItemWidth(VulcanUiScaling.Scaled(150f));
+        ImGui.SetNextItemWidth(VulcanUiScaling.Scaled(220f));
         if (ImGui.BeginCombo("Solver Mode###SolverMode", modeNames[safeModeIndex]))
         {
             if (ImGui.Selectable("Pure Raphael", currentMode == VulcanSolverMode.PureRaphael))
@@ -197,6 +203,14 @@ public partial class VulcanWindow
                 ImGui.TextUnformatted("Fastest execution, no quality output");
                 ImGui.EndTooltip();
             }
+            if (ImGui.Selectable("Adaptive (Experimental)", currentMode == VulcanSolverMode.Adaptive))
+            {
+                raphaelConfig.SolverMode = VulcanSolverMode.Adaptive;
+                GatherBuddy.Config.Save();
+                CraftingGameInterop.ReloadSolvers();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Bounded replanning from confirmed native outcomes. Selecting Adaptive authorizes execution, including queues. Automatically prepares capture and a Raphael seed before each craft; no legacy fallback.");
             ImGui.EndCombo();
         }
 

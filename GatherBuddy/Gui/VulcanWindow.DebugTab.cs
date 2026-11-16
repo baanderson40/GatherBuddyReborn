@@ -22,6 +22,7 @@ public partial class VulcanWindow
         Materia,
         Gearsets,
         Gamepad,
+        AdaptiveShadow,
     }
 
 #if DEBUG
@@ -53,6 +54,7 @@ public partial class VulcanWindow
                 DrawDebugSectionLink(DebugSection.Materia);
                 DrawDebugSectionLink(DebugSection.Gearsets);
                 DrawDebugSectionLink(DebugSection.Gamepad);
+                DrawDebugSectionLink(DebugSection.AdaptiveShadow);
             }
         }
         finally
@@ -92,6 +94,9 @@ public partial class VulcanWindow
                 case DebugSection.Gamepad:
                     DrawGamepadInputTest();
                     break;
+                case DebugSection.AdaptiveShadow:
+                    DrawAdaptiveShadowDebug();
+                    break;
             }
         }
         finally
@@ -115,6 +120,7 @@ public partial class VulcanWindow
         DebugSection.Materia => "Materia Extraction",
         DebugSection.Gearsets => "Gearset Stats",
         DebugSection.Gamepad => "Gamepad Input",
+        DebugSection.AdaptiveShadow => "Adaptive Shadow",
         _ => "Unknown",
     };
 

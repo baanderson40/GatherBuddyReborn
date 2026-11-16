@@ -126,7 +126,7 @@ public static GameStateBuilder.PlayerStats GetCurrentPlayerStats()
         }
     }
 
-    private static bool GetManipulationUnlocked(uint jobId)
+    internal static bool GetManipulationUnlocked(uint jobId)
     {
         try
         {

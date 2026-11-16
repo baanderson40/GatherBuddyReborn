@@ -1,0 +1,32 @@
+{
+  "Evidence": "Fresh local pinned Windows CLI solves on 2026-11-15; single thread; 300-second external timeout per recipe; no specialist/backload/adversarial/food/potion; zero initial quality; no game execution. Full-quality objective permits subtarget completion per CLI defaults. Elapsed includes process startup and is not a statistical timing benchmark. FinalQuality preserves uncapped CLI output; comparison must clamp to the recipe maximum. Original two-second Rust reference corpus is unchanged.",
+  "SourceCommit": "5dc5c4efd756391225617b901b3ec2d7c0fabd9e",
+  "CliVersion": "0.2.2",
+  "CliSha256": "e475ec83f743720b07ac519de7b05584a1bc7258f6f1f415fb722665d7530edb",
+  "Runs": [
+    {
+      "Key": "recipe-34890-level-90-durability-35",
+      "Arguments": ["solve","--recipe-id","34890","--level","90","--stats","3400","3300","540","--manipulation","--initial-quality","0","--threads","1","--output-variables","action_ids","final_quality","duration","steps"],
+      "ElapsedSeconds": 2.8186573519997182,
+      "ExitCode": 0,
+      "Actions": [100387,4574,100227,100427,100227,19004,100227,100002,100004,100411,4574,19004,100010,100411,260,100339,19297,100403,100427,100427,100001],
+      "FinalQuality": 7653, "Duration": 57, "Steps": 21
+    },
+    {
+      "Key": "recipe-35907-level-100-durability-35",
+      "Arguments": ["solve","--recipe-id","35907","--level","100","--stats","4900","4800","620","--manipulation","--initial-quality","0","--threads","1","--output-variables","action_ids","final_quality","duration","steps"],
+      "ElapsedSeconds": 6.664017422001052,
+      "ExitCode": 0,
+      "Actions": [100387,4574,19297,100203,19004,100323,100323,100002,100004,100475,4574,19297,100403,19004,100323,100002,100004,100411,19004,100435,100435,260,100339,100001],
+      "FinalQuality": 12036, "Duration": 64, "Steps": 24
+    },
+    {
+      "Key": "recipe-5618-level-100-durability-80",
+      "Arguments": ["solve","--recipe-id","5618","--level","100","--stats","4900","4800","620","--manipulation","--initial-quality","0","--threads","1","--output-variables","action_ids","final_quality","duration","steps"],
+      "ElapsedSeconds": 18.222153082999284,
+      "ExitCode": 0,
+      "Actions": [100387,100323,19004,4631,100299,100299,100299,100203,100475,260,19004,100299,100323,260,100339,100467,19297,100403,100403,100403,100403],
+      "FinalQuality": 12022, "Duration": 57, "Steps": 21
+    }
+  ]
+}

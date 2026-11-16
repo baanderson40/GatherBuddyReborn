@@ -15,28 +15,38 @@ public static class Simulator
         {
             if (!CanUseAction(craft, step, action))
                 return (ExecuteResult.CantUse, step);
+            var next = new StepState();
+            var result = ExecuteInto(craft, step, action, actionSuccessRoll, nextStateRoll, next);
+            return (result, result == ExecuteResult.CantUse ? step : next);
+        }
 
+        // Same arithmetic as Execute, with caller-owned distinct scratch storage. No formulas are
+        // duplicated in Adaptive. Every destination field must be assigned, including failed actions.
+        internal static ExecuteResult ExecuteInto(CraftState craft, StepState step, VulcanSkill action,
+            float actionSuccessRoll, float nextStateRoll, StepState next)
+        {
+            if (ReferenceEquals(step, next)) throw new ArgumentException("Simulator input and output must be distinct.");
+            if (!CanUseAction(craft, step, action)) return ExecuteResult.CantUse;
             var success = actionSuccessRoll < GetSuccessRate(step, action);
 
-            var next = new StepState();
             next.Index = SkipUpdates(action) ? step.Index : step.Index + 1;
             next.Progress = step.Progress + (success ? CalculateProgress(craft, step, action) : 0);
             next.Quality = step.Quality + (success ? CalculateQuality(craft, step, action) : 0);
             next.IQStacks = step.IQStacks;
+            next.ExpedienceLeft = action == VulcanSkill.QuickInnovation ? step.ExpedienceLeft : 0;
             if (success)
             {
-                if (next.Quality != step.Quality)
+                if (craft.StatLevel >= 11 && next.Quality != step.Quality)
                     ++next.IQStacks;
-                if (action is VulcanSkill.PreciseTouch or VulcanSkill.PreparatoryTouch or VulcanSkill.Reflect or VulcanSkill.RefinedTouch)
+                if (action is VulcanSkill.PreciseTouch or VulcanSkill.PreparatoryTouch or VulcanSkill.Reflect
+                    || action == VulcanSkill.RefinedTouch && step.PrevComboAction == VulcanSkill.BasicTouch)
                     ++next.IQStacks;
                 if (next.IQStacks > 10)
                     next.IQStacks = 10;
                 if (action == VulcanSkill.ByregotsBlessing)
                     next.IQStacks = 0;
-                if (action == VulcanSkill.HastyTouch)
+                if (action == VulcanSkill.HastyTouch && craft.StatLevel >= 96)
                     next.ExpedienceLeft = 1;
-                else
-                    next.ExpedienceLeft = 0;
             }
 
             next.WasteNotLeft = action switch
@@ -84,9 +94,10 @@ public static class Simulator
                 next.Durability = Math.Min(craft.CraftDurability, next.Durability + repair);
             }
 
-            next.Condition = action is VulcanSkill.FinalAppraisal or VulcanSkill.HeartAndSoul ? step.Condition : GetNextCondition(craft, step, nextStateRoll);
+            next.Condition = action is VulcanSkill.FinalAppraisal or VulcanSkill.HeartAndSoul or VulcanSkill.QuickInnovation
+                ? step.Condition : GetNextCondition(craft, step, nextStateRoll);
 
-            return (success ? ExecuteResult.Succeeded : ExecuteResult.Failed, next);
+            return success ? ExecuteResult.Succeeded : ExecuteResult.Failed;
         }
 
         private static bool HasDurabilityCost(VulcanSkill action)
@@ -94,7 +105,7 @@ public static class Simulator
             var cost = action switch
             {
                 VulcanSkill.BasicSynthesis or VulcanSkill.CarefulSynthesis or VulcanSkill.RapidSynthesis or VulcanSkill.IntensiveSynthesis or VulcanSkill.MuscleMemory => 10,
-                VulcanSkill.BasicTouch or VulcanSkill.StandardTouch or VulcanSkill.AdvancedTouch or VulcanSkill.HastyTouch or VulcanSkill.PreciseTouch or VulcanSkill.Reflect or VulcanSkill.RefinedTouch => 10,
+                VulcanSkill.BasicTouch or VulcanSkill.StandardTouch or VulcanSkill.AdvancedTouch or VulcanSkill.HastyTouch or VulcanSkill.DaringTouch or VulcanSkill.PreciseTouch or VulcanSkill.Reflect or VulcanSkill.RefinedTouch => 10,
                 VulcanSkill.ByregotsBlessing or VulcanSkill.DelicateSynthesis => 10,
                 VulcanSkill.Groundwork or VulcanSkill.PreparatoryTouch => 20,
                 VulcanSkill.PrudentSynthesis or VulcanSkill.PrudentTouch => 5,
@@ -119,7 +130,9 @@ public static class Simulator
             return (int)res;
         }
 
-        public static bool CanUseAction(CraftState craft, StepState step, VulcanSkill action) => action switch
+        public static bool CanUseAction(CraftState craft, StepState step, VulcanSkill action)
+            => Enum.IsDefined(action) && action is not (VulcanSkill.None or VulcanSkill.TouchCombo or VulcanSkill.TouchComboRefined)
+            && step.Durability > 0 && step.Progress < craft.CraftProgress && (action switch
         {
             VulcanSkill.IntensiveSynthesis or VulcanSkill.PreciseTouch or VulcanSkill.TricksOfTrade => step.Condition is Condition.Good or Condition.Excellent || step.HeartAndSoulActive,
             VulcanSkill.PrudentSynthesis or VulcanSkill.PrudentTouch => step.WasteNotLeft == 0,
@@ -135,9 +148,9 @@ public static class Simulator
             VulcanSkill.QuickInnovation => step.QuickInnoLeft > 0 && step.InnovationLeft == 0,
             VulcanSkill.MaterialMiracle => step.MaterialMiracleCharges > 0 && !step.MaterialMiracleActive,
             _ => true
-        } && craft.StatLevel >= MinLevel(action) && step.RemainingCP >= GetCPCost(step, action);
+        }) && craft.StatLevel >= MinLevel(action) && step.RemainingCP >= GetCPCost(step, action);
 
-        public static bool SkipUpdates(VulcanSkill action) => action is VulcanSkill.CarefulObservation or VulcanSkill.FinalAppraisal or VulcanSkill.HeartAndSoul or VulcanSkill.MaterialMiracle;
+        public static bool SkipUpdates(VulcanSkill action) => action is VulcanSkill.CarefulObservation or VulcanSkill.FinalAppraisal or VulcanSkill.HeartAndSoul or VulcanSkill.QuickInnovation or VulcanSkill.MaterialMiracle;
         public static bool ConsumeHeartAndSoul(VulcanSkill action) => action is VulcanSkill.IntensiveSynthesis or VulcanSkill.PreciseTouch or VulcanSkill.TricksOfTrade;
 
         public static int MinLevel(VulcanSkill action) => action switch
@@ -284,7 +297,7 @@ public static class Simulator
         public static int CalculateQuality(CraftState craft, StepState step, VulcanSkill action)
         {
             if (action == VulcanSkill.TrainedEye)
-                return craft.CraftQualityMax;
+                return Math.Max(0, craft.CraftQualityMax - step.Quality);
 
             int potency = action switch
             {
@@ -306,17 +319,18 @@ public static class Simulator
             if (potency == 0)
                 return 0;
 
-            float buffMod = (1 + (step.GreatStridesLeft > 0 ? 1 : 0) + (step.InnovationLeft > 0 ? 0.5f : 0)) * (100 + 10 * step.IQStacks) / 100;
-            float effPotency = potency * buffMod;
-
-            float condMod = step.Condition switch
+            var buffPercent = 100 + (step.GreatStridesLeft > 0 ? 100 : 0) + (step.InnovationLeft > 0 ? 50 : 0);
+            var conditionPercent = step.Condition switch
             {
-                Condition.Good => craft.SplendorCosmic ? 1.75f : 1.5f,
-                Condition.Excellent => 4,
-                Condition.Poor => 0.5f,
-                _ => 1
+                Condition.Good => craft.SplendorCosmic ? 175 : 150,
+                Condition.Excellent => 400,
+                Condition.Poor => 50,
+                _ => 100
             };
-            return (int)(BaseQuality(craft) * condMod * effPotency / 100);
+            // One exact floor after applying potency, buffs, IQ, and condition. Float products
+            // such as 1.5 * 1.4 can fall below an integer and incorrectly lose a quality point.
+            return (int)((long)BaseQuality(craft) * potency * buffPercent * (100 + 10 * step.IQStacks)
+                * conditionPercent / 100_000_000);
         }
 
         public static bool WillFinishCraft(CraftState craft, StepState step, VulcanSkill action) => step.FinalAppraisalLeft == 0 && step.Progress + CalculateProgress(craft, step, action) >= craft.CraftProgress;

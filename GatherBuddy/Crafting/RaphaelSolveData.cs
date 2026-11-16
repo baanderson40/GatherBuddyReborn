@@ -66,6 +66,7 @@ public enum VulcanSolverMode
     PureRaphael,     // Static Raphael rotations only
     StandardSolver,  // Dynamic standard solver
     ProgressOnly,    // Progress-only solver (no quality actions)
+    Adaptive,        // Experimental confirmed-outcome host; never a legacy fallback solver
 }
 
 public class RaphaelSolveCoordinatorConfig
@@ -78,4 +79,5 @@ public class RaphaelSolveCoordinatorConfig
     public bool AutoClearSolutionCache { get; set; } = true;
     public int SolutionCacheMaxAgeDays { get; set; } = 30;
     public VulcanSolverMode SolverMode { get; set; } = VulcanSolverMode.PureRaphael;
+    public int AdaptiveCollectabilityTier { get; set; } = 3;
 }

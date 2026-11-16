@@ -15,6 +15,7 @@ public partial class CraftingQueueProcessor
     private readonly Stopwatch _runClock = Stopwatch.StartNew();
     private bool _readinessSelected;
     private uint _resultItemId;
+    private bool _resultCollectable;
     private int _resultOutputQuantity;
     private int _resultBefore;
     private int _resultRequested;
@@ -48,6 +49,36 @@ public partial class CraftingQueueProcessor
         inventory = items.Distinct().ToDictionary(id => id, id => new AcquisitionInventory(
             checked((int)manager->GetInventoryItemCount(id, false, false, false)),
             checked((int)manager->GetInventoryItemCount(id, true, false, false))));
+        return true;
+    }
+
+    internal static unsafe bool TryCaptureCraftOutputCount(uint itemId, bool collectable, out int count)
+    {
+        count = 0;
+        if (!collectable)
+        {
+            // Preserve existing ordinary-output and ingredient NQ/HQ accounting.
+            if (!TryCaptureCraftInventory(new[] { itemId }, out var inventory)) return false;
+            count = checked(inventory[itemId].NQ + inventory[itemId].HQ);
+            return true;
+        }
+        if (itemId == 0 || GetPlayerInventoryAvailability() != PlayerInventoryAvailability.Ready) return false;
+        var manager = InventoryManager.Instance();
+        if (manager == null) return false;
+        var counter = new CollectableCraftOutputCounter(itemId);
+        foreach (var type in new[] { InventoryType.Inventory1, InventoryType.Inventory2, InventoryType.Inventory3, InventoryType.Inventory4 })
+        {
+            var container = manager->GetInventoryContainer(type);
+            // Unavailable/unsupported bags are not an observed zero or a partial snapshot.
+            if (container == null || !container->IsLoaded || container->Size <= 0 || container->Size > 140) return false;
+            for (var i = 0; i < container->Size; ++i)
+            {
+                var slot = container->GetInventorySlot(i);
+                if (slot == null) return false;
+                counter.Add(slot->GetBaseItemId(), slot->Quantity, slot->IsCollectable());
+            }
+        }
+        count = counter.Count;
         return true;
     }
 
@@ -131,11 +162,12 @@ public partial class CraftingQueueProcessor
 
     private bool BeginResultTracking(Recipe recipe, int requested)
     {
-        if (!TryCaptureCraftInventory(new[] { recipe.ItemResult.RowId }, out var inventory)) return false;
+        var collectable = recipe.ItemResult.Value.AlwaysCollectable;
+        if (!TryCaptureCraftOutputCount(recipe.ItemResult.RowId, collectable, out var owned)) return false;
         _resultItemId = recipe.ItemResult.RowId;
+        _resultCollectable = collectable;
         _resultOutputQuantity = recipe.AmountResult;
-        var owned = inventory[_resultItemId];
-        _resultBefore = checked(owned.NQ + owned.HQ);
+        _resultBefore = owned;
         _resultRequested = requested;
         _resultReported = 0;
         _resultCancelled = false;
@@ -148,13 +180,11 @@ public partial class CraftingQueueProcessor
         int observedOutputCount;
         try
         {
-            if (!TryCaptureCraftInventory(new[] { _resultItemId }, out var inventory))
+            if (!TryCaptureCraftOutputCount(_resultItemId, _resultCollectable, out observedOutputCount))
             {
                 WaitForInventory(QueueState.WaitingForCraftResult);
                 return;
             }
-            var owned = inventory[_resultItemId];
-            observedOutputCount = checked(owned.NQ + owned.HQ);
             confirmed = CraftReadiness.ConfirmedCrafts(_resultBefore, observedOutputCount,
                 _resultOutputQuantity, _resultRequested);
         }
@@ -169,7 +199,7 @@ public partial class CraftingQueueProcessor
         var previousIndex = _currentQueueIndex;
         _currentQueueIndex += confirmed;
         var progress = Progress;
-        GatherBuddy.Log.Debug($"[Vulcan Crafting][{_executionPlan?.AcquisitionRunId}][Result] recipe={recipeId}; outputItem={_resultItemId}; before={_resultBefore}; after={observedOutputCount}; yield={_resultOutputQuantity}; requested={_resultRequested}; attempted={attempted}; confirmed={confirmed}; cancelled={_resultCancelled}; index={previousIndex}->{_currentQueueIndex}; confirmedTotal={progress.ConfirmedCrafts}; explicitlySkipped={progress.ExplicitSkips}; remaining={progress.RemainingCrafts}");
+        GatherBuddy.Log.Debug($"[Vulcan Crafting][{_executionPlan?.AcquisitionRunId}][Result] recipe={recipeId}; outputItem={_resultItemId}; before={_resultBefore}; after={observedOutputCount}; yield={_resultOutputQuantity}; requested={_resultRequested}; attempted={attempted}; confirmed={confirmed}; cancelled={_resultCancelled}; index={previousIndex}->{_currentQueueIndex}; confirmedTotal={progress.ConfirmedCrafts}; explicitlySkipped={progress.ExplicitSkips}; remaining={progress.RemainingCrafts}; collectable={_resultCollectable}");
         _readinessSelected = false;
         _jobSwitchGuard.Reset();
         if (confirmed > 0) _missingIngredientFailures.Clear();
