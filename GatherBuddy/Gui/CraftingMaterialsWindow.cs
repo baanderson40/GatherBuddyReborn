@@ -1270,15 +1270,32 @@ public class CraftingMaterialsWindow : M3PanelWindow
 
     private static void DrawCurrencyTotals(IReadOnlyList<CurrencyTotal> totals, float width)
     {
-        var flow = new M3Flow(M3.Space1, width);
+        var origin = ImGui.GetCursorScreenPos();
+        var x = origin.X;
+        var y = origin.Y;
+        var rowHeight = 0f;
+        var spacing = M3.Space1;
         for (var i = 0; i < totals.Count; i++)
         {
             var total = totals[i];
             var label = total.Amount.ToString("N0");
             var size = CurrencyPillSize(label, total.IconId != 0);
-            flow.Next(size.X);
+
+            if (x > origin.X && x + size.X > origin.X + width)
+            {
+                x = origin.X;
+                y += rowHeight + spacing;
+                rowHeight = 0f;
+            }
+
+            ImGui.SetCursorScreenPos(new Vector2(x, y));
             DrawCurrencyPill(total, label, size);
+            x += size.X + spacing;
+            rowHeight = MathF.Max(rowHeight, size.Y);
         }
+
+        ImGui.SetCursorScreenPos(new Vector2(origin.X, y + rowHeight));
+        ImGui.Dummy(new Vector2(0, M3.Scale));
     }
 
     private static Vector2 CurrencyPillSize(string label, bool hasIcon)

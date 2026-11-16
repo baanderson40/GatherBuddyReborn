@@ -29,40 +29,24 @@ internal static class VendorPurchasePolicyUi
         ImGui.Separator();
     }
 
-    public static void DrawList(CraftingListDefinition list)
+    public static void DrawListSettings(VendorPurchaseListSettings settings)
     {
-        ImGui.PushID(list.ID);
-        if (ImGui.Button("Automatic Vendor Purchases...")) ImGui.OpenPopup("ListVendorPurchasePolicy");
-        if (ImGui.IsPopupOpen("ListVendorPurchasePolicy"))
-            ImGui.SetNextWindowSizeConstraints(new Vector2(VulcanUiScaling.Scaled(350f), 0),
-                new Vector2(VulcanUiScaling.Scaled(650f), ImGui.GetMainViewport().WorkSize.Y * 0.8f));
-        if (ImGui.BeginPopup("ListVendorPurchasePolicy"))
+        var mode = (int)settings.Mode;
+        ImGui.SetNextItemWidth(VulcanUiScaling.Scaled(220f));
+        if (ImGui.Combo("Policy", ref mode, new[] { "Use global settings", "Disabled", "Custom settings" }, 3))
         {
-            ImGui.TextUnformatted("Automatic Vendor Purchases — This List");
-            ImGui.Separator();
-            var settings = list.VendorPurchases;
-            var changed = false;
-            var mode = (int)settings.Mode;
-            ImGui.SetNextItemWidth(VulcanUiScaling.Scaled(220f));
-            if (ImGui.Combo("Policy", ref mode, new[] { "Use global settings", "Disabled", "Custom settings" }, 3))
-            {
-                settings.Mode = (VendorPurchaseOverrideMode)mode;
-                changed = true;
-            }
-            if (settings.Mode == VendorPurchaseOverrideMode.Custom)
-                changed |= DrawPolicy(settings.CustomPolicy);
-            else if (settings.Mode == VendorPurchaseOverrideMode.Disabled)
-                ImGui.TextWrapped("This list will not buy materials, even when global automatic purchases are enabled.");
-            else
-            {
-                var policy = GatherBuddy.Config.AutomaticVendorPurchases;
-                ImGui.TextWrapped($"Global purchases: {(policy.Enabled ? "enabled" : "disabled")}; gil purchase cap: {policy.MaximumGilSpendPerRun?.ToString() ?? "unlimited"}. Edit global defaults under Vulcan > Settings.");
-            }
-            ImGui.TextWrapped("Saved changes apply to the next run. An active or paused run keeps its original policy.");
-            if (changed) GatherBuddy.CraftingListManager.SaveList(list);
-            ImGui.EndPopup();
+            settings.Mode = (VendorPurchaseOverrideMode)mode;
         }
-        ImGui.PopID();
+        if (settings.Mode == VendorPurchaseOverrideMode.Custom)
+            DrawPolicy(settings.CustomPolicy);
+        else if (settings.Mode == VendorPurchaseOverrideMode.Disabled)
+            ImGui.TextWrapped("This list will not buy materials, even when global automatic purchases are enabled.");
+        else
+        {
+            var policy = GatherBuddy.Config.AutomaticVendorPurchases;
+            ImGui.TextWrapped($"Global purchases: {(policy.Enabled ? "enabled" : "disabled")}; gil purchase cap: {policy.MaximumGilSpendPerRun?.ToString() ?? "unlimited"}. Edit global defaults under Vulcan > Settings.");
+        }
+        ImGui.TextWrapped("Saved changes apply to the next run. An active or paused run keeps its original policy.");
     }
 
     private static bool DrawPolicy(AutomaticVendorPurchasePolicy policy)

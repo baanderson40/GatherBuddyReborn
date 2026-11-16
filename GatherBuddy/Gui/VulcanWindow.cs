@@ -100,15 +100,17 @@ public partial class VulcanWindow : M3ShellWindow, IDisposable
         AddPage(new M3Page(MarketboardPageId, "Marketboard", FontAwesomeIcon.ChartLine, SectionBuySell,
             "Marketboard prices and sale history", Panels(DrawMarketboardPage), false));
 
+        AddPage(new M3Page("adaptive_solver", "Adaptive Solver", FontAwesomeIcon.ExclamationTriangle, SectionSolvers,
+            "Experimental adaptive crafting settings and diagnostics", DrawAdaptiveSolverPage));
         AddPage(new M3Page("macros", "Macros", FontAwesomeIcon.Scroll, SectionSolvers,
             "Your own crafting macros", Panels(DrawMacrosPage), false));
+        AddPage(new M3Page("raphael_solver", "Raphael Solver", FontAwesomeIcon.Brain, SectionSolvers,
+            "Configuration, status and saved solutions for Raphael-generated crafting rotations", DrawRaphaelSolverPage));
         AddPage(new M3Page("standard_solver", "Standard Solver", FontAwesomeIcon.Cogs, SectionSolvers,
             "How the dynamic Standard Solver behaves", DrawStandardSolverPage));
-        AddPage(new M3Page("solutions", "Solutions", FontAwesomeIcon.Lightbulb, SectionSolvers,
-            "Saved Raphael solutions", Panels(DrawSolutionsPage), false));
 
         AddPage(new M3Page("settings", "Settings", FontAwesomeIcon.Cog, SectionSettings,
-            "Solver, repair, materia and retainer settings for crafting", DrawSettingsPage));
+            "Repair, materia, retainer and general crafting settings", DrawSettingsPage));
 
         AddPage(new M3Page("debug", "Debug", FontAwesomeIcon.Bug, SectionTools,
             "Internal crafting data, for troubleshooting", Panels(DrawDebugPage), false, tool: true));

@@ -73,6 +73,7 @@ public partial class GatherBuddy : IDalamudPlugin
     public static Gui.CollectablesWindow? CollectablesWindow { get; private set; }
     public static RebornUI.HostedPanelWindow? RecipeCraftSettingsWindow { get; private set; }
     public static RebornUI.HostedPanelWindow? CraftingListDefaultsWindow { get; private set; }
+    public static RebornUI.HostedPanelWindow? ListVendorPurchaseWindow { get; private set; }
     public static RebornUI.HostedPanelWindow? TeamCraftImportWindow { get; private set; }
     public static RebornUI.HostedPanelWindow? VendorTeamCraftImportWindow { get; private set; }
     internal static Gui.NativeItemTooltipBridge? NativeItemTooltipBridge { get; private set; }
@@ -192,6 +193,7 @@ public partial class GatherBuddy : IDalamudPlugin
             CollectablesWindow = _collectablesWindow;
             RecipeCraftSettingsWindow = Gui.RecipeCraftSettingsPopup.CreateWindow();
             CraftingListDefaultsWindow = Gui.CraftingListConsumablesPopup.CreateWindow();
+            ListVendorPurchaseWindow = Gui.VendorPurchasePolicyPopup.CreateWindow();
             TeamCraftImportWindow = Gui.VulcanWindow.CreateTeamCraftImportWindow();
             VendorTeamCraftImportWindow = Gui.VendorBuyListWindow.CreateTeamCraftImportWindow();
             NativeItemTooltipBridge = new Gui.NativeItemTooltipBridge();
@@ -207,6 +209,7 @@ public partial class GatherBuddy : IDalamudPlugin
             WindowSystem.AddWindow(_collectablesWindow);
             WindowSystem.AddWindow(RecipeCraftSettingsWindow);
             WindowSystem.AddWindow(CraftingListDefaultsWindow);
+            WindowSystem.AddWindow(ListVendorPurchaseWindow);
             WindowSystem.AddWindow(TeamCraftImportWindow);
             WindowSystem.AddWindow(VendorTeamCraftImportWindow);
             Dalamud.PluginInterface.UiBuilder.Draw += DrawUi;

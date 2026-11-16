@@ -264,12 +264,16 @@ public partial class VulcanWindow
         ImGui.TableSetupColumn("World");
         if (showDc) ImGui.TableSetupColumn("DC");
         ImGui.TableHeadersRow();
+        var rowHeight = VulcanUiScaling.Scaled(24f);
+        var cellTextOffset = Math.Max(0f,
+            (rowHeight - ImGui.GetTextLineHeight() - 2f * ImGui.GetStyle().CellPadding.Y) * 0.5f);
         var index = 0;
         foreach (var listing in listings)
         {
             using var rowId = ImRaii.PushId($"listing{index++}");
-            ImGui.TableNextRow();
+            ImGui.TableNextRow(ImGuiTableRowFlags.None, rowHeight);
             ImGui.TableSetColumnIndex(0);
+            ImGui.SetCursorPosY(ImGui.GetCursorPosY() + cellTextOffset);
             if (ImGui.Selectable($"{(listing.IsHq ? "HQ" : "NQ")}##listingRow", false, ImGuiSelectableFlags.SpanAllColumns))
                 ImGui.OpenPopup("##listingTravel");
             if (ImGui.BeginPopupContextItem("##listingTravel"))
@@ -309,11 +313,16 @@ public partial class VulcanWindow
                     ImGui.TextDisabled("Cross-DC: logout/login and queues may apply");
                 ImGui.EndPopup();
             }
-            ImGui.TableSetColumnIndex(1); ImGui.Text($"{listing.PricePerUnit:N0} gil");
-            ImGui.TableSetColumnIndex(2); ImGui.Text($"{listing.Quantity:N0}");
-            ImGui.TableSetColumnIndex(3); ImGui.Text($"{listing.StackTotal:N0} gil");
-            ImGui.TableSetColumnIndex(4); ImGui.TextUnformatted(listing.WorldName);
-            if (showDc) { ImGui.TableSetColumnIndex(5); ImGui.TextUnformatted(listing.DataCenter); }
+            ImGui.TableSetColumnIndex(1); ImGui.SetCursorPosY(ImGui.GetCursorPosY() + cellTextOffset); ImGui.Text($"{listing.PricePerUnit:N0} gil");
+            ImGui.TableSetColumnIndex(2); ImGui.SetCursorPosY(ImGui.GetCursorPosY() + cellTextOffset); ImGui.Text($"{listing.Quantity:N0}");
+            ImGui.TableSetColumnIndex(3); ImGui.SetCursorPosY(ImGui.GetCursorPosY() + cellTextOffset); ImGui.Text($"{listing.StackTotal:N0} gil");
+            ImGui.TableSetColumnIndex(4); ImGui.SetCursorPosY(ImGui.GetCursorPosY() + cellTextOffset); ImGui.TextUnformatted(listing.WorldName);
+            if (showDc)
+            {
+                ImGui.TableSetColumnIndex(5);
+                ImGui.SetCursorPosY(ImGui.GetCursorPosY() + cellTextOffset);
+                ImGui.TextUnformatted(listing.DataCenter);
+            }
         }
         ImGui.EndTable();
     }

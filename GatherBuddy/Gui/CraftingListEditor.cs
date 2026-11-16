@@ -85,6 +85,7 @@ public class CraftingListEditor
 
     private readonly RecipeCraftSettingsPopup _craftSettingsPopup = new();
     private readonly CraftingListConsumablesPopup _consumablesPopup = new();
+    private readonly VendorPurchasePolicyPopup _vendorPurchasePolicyPopup = new();
 
     private readonly HashSet<int> _selectedRecipeIndices = [];
     private int _lastClickedRecipeIndex = -1;
@@ -811,6 +812,7 @@ public class CraftingListEditor
     {
         DrawListInfoCard();
         DrawQueueOptionsCard();
+        DrawAutomaticVendorPurchasesCard();
         DrawConsumablesCard();
         DrawAddRecipeCard();
         DrawRecipeListCard();
@@ -1007,7 +1009,17 @@ public class CraftingListEditor
             SaveListAndRefresh(true);
         }
 
-        VendorPurchasePolicyUi.DrawList(_list);
+    }
+
+    private void DrawAutomaticVendorPurchasesCard()
+    {
+        using var card = M3Card.Begin("##list_vendor_purchases_card", "Automatic Vendor Purchases",
+            FontAwesomeIcon.ShoppingCart, M3.AccentFor(2));
+        if (M3Widgets.Button("##editVendorPurchases", "Automatic Vendor Purchases", M3ButtonStyle.Tonal,
+                FontAwesomeIcon.Pen))
+        {
+            _vendorPurchasePolicyPopup.Open(_list);
+        }
     }
 
     private void SaveListAndRefresh(bool regenerateMaterials)
