@@ -4,11 +4,13 @@ using System.Diagnostics;
 using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
 using Dalamud.Interface.Colors;
 using Dalamud.Interface.Textures;
-using ElliLib;
 using GatherBuddy.Marketboard;
-using ImRaii = ElliLib.Raii.ImRaii;
+using GatherBuddy.RebornUI;
+using RebornMaterial;
+using ImRaii = Dalamud.Interface.Utility.Raii.ImRaii;
 
 namespace GatherBuddy.Gui;
 
@@ -25,24 +27,15 @@ public partial class VulcanWindow
     private string _mbTravelMenuWorld = string.Empty;
     private string _mbTravelMenuError = string.Empty;
 
-    private unsafe void DrawMarketboardTab()
+    private void DrawMarketboardPage()
     {
-        var navigation = GatherBuddy.ControllerSupport?.TabNavigation;
-        var flags = _mbRequestFocus || navigation?.ShouldSelectTab((int)VulcanMainTab.Marketboard) == true
-            ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None;
-        fixed (byte* label = "Marketboard##marketboardTab\0"u8)
+        if (GatherBuddy.MarketboardService is not { } service)
         {
-            using var tab = ImRaii.TabItem(label, flags);
-            if (!tab) return;
-            _mbRequestFocus = false;
-            navigation?.NotifyTabActive((int)VulcanMainTab.Marketboard);
-            if (GatherBuddy.MarketboardService is not { } service)
-            {
-                ImGui.TextDisabled("Marketboard service unavailable.");
-                return;
-            }
-            DrawMarketboard(service);
+            M3Widgets.EmptyState("##mbUnavailable", "Marketboard unavailable", "The marketboard service could not start.", FontAwesomeIcon.ChartLine);
+            return;
         }
+
+        DrawMarketboard(service);
     }
 
     private void DrawMarketboard(MarketboardService service)
@@ -112,7 +105,7 @@ public partial class VulcanWindow
         var listSize = sideBySide
             ? new Vector2(VulcanUiScaling.Scaled(270f), Math.Max(1f, available.Y))
             : new Vector2(0, Math.Max(1f, Math.Min(VulcanUiScaling.Scaled(200f), available.Y * 0.4f)));
-        using var panels = VulcanUiStyle.PushPanel();
+        using var panels = VulcanUiStyle.PushTheme();
         using (var list = ImRaii.Child("##marketItems", listSize, true))
         {
             if (list) DrawMarketboardItems(service);
@@ -176,7 +169,7 @@ public partial class VulcanWindow
         ImGui.TextDisabled($"{items.Count:N0} items");
         using var results = ImRaii.Child("##marketResults", new Vector2(0, 0));
         if (!results) return;
-        ImGuiClip.ClippedDraw(items, item =>
+        Ui.ClippedDraw(items, item =>
         {
             var iconSize = VulcanUiScaling.Scaled(24f, 24f);
             var texture = item.IconId == 0 ? null : Icons.DefaultStorage.TextureProvider
@@ -192,10 +185,7 @@ public partial class VulcanWindow
             }
             if (ImGui.IsItemHovered()) ImGui.SetTooltip($"{item.Name}\nItem #{item.ItemId}");
             if (!_mbShowRecent) return;
-            var context = GatherBuddy.ControllerSupport != null
-                ? GatherBuddy.ControllerSupport.ContextMenu.BeginPopupContextItemWithGamepad($"##marketHistory{item.ItemId}", Dalamud.GamepadState)
-                : ImGui.BeginPopupContextItem($"##marketHistory{item.ItemId}");
-            if (!context) return;
+            if (!ImGui.BeginPopupContextItem($"##marketHistory{item.ItemId}")) return;
             if (ImGui.Selectable("Remove from history"))
             {
                 service.RemoveFromHistory(item.ItemId);
@@ -282,10 +272,7 @@ public partial class VulcanWindow
             ImGui.TableSetColumnIndex(0);
             if (ImGui.Selectable($"{(listing.IsHq ? "HQ" : "NQ")}##listingRow", false, ImGuiSelectableFlags.SpanAllColumns))
                 ImGui.OpenPopup("##listingTravel");
-            var context = GatherBuddy.ControllerSupport != null
-                ? GatherBuddy.ControllerSupport.ContextMenu.BeginPopupContextItemWithGamepad("##listingTravel", Dalamud.GamepadState)
-                : ImGui.BeginPopupContextItem("##listingTravel");
-            if (context)
+            if (ImGui.BeginPopupContextItem("##listingTravel"))
             {
                 if (ImGui.IsWindowAppearing())
                 {

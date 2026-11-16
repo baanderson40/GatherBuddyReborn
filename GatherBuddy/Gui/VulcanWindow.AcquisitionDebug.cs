@@ -8,7 +8,7 @@ using GatherBuddy.Crafting;
 using GatherBuddy.Plugin;
 using GatherBuddy.Vulcan.Vendors;
 using Lumina.Excel.Sheets;
-using ImRaii = ElliLib.Raii.ImRaii;
+using ImRaii = Dalamud.Interface.Utility.Raii.ImRaii;
 
 namespace GatherBuddy.Gui;
 

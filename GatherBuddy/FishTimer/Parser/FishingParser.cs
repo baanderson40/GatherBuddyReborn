@@ -139,14 +139,16 @@ public unsafe partial class FishingParser : IDisposable
         byte a12)
     {
         if (!GatherBuddy.Config.HideFishSizePopup)
+        {
             _catchHook.Original(thisPtr, itemId, isLarge, size, amount, level, stars, oceanStars, isMoochable, isFirstTimeCatch, a11, a12);
+        }
 
         // Check against collectibles.
         var collectible = false;
         if (itemId > 500000)
         {
-            itemId      -= 500000;
-            collectible =  true;
+            itemId -= 500000;
+            collectible = true;
         }
 
         if (!GatherBuddy.GameData.Fishes.TryGetValue(itemId, out var fish))
@@ -164,12 +166,24 @@ public unsafe partial class FishingParser : IDisposable
         {
             switch (actionId)
             {
-                case 296:   HookedIn?.Invoke(HookSet.Hook); break;
-                case 269:   HookedIn?.Invoke(HookSet.DoubleHook); break;
-                case 4103:  HookedIn?.Invoke(HookSet.Powerful); break;
-                case 4179:  HookedIn?.Invoke(HookSet.Precise); break;
-                case 27523: HookedIn?.Invoke(HookSet.TripleHook); break;
-                case 41278: HookedIn?.Invoke(HookSet.Stellar); break;
+                case 296:
+                    HookedIn?.Invoke(HookSet.Hook);
+                    break;
+                case 269:
+                    HookedIn?.Invoke(HookSet.DoubleHook);
+                    break;
+                case 4103:
+                    HookedIn?.Invoke(HookSet.Powerful);
+                    break;
+                case 4179:
+                    HookedIn?.Invoke(HookSet.Precise);
+                    break;
+                case 27523:
+                    HookedIn?.Invoke(HookSet.TripleHook);
+                    break;
+                case 41278:
+                    HookedIn?.Invoke(HookSet.Stellar);
+                    break;
             }
         }
 

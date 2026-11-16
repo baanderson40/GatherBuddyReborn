@@ -1,6 +1,6 @@
-using System;
 using Dalamud.Game.ClientState.Conditions;
 using GatherBuddy.Plugin;
+using System;
 
 namespace GatherBuddy.Helpers;
 
@@ -33,7 +33,9 @@ public static class HomeNavigationHelper
         }
 
         if (Lifestream.IsBusy())
+        {
             return false;
+        }
 
         var command = NormalizeCommand(GatherBuddy.Config.AutoGatherConfig.LifestreamCommand);
 

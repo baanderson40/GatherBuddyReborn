@@ -1,10 +1,10 @@
+using Lumina.Excel.Sheets;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
-using Lumina.Excel.Sheets;
 
 namespace GatherBuddy.Marketboard;
 
@@ -85,8 +85,13 @@ public sealed class MarketboardService : IDisposable
         if (sheet?.TryGetRow(worldId, out var world) != true) return null;
         var dc = world.DataCenter.ValueNullable?.Name.ExtractText();
         if (string.IsNullOrEmpty(dc)) return null;
-        var worlds = sheet.Where(w => w.IsPublic && w.DataCenter.RowId == world.DataCenter.RowId)
-            .Select(w => new MarketWorld(w.RowId, w.Name.ExtractText())).Where(w => !string.IsNullOrEmpty(w.Name)).ToArray();
+        var worlds = new List<MarketWorld>();
+        foreach (var row in sheet)
+        {
+            if (!row.IsPublic || row.DataCenter.RowId != world.DataCenter.RowId) continue;
+            var name = row.Name.ExtractText();
+            if (!string.IsNullOrEmpty(name)) worlds.Add(new(row.RowId, name));
+        }
         return _home = new(worldId, dc, worlds);
     }
 
@@ -153,7 +158,11 @@ public sealed class MarketboardService : IDisposable
         try
         {
             var path = Path.Combine(Dalamud.PluginInterface.GetPluginConfigDirectory(), HistoryFile);
-            if (!File.Exists(path)) return;
+            if (!File.Exists(path))
+            {
+                return;
+            }
+
             var entries = JsonSerializer.Deserialize<List<PersistedEntry>>(File.ReadAllText(path));
             if (entries == null) return;
             foreach (var entry in entries)

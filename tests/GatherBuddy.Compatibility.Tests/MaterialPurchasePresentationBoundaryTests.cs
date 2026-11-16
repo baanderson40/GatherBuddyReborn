@@ -27,7 +27,7 @@ public class MaterialPurchasePresentationBoundaryTests
         var fields = metadata.GetTypeDefinition(type).GetFields().Select(h => metadata.GetString(metadata.GetFieldDefinition(h).Name)).ToArray();
         Assert.DoesNotContain("_matsPreferVendors", fields);
         Assert.DoesNotContain("_cachedMaterialViewPreferVendors", fields);
-        Assert.Contains("GetMaterialPurchaseDisplayContext", Calls("CraftingMaterialsWindow", "Draw"));
+        Assert.Contains("GetMaterialPurchaseDisplayContext", Calls("CraftingMaterialsWindow", "DrawContents"));
     }
 
     [Fact]

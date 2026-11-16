@@ -1,13 +1,13 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using GatherBuddy.Plugin;
 using Lumina.Excel;
 using Lumina.Excel.Sheets;
 using GatherBuddy.Utility;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace GatherBuddy.Vulcan.Vendors;
 
@@ -15,17 +15,17 @@ public static class VendorShopResolver
 {
     private readonly record struct ResolvedSpecialShopCost(uint CurrencyItemId, uint Amount, string CurrencyName, VendorCurrencyGroup Group, int OriginalIndex);
     private readonly record struct InclusionShopRoute(uint InclusionShopId, int PageIndex, int SubPageIndex);
-    public const            uint          GilCurrencyItemId        = 1;
-    public const            uint          AlliedSealCurrencyItemId = 27;
-    public const            uint          CenturioSealCurrencyItemId = 10307;
-    public const            uint          SackOfNutsCurrencyItemId = 26533;
-    public const            uint          BicolorCurrencyItemId    = 26807;
-    public const            uint          MgpCurrencyItemId        = 29;
-    public const            uint          WolfMarkCurrencyItemId   = 25;
-    private static readonly HashSet<uint> TomestoneIds   = new() { 28, 48, 49 };                 // Poetics, Mathematics, Mnemonics
-    private static readonly HashSet<uint> HuntSealIds    = new() { AlliedSealCurrencyItemId, CenturioSealCurrencyItemId, SackOfNutsCurrencyItemId };
-    private static readonly HashSet<uint> ScripIds       = new() { 33913, 33914, 41784, 41785 }; // Purple/Orange Crafter/Gatherer
-    private static readonly HashSet<uint> CurrencyTypeMapPreferredShopIds = new() { 1770637, 1770638 };
+    public const uint GilCurrencyItemId = 1;
+    public const uint AlliedSealCurrencyItemId = 27;
+    public const uint CenturioSealCurrencyItemId = 10307;
+    public const uint SackOfNutsCurrencyItemId = 26533;
+    public const uint BicolorCurrencyItemId = 26807;
+    public const uint MgpCurrencyItemId = 29;
+    public const uint WolfMarkCurrencyItemId = 25;
+    private static readonly HashSet<uint> TomestoneIds = [28, 48, 49];                 // Poetics, Mathematics, Mnemonics
+    private static readonly HashSet<uint> HuntSealIds = [AlliedSealCurrencyItemId, CenturioSealCurrencyItemId, SackOfNutsCurrencyItemId];
+    private static readonly HashSet<uint> ScripIds = [33913, 33914, 41784, 41785]; // Purple/Orange Crafter/Gatherer
+    private static readonly HashSet<uint> CurrencyTypeMapPreferredShopIds = [1770637, 1770638];
 
     // Sourced from AllaganLib SpecialShopListing.currencies
     private static readonly Dictionary<uint, uint> CurrencyTypeMap = new()
@@ -73,14 +73,14 @@ public static class VendorShopResolver
     private static Dictionary<uint, HashSet<uint>> _fallbackGcMap = new();
     private static Dictionary<uint, HashSet<uint>> _fallbackInclusionMap = new();
 
-    private static HashSet<uint> _gatherableIds = new();
-    private static HashSet<uint> _fishIds       = new();
-    private static HashSet<uint> _craftableIds  = new();
-    private static HashSet<uint> _housingItemIds = new();
-    private static HashSet<uint> _equippableItemIds = new();
-    private static HashSet<uint> _dyeItemIds     = new();
+    private static HashSet<uint> _gatherableIds = [];
+    private static HashSet<uint> _fishIds = [];
+    private static HashSet<uint> _craftableIds = [];
+    private static HashSet<uint> _housingItemIds = [];
+    private static HashSet<uint> _equippableItemIds = [];
+    private static HashSet<uint> _dyeItemIds = [];
 
-    public static bool IsInitialized  => _initialized;
+    public static bool IsInitialized => _initialized;
     public static bool IsInitializing => _initializing;
     public static int Revision => Volatile.Read(ref _revision);
     public readonly record struct CacheStamp(int Revision, bool IsInitialized);
@@ -93,11 +93,11 @@ public static class VendorShopResolver
     public static IReadOnlySet<uint>             AllVendorNpcIds    => _cache.Npcs;
 
     public static IReadOnlySet<uint> GatherableIds => _gatherableIds;
-    public static IReadOnlySet<uint> FishIds       => _fishIds;
-    public static IReadOnlySet<uint> CraftableIds  => _craftableIds;
+    public static IReadOnlySet<uint> FishIds => _fishIds;
+    public static IReadOnlySet<uint> CraftableIds => _craftableIds;
     public static IReadOnlySet<uint> HousingItemIds => _housingItemIds;
     public static IReadOnlySet<uint> EquippableItemIds => _equippableItemIds;
-    public static IReadOnlySet<uint> DyeItemIds     => _dyeItemIds;
+    public static IReadOnlySet<uint> DyeItemIds => _dyeItemIds;
 
     public static HashSet<uint> GetAllVendorNpcIds()
         => new(_cache.Npcs);
@@ -105,21 +105,33 @@ public static class VendorShopResolver
     public static int GetInclusionShopSubPageCount(uint inclusionShopId, int pageIndex)
     {
         if (pageIndex < 0)
+        {
             return 0;
+        }
 
         var inclusionSheet = Dalamud.GameData.GetExcelSheet<InclusionShop>();
-        var categorySheet  = Dalamud.GameData.GetExcelSheet<InclusionShopCategory>();
-        var seriesSheet    = Dalamud.GameData.GetSubrowExcelSheet<InclusionShopSeries>();
+        var categorySheet = Dalamud.GameData.GetExcelSheet<InclusionShopCategory>();
+        var seriesSheet = Dalamud.GameData.GetSubrowExcelSheet<InclusionShopSeries>();
         if (inclusionSheet == null || categorySheet == null || seriesSheet == null)
+        {
             return 0;
+        }
+
         if (!inclusionSheet.TryGetRow(inclusionShopId, out var inclusionShop))
+        {
             return 0;
+        }
+
         if (pageIndex >= inclusionShop.Category.Count)
+        {
             return 0;
+        }
 
         var categoryRef = inclusionShop.Category[pageIndex];
         if (categoryRef.RowId == 0 || !categorySheet.TryGetRow(categoryRef.RowId, out var category))
+        {
             return 0;
+        }
 
         var seriesId = category.InclusionShopSeries.RowId;
         return seriesId != 0 && seriesSheet.TryGetRow(seriesId, out var seriesRow)
@@ -129,13 +141,28 @@ public static class VendorShopResolver
 
     public static void InitializeAsync()
     {
-        if (_initializing) return;
-        if (_initialized && _lastBuildHadCompleteDataShare) return;
-        if ((DateTime.UtcNow - _lastInitializeAttemptUtc) < RetryCooldown) return;
+        if (_initializing)
+        {
+            return;
+        }
+
+        if (_initialized && _lastBuildHadCompleteDataShare)
+        {
+            return;
+        }
+
+        if (DateTime.UtcNow - _lastInitializeAttemptUtc < RetryCooldown)
+        {
+            return;
+        }
+
         _lastInitializeAttemptUtc = DateTime.UtcNow;
         var (gilMap, specialMap, gcMap, inclusionMap) = GetShopNpcMapsFromDataShare();
         var hasCompleteDataShare = HasCompleteShopDataShare(gilMap, specialMap, gcMap, inclusionMap);
-        if (_initialized && !hasCompleteDataShare) return;
+        if (_initialized && !hasCompleteDataShare)
+        {
+            return;
+        }
 
         if (_initialized)
         {
@@ -170,7 +197,7 @@ public static class VendorShopResolver
             _fallbackInclusionMap = fallbackInclusionMap;
 
             var hasCompleteDataShare = HasCompleteShopDataShare(dataShareGilMap, dataShareSpecialMap, dataShareGcMap, dataShareInclusionMap);
-            var hasAnyDataShare      = HasAnyShopDataShare(dataShareGilMap, dataShareSpecialMap, dataShareGcMap, dataShareInclusionMap);
+            var hasAnyDataShare = HasAnyShopDataShare(dataShareGilMap, dataShareSpecialMap, dataShareGcMap, dataShareInclusionMap);
             var dataShareAvailability = DescribeShopDataShareAvailability(dataShareGilMap, dataShareSpecialMap, dataShareGcMap, dataShareInclusionMap);
 
             if (InitDiagnostics.TryLog("DataShare", dataShareAvailability, out var dataShareSuppressed))
@@ -181,11 +208,13 @@ public static class VendorShopResolver
             var gcMap = MergeNpcMaps(fallbackGcMap, dataShareGcMap);
             var inclusionMap = MergeNpcMaps(fallbackInclusionMap, dataShareInclusionMap);
             if (!hasCompleteDataShare)
+            {
                 GatherBuddy.Log.Debug($"[VendorShopResolver] Merged Lumina fallback with incomplete shop maps ({dataShareAvailability})");
+            }
 
             stage = "Inclusion routes and crafting IDs";
             var directSpecialMap = CloneNpcMap(specialMap);
-            var inclusionRoutes  = BuildSpecialShopInclusionRoutes();
+            var inclusionRoutes = BuildSpecialShopInclusionRoutes();
             AugmentSpecialMapFromInclusion(specialMap, inclusionMap);
 
             var tomestoneLookup = BuildTomestoneLookup();
@@ -198,7 +227,7 @@ public static class VendorShopResolver
             stage = "GC discovery";
             var gcEntries      = BuildGcShopEntries(gcMap, npcNames);
 
-            if (gilEntries.Count == 0 && specialEntries.Count == 0 && gcEntries.Count == 0)
+            if (gilEntries.Count == 0 && specialEntries.Count == 0 && acquisitionSpecialEntries.Count == 0 && gcEntries.Count == 0)
             {
                 _recovering = true;
                 if (InitDiagnostics.TryLog("Readiness", "Vendor entries empty", out var suppressed))
@@ -246,9 +275,9 @@ public static class VendorShopResolver
         IEnumerable<VendorShopEntry> specialEntries,
         IEnumerable<VendorShopEntry> gcEntries)
         => new(
-            gilEntries    .SelectMany(entry => entry.Npcs.Select(npc => npc.NpcId))
+            gilEntries.SelectMany(entry => entry.Npcs.Select(npc => npc.NpcId))
             .Concat(specialEntries.SelectMany(entry => entry.Npcs.Select(npc => npc.NpcId)))
-            .Concat(gcEntries     .SelectMany(entry => entry.Npcs.Select(npc => npc.NpcId)))
+            .Concat(gcEntries.SelectMany(entry => entry.Npcs.Select(npc => npc.NpcId)))
             .Where(npcId => npcId != 0));
 
     private static Dictionary<uint, HashSet<uint>>? TryGetShopNpcMap(string lookupName)
@@ -315,13 +344,15 @@ public static class VendorShopResolver
     {
         var mergedMap = CloneNpcMap(fallbackMap);
         if (dataShareMap == null)
+        {
             return mergedMap;
+        }
 
         foreach (var (shopId, npcIds) in dataShareMap)
         {
             if (!mergedMap.TryGetValue(shopId, out var mergedNpcIds))
             {
-                mergedNpcIds = new HashSet<uint>();
+                mergedNpcIds = [];
                 mergedMap[shopId] = mergedNpcIds;
             }
 
@@ -335,30 +366,46 @@ public static class VendorShopResolver
     {
         try
         {
-            _gatherableIds = new HashSet<uint>(GatherBuddy.GameData.Gatherables.Keys);
-            _fishIds       = new HashSet<uint>(GatherBuddy.GameData.Fishes.Keys);
+            _gatherableIds = [with(GatherBuddy.GameData.Gatherables.Keys)];
+            _fishIds = [with(GatherBuddy.GameData.Fishes.Keys)];
 
-            _craftableIds = new HashSet<uint>();
-            _housingItemIds = new HashSet<uint>();
-            _equippableItemIds = new HashSet<uint>();
-            _dyeItemIds = new HashSet<uint>();
+            _craftableIds = [];
+            _housingItemIds = [];
+            _equippableItemIds = [];
+            _dyeItemIds = [];
             var recipeSheet = Dalamud.GameData.GetExcelSheet<Recipe>();
             if (recipeSheet != null)
+            {
                 foreach (var recipe in recipeSheet)
+                {
                     if (recipe.ItemResult.RowId > 0)
+                    {
                         _craftableIds.Add(recipe.ItemResult.RowId);
+                    }
+                }
+            }
 
             var itemSheet = Dalamud.GameData.GetExcelSheet<Item>();
             if (itemSheet != null)
+            {
                 foreach (var item in itemSheet)
                 {
                     if (IsHousingItem(item))
+                    {
                         _housingItemIds.Add(item.RowId);
+                    }
+
                     if (IsEquippableItem(item))
+                    {
                         _equippableItemIds.Add(item.RowId);
+                    }
+
                     if (IsDyeItem(item))
+                    {
                         _dyeItemIds.Add(item.RowId);
+                    }
                 }
+            }
         }
         catch (Exception ex)
         {
@@ -377,16 +424,25 @@ public static class VendorShopResolver
     private static Dictionary<uint, uint> BuildTomestoneLookup()
     {
         var lookup = new Dictionary<uint, uint>();
-        var sheet  = Dalamud.GameData.GetExcelSheet<TomestonesItem>();
-        if (sheet == null) return lookup;
+        var sheet = Dalamud.GameData.GetExcelSheet<TomestonesItem>();
+        if (sheet == null)
+        {
+            return lookup;
+        }
+
         foreach (var row in sheet)
+        {
             if (row.Tomestones.RowId > 0 && row.CurrencyInventorySlot > 0)
+            {
                 lookup.TryAdd(row.Tomestones.RowId, row.Item.RowId);
+            }
+        }
+
         return lookup;
     }
 
     private static HashSet<uint> BuildTomestoneItemIdSet(Dictionary<uint, uint> tomestoneLookup)
-        => tomestoneLookup.Values.Concat(TomestoneIds).ToHashSet();
+        => [.. tomestoneLookup.Values, .. TomestoneIds];
 
     // Mirrors AllaganLib SpecialShopListing.ConvertCurrencyId
     private static uint ConvertCurrencyId(uint shopId, uint rawId, ushort useCurrencyType, Dictionary<uint, uint> tomes)
@@ -394,17 +450,41 @@ public static class VendorShopResolver
         var prefersCurrencyTypeMap = CurrencyTypeMapPreferredShopIds.Contains(shopId);
         if (prefersCurrencyTypeMap)
         {
-            if (CurrencyTypeMap.TryGetValue(rawId, out var v)) return v;
+            if (CurrencyTypeMap.TryGetValue(rawId, out var v))
+            {
+                return v;
+            }
         }
-        if (shopId == 1770446 || (shopId == 1770699 && rawId < 10) || (shopId == 1770803 && rawId < 10))
+        if (shopId == 1770446 || shopId == 1770699 && rawId < 10 || shopId == 1770803 && rawId < 10)
         {
-            if (tomes.TryGetValue(rawId, out var v) || CurrencyTypeMap.TryGetValue(rawId, out v)) return v;
+            if (tomes.TryGetValue(rawId, out var v) || CurrencyTypeMap.TryGetValue(rawId, out v))
+            {
+                return v;
+            }
         }
-        if (useCurrencyType == 16 && rawId != 25 && CurrencyTypeMap.TryGetValue(rawId, out var r16)) rawId = r16;
-        if (useCurrencyType == 2  && rawId < 10  && tomes.TryGetValue(rawId, out var r2))             rawId = r2;
-        if (prefersCurrencyTypeMap && rawId < 10 && CurrencyTypeMap.TryGetValue(rawId, out var preferredCurrency)) rawId = preferredCurrency;
+        if (useCurrencyType == 16 && rawId != 25 && CurrencyTypeMap.TryGetValue(rawId, out var r16))
+        {
+            rawId = r16;
+        }
+
+        if (useCurrencyType == 2 && rawId < 10 && tomes.TryGetValue(rawId, out var r2))
+        {
+            rawId = r2;
+        }
+
+        if (prefersCurrencyTypeMap && rawId < 10 && CurrencyTypeMap.TryGetValue(rawId, out var preferredCurrency))
+        {
+            rawId = preferredCurrency;
+        }
+
         if ((useCurrencyType == 16 || useCurrencyType == 4) && rawId < 10 && !prefersCurrencyTypeMap)
-            if (tomes.TryGetValue(rawId, out var v) || CurrencyTypeMap.TryGetValue(rawId, out v)) rawId = v;
+        {
+            if (tomes.TryGetValue(rawId, out var v) || CurrencyTypeMap.TryGetValue(rawId, out v))
+            {
+                rawId = v;
+            }
+        }
+
         return rawId;
     }
 
@@ -414,13 +494,19 @@ public static class VendorShopResolver
     private static Dictionary<uint, string> BuildNpcNameLookup()
     {
         var lookup = new Dictionary<uint, string>();
-        var sheet  = Dalamud.GameData.GetExcelSheet<ENpcResident>();
-        if (sheet == null) return lookup;
+        var sheet = Dalamud.GameData.GetExcelSheet<ENpcResident>();
+        if (sheet == null)
+        {
+            return lookup;
+        }
+
         foreach (var npc in sheet)
         {
             var name = npc.Singular.ExtractText();
             if (!string.IsNullOrWhiteSpace(name))
+            {
                 lookup[npc.RowId] = name;
+            }
         }
         return lookup;
     }
@@ -428,39 +514,70 @@ public static class VendorShopResolver
     private static (Dictionary<uint, HashSet<uint>> gil, Dictionary<uint, HashSet<uint>> special, Dictionary<uint, HashSet<uint>> gc, Dictionary<uint, HashSet<uint>> inclusion)
         BuildNpcShopMapsFromLumina()
     {
-        var gilMap       = new Dictionary<uint, HashSet<uint>>();
-        var specialMap   = new Dictionary<uint, HashSet<uint>>();
-        var gcMap        = new Dictionary<uint, HashSet<uint>>();
+        var gilMap = new Dictionary<uint, HashSet<uint>>();
+        var specialMap = new Dictionary<uint, HashSet<uint>>();
+        var gcMap = new Dictionary<uint, HashSet<uint>>();
         var inclusionMap = new Dictionary<uint, HashSet<uint>>();
 
         var eNpcBaseSheet = Dalamud.GameData.GetExcelSheet<ENpcBase>();
-        if (eNpcBaseSheet == null) return (gilMap, specialMap, gcMap, inclusionMap);
+        if (eNpcBaseSheet == null)
+        {
+            return (gilMap, specialMap, gcMap, inclusionMap);
+        }
 
-        var gilShopIds       = new HashSet<uint>(Dalamud.GameData.GetExcelSheet<GilShop>()?.Select(r => r.RowId)       ?? Enumerable.Empty<uint>());
-        var specialShopIds   = new HashSet<uint>(Dalamud.GameData.GetExcelSheet<SpecialShop>()?.Select(r => r.RowId)   ?? Enumerable.Empty<uint>());
-        var gcShopIds        = new HashSet<uint>(Dalamud.GameData.GetExcelSheet<GCShop>()?.Select(r => r.RowId)        ?? Enumerable.Empty<uint>());
-        var inclusionShopIds = new HashSet<uint>(Dalamud.GameData.GetExcelSheet<InclusionShop>()?.Select(r => r.RowId) ?? Enumerable.Empty<uint>());
-        var fateShopSheet    = Dalamud.GameData.GetExcelSheet<FateShop>();
+        var gilShopIds = new HashSet<uint>(Dalamud.GameData.GetExcelSheet<GilShop>()?.Select(r => r.RowId) ?? []);
+        var specialShopIds = new HashSet<uint>(Dalamud.GameData.GetExcelSheet<SpecialShop>()?.Select(r => r.RowId) ?? []);
+        var gcShopIds = new HashSet<uint>(Dalamud.GameData.GetExcelSheet<GCShop>()?.Select(r => r.RowId) ?? []);
+        var inclusionShopIds = new HashSet<uint>(Dalamud.GameData.GetExcelSheet<InclusionShop>()?.Select(r => r.RowId) ?? []);
+        var fateShopSheet = Dalamud.GameData.GetExcelSheet<FateShop>();
 
         foreach (var (npcId, shopId) in ExtraSpecialShops)
+        {
             AddToMap(specialMap, shopId, npcId);
+        }
+
         foreach (var (npcId, shopId) in ExtraGilShops)
+        {
             AddToMap(gilMap, shopId, npcId);
+        }
 
         foreach (var npc in eNpcBaseSheet)
         {
             if (fateShopSheet != null && fateShopSheet.TryGetRow(npc.RowId, out var fateShop))
+            {
                 foreach (var ss in fateShop.SpecialShop)
-                    if (ss.RowId > 0) AddToMap(specialMap, ss.RowId, npc.RowId);
+                {
+                    if (ss.RowId > 0)
+                    {
+                        AddToMap(specialMap, ss.RowId, npc.RowId);
+                    }
+                }
+            }
 
             foreach (var dataEntry in npc.ENpcData)
             {
                 var id = dataEntry.RowId;
-                if (id == 0) continue;
-                if (gilShopIds.Contains(id))           AddToMap(gilMap,       id, npc.RowId);
-                else if (specialShopIds.Contains(id))  AddToMap(specialMap,   id, npc.RowId);
-                else if (gcShopIds.Contains(id))       AddToMap(gcMap,        id, npc.RowId);
-                else if (inclusionShopIds.Contains(id))AddToMap(inclusionMap, id, npc.RowId);
+                if (id == 0)
+                {
+                    continue;
+                }
+
+                if (gilShopIds.Contains(id))
+                {
+                    AddToMap(gilMap, id, npc.RowId);
+                }
+                else if (specialShopIds.Contains(id))
+                {
+                    AddToMap(specialMap, id, npc.RowId);
+                }
+                else if (gcShopIds.Contains(id))
+                {
+                    AddToMap(gcMap, id, npc.RowId);
+                }
+                else if (inclusionShopIds.Contains(id))
+                {
+                    AddToMap(inclusionMap, id, npc.RowId);
+                }
             }
         }
         return (gilMap, specialMap, gcMap, inclusionMap);
@@ -475,45 +592,83 @@ public static class VendorShopResolver
         {
             foreach (var inclusionId in inclusionIds)
             {
-                if (!inclusionMap.TryGetValue(inclusionId, out var npcIds)) continue;
+                if (!inclusionMap.TryGetValue(inclusionId, out var npcIds))
+                {
+                    continue;
+                }
+
                 foreach (var npcId in npcIds)
+                {
                     AddToMap(specialMap, specialId, npcId);
+                }
             }
         }
     }
 
     private static Dictionary<uint, HashSet<uint>> BuildSpecialShopToInclusionShopMap()
     {
-        var result         = new Dictionary<uint, HashSet<uint>>();
+        var result = new Dictionary<uint, HashSet<uint>>();
         var inclusionSheet = Dalamud.GameData.GetExcelSheet<InclusionShop>();
-        var catSheet       = Dalamud.GameData.GetExcelSheet<InclusionShopCategory>();
-        var seriesSheet    = Dalamud.GameData.GetSubrowExcelSheet<InclusionShopSeries>();
-        if (inclusionSheet == null || catSheet == null || seriesSheet == null) return result;
+        var catSheet = Dalamud.GameData.GetExcelSheet<InclusionShopCategory>();
+        var seriesSheet = Dalamud.GameData.GetSubrowExcelSheet<InclusionShopSeries>();
+        if (inclusionSheet == null || catSheet == null || seriesSheet == null)
+        {
+            return result;
+        }
+
         var seriesToInclusion = new Dictionary<uint, HashSet<uint>>();
         foreach (var inclusionShop in inclusionSheet)
         {
             foreach (var catRef in inclusionShop.Category)
             {
-                if (catRef.RowId == 0) continue;
-                if (!catSheet.TryGetRow(catRef.RowId, out var cat)) continue;
+                if (catRef.RowId == 0)
+                {
+                    continue;
+                }
+
+                if (!catSheet.TryGetRow(catRef.RowId, out var cat))
+                {
+                    continue;
+                }
+
                 var seriesId = cat.InclusionShopSeries.RowId;
-                if (seriesId == 0) continue;
+                if (seriesId == 0)
+                {
+                    continue;
+                }
+
                 if (!seriesToInclusion.TryGetValue(seriesId, out var inclusionIds))
-                    seriesToInclusion[seriesId] = inclusionIds = new HashSet<uint>();
+                {
+                    seriesToInclusion[seriesId] = inclusionIds = [];
+                }
+
                 inclusionIds.Add(inclusionShop.RowId);
             }
         }
 
         foreach (var seriesRow in seriesSheet)
         {
-            if (!seriesToInclusion.TryGetValue(seriesRow.RowId, out var inclusionIds)) continue;
+            if (!seriesToInclusion.TryGetValue(seriesRow.RowId, out var inclusionIds))
+            {
+                continue;
+            }
+
             foreach (var subRow in seriesRow)
             {
-                if (subRow.SpecialShop.RowId == 0) continue;
+                if (subRow.SpecialShop.RowId == 0)
+                {
+                    continue;
+                }
+
                 if (!result.TryGetValue(subRow.SpecialShop.RowId, out var specialInclusionIds))
-                    result[subRow.SpecialShop.RowId] = specialInclusionIds = new HashSet<uint>();
+                {
+                    result[subRow.SpecialShop.RowId] = specialInclusionIds = [];
+                }
+
                 foreach (var inclusionId in inclusionIds)
+                {
                     specialInclusionIds.Add(inclusionId);
+                }
             }
         }
 
@@ -522,12 +677,14 @@ public static class VendorShopResolver
 
     private static Dictionary<uint, List<InclusionShopRoute>> BuildSpecialShopInclusionRoutes()
     {
-        var result         = new Dictionary<uint, List<InclusionShopRoute>>();
+        var result = new Dictionary<uint, List<InclusionShopRoute>>();
         var inclusionSheet = Dalamud.GameData.GetExcelSheet<InclusionShop>();
-        var catSheet       = Dalamud.GameData.GetExcelSheet<InclusionShopCategory>();
-        var seriesSheet    = Dalamud.GameData.GetSubrowExcelSheet<InclusionShopSeries>();
+        var catSheet = Dalamud.GameData.GetExcelSheet<InclusionShopCategory>();
+        var seriesSheet = Dalamud.GameData.GetSubrowExcelSheet<InclusionShopSeries>();
         if (inclusionSheet == null || catSheet == null || seriesSheet == null)
+        {
             return result;
+        }
 
         var seriesToInclusionPages = new Dictionary<uint, List<(uint InclusionShopId, int PageIndex)>>();
         foreach (var inclusionShop in inclusionSheet)
@@ -536,14 +693,21 @@ public static class VendorShopResolver
             {
                 var categoryRef = inclusionShop.Category[pageIndex];
                 if (categoryRef.RowId == 0 || !catSheet.TryGetRow(categoryRef.RowId, out var category))
+                {
                     continue;
+                }
 
                 var seriesId = category.InclusionShopSeries.RowId;
                 if (seriesId == 0)
+                {
                     continue;
+                }
 
                 if (!seriesToInclusionPages.TryGetValue(seriesId, out var inclusionPages))
+                {
                     seriesToInclusionPages[seriesId] = inclusionPages = [];
+                }
+
                 inclusionPages.Add((inclusionShop.RowId, pageIndex));
             }
         }
@@ -551,22 +715,30 @@ public static class VendorShopResolver
         foreach (var seriesRow in seriesSheet)
         {
             if (!seriesToInclusionPages.TryGetValue(seriesRow.RowId, out var inclusionPages))
+            {
                 continue;
+            }
 
             for (var subPageIndex = 0; subPageIndex < seriesRow.Count; subPageIndex++)
             {
                 var subRow = seriesRow[subPageIndex];
                 if (subRow.SpecialShop.RowId == 0)
+                {
                     continue;
+                }
 
                 if (!result.TryGetValue(subRow.SpecialShop.RowId, out var routes))
+                {
                     result[subRow.SpecialShop.RowId] = routes = [];
+                }
 
                 foreach (var (inclusionShopId, pageIndex) in inclusionPages)
                 {
                     var route = new InclusionShopRoute(inclusionShopId, pageIndex, subPageIndex + 1);
                     if (!routes.Contains(route))
+                    {
                         routes.Add(route);
+                    }
                 }
 
             }
@@ -577,17 +749,29 @@ public static class VendorShopResolver
     private static bool AddToMap(Dictionary<uint, HashSet<uint>> map, uint shopId, uint npcId)
     {
         if (!map.TryGetValue(shopId, out var set))
-            map[shopId] = set = new HashSet<uint>();
+        {
+            map[shopId] = set = [];
+        }
+
         return set.Add(npcId);
     }
 
     private static List<VendorNpc> ResolveNpcs(uint shopId, Dictionary<uint, HashSet<uint>> npcMap, Dictionary<uint, string> npcNames)
     {
-        if (!npcMap.TryGetValue(shopId, out var npcIds)) return new List<VendorNpc>();
+        if (!npcMap.TryGetValue(shopId, out var npcIds))
+        {
+            return [];
+        }
+
         var result = new List<VendorNpc>();
         foreach (var npcId in npcIds)
+        {
             if (npcNames.TryGetValue(npcId, out var name))
+            {
                 result.Add(new VendorNpc(npcId, name, shopId));
+            }
+        }
+
         return result;
     }
 
@@ -606,7 +790,9 @@ public static class VendorShopResolver
             foreach (var npcId in directNpcIds)
             {
                 if (!npcNames.TryGetValue(npcId, out var name))
+                {
                     continue;
+                }
 
                 AddSpecialShopVendor(resultByNpcId, new VendorNpc(npcId, name, shopId, VendorMenuShopType.SpecialShop));
             }
@@ -617,12 +803,16 @@ public static class VendorShopResolver
             foreach (var route in routes.OrderBy(route => route.PageIndex).ThenBy(route => route.SubPageIndex).ThenBy(route => route.InclusionShopId))
             {
                 if (!inclusionMap.TryGetValue(route.InclusionShopId, out var inclusionNpcIds))
+                {
                     continue;
+                }
 
                 foreach (var npcId in inclusionNpcIds)
                 {
                     if (!npcNames.TryGetValue(npcId, out var name))
+                    {
                         continue;
+                    }
 
                     AddSpecialShopVendor(resultByNpcId, new VendorNpc(
                         npcId,
@@ -640,38 +830,41 @@ public static class VendorShopResolver
             foreach (var npcId in fallbackNpcIds)
             {
                 if (!npcNames.TryGetValue(npcId, out var name))
+                {
                     continue;
+                }
 
                 AddSpecialShopVendor(resultByNpcId, new VendorNpc(npcId, name, shopId, VendorMenuShopType.SpecialShop));
             }
         }
 
-        return resultByNpcId.Values
+        return [.. resultByNpcId.Values
             .OrderBy(npc => npc.Name, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(npc => npc.NpcId)
-            .ToList();
+            .ThenBy(npc => npc.NpcId)];
     }
 
     private static void AddSpecialShopVendor(Dictionary<uint, VendorNpc> vendors, VendorNpc candidate)
     {
         if (!vendors.TryGetValue(candidate.NpcId, out var existing)
          || GetSpecialShopVendorPriority(candidate) < GetSpecialShopVendorPriority(existing))
+        {
             vendors[candidate.NpcId] = candidate;
+        }
     }
 
     private static int GetSpecialShopVendorPriority(VendorNpc npc)
         => npc.MenuShopType switch
         {
             VendorMenuShopType.InclusionShop => 0,
-            VendorMenuShopType.SpecialShop   => 1,
-            _                               => 2,
+            VendorMenuShopType.SpecialShop => 1,
+            _ => 2,
         };
 
     private static List<VendorShopEntry> DeduplicateEntries(List<VendorShopEntry> entries)
     {
         var indexByKey = new Dictionary<(VendorShopType ShopType, uint ItemId, uint Cost, uint CurrencyItemId), int>();
-        var result     = new List<VendorShopEntry>();
-        var npcIdSets  = new List<HashSet<(uint NpcId, VendorMenuShopType MenuShopType, uint ShopId, int InclusionPageIndex, int InclusionSubPageIndex, uint SourceShopId, int ShopItemIndex, int GcRankIndex, int GcCategoryIndex)>>();
+        var result = new List<VendorShopEntry>();
+        var npcIdSets = new List<HashSet<(uint NpcId, VendorMenuShopType MenuShopType, uint ShopId, int InclusionPageIndex, int InclusionSubPageIndex, uint SourceShopId, int ShopItemIndex, int GcRankIndex, int GcCategoryIndex)>>();
 
         foreach (var entry in entries)
         {
@@ -685,14 +878,18 @@ public static class VendorShopResolver
                 idx = result.Count;
                 indexByKey[key] = idx;
                 result.Add(entry);
-                npcIdSets.Add(new HashSet<(uint NpcId, VendorMenuShopType MenuShopType, uint ShopId, int InclusionPageIndex, int InclusionSubPageIndex, uint SourceShopId, int ShopItemIndex, int GcRankIndex, int GcCategoryIndex)>(
-                    entry.Npcs.Select(n => (n.NpcId, n.MenuShopType, n.ShopId, n.InclusionPageIndex, n.InclusionSubPageIndex, n.SourceShopId, n.ShopItemIndex, n.GcRankIndex, n.GcCategoryIndex))));
+                npcIdSets.Add([with(
+                    entry.Npcs.Select(n => (n.NpcId, n.MenuShopType, n.ShopId, n.InclusionPageIndex, n.InclusionSubPageIndex, n.SourceShopId, n.ShopItemIndex, n.GcRankIndex, n.GcCategoryIndex)))]);
             }
             else
             {
                 foreach (var npc in entry.Npcs)
+                {
                     if (npcIdSets[idx].Add((npc.NpcId, npc.MenuShopType, npc.ShopId, npc.InclusionPageIndex, npc.InclusionSubPageIndex, npc.SourceShopId, npc.ShopItemIndex, npc.GcRankIndex, npc.GcCategoryIndex)))
+                    {
                         result[idx].Npcs.Add(npc);
+                    }
+                }
             }
         }
         return result;
@@ -701,7 +898,9 @@ public static class VendorShopResolver
     private static List<VendorShopEntry> MergeEquivalentOtherEntriesIntoTomestones(List<VendorShopEntry> entries)
     {
         if (entries.Count == 0)
+        {
             return entries;
+        }
 
         var mergedEntries = new List<VendorShopEntry>();
         var mergedRowCount = 0;
@@ -724,14 +923,18 @@ public static class VendorShopResolver
             foreach (var otherEntry in itemEntries.Where(entry => entry.Group == VendorCurrencyGroup.Other).ToList())
             {
                 if (!tomestoneEntriesByCost.TryGetValue(otherEntry.Cost, out var tomestoneEntry))
+                {
                     continue;
+                }
 
                 var npcSet = new HashSet<(uint NpcId, VendorMenuShopType MenuShopType, uint ShopId, int InclusionPageIndex, int InclusionSubPageIndex, uint SourceShopId, int ShopItemIndex, int GcRankIndex, int GcCategoryIndex)>(
                     tomestoneEntry.Npcs.Select(npc => (npc.NpcId, npc.MenuShopType, npc.ShopId, npc.InclusionPageIndex, npc.InclusionSubPageIndex, npc.SourceShopId, npc.ShopItemIndex, npc.GcRankIndex, npc.GcCategoryIndex)));
                 foreach (var npc in otherEntry.Npcs)
                 {
                     if (!npcSet.Add((npc.NpcId, npc.MenuShopType, npc.ShopId, npc.InclusionPageIndex, npc.InclusionSubPageIndex, npc.SourceShopId, npc.ShopItemIndex, npc.GcRankIndex, npc.GcCategoryIndex)))
+                    {
                         continue;
+                    }
 
                     tomestoneEntry.Npcs.Add(npc);
                     mergedNpcCount++;
@@ -745,7 +948,9 @@ public static class VendorShopResolver
         }
 
         if (mergedRowCount > 0)
+        {
             GatherBuddy.Log.Debug($"[VendorShopResolver] Merged {mergedRowCount} Other rows into matching Tomestones rows, adding {mergedNpcCount} NPC mappings");
+        }
 
         return mergedEntries;
     }
@@ -758,7 +963,7 @@ public static class VendorShopResolver
     public static VendorCurrencyGroup GetCurrencyGroup(VendorShopType shopType, uint currencyItemId)
         => shopType switch
         {
-            VendorShopType.GilShop           => VendorCurrencyGroup.Gil,
+            VendorShopType.GilShop => VendorCurrencyGroup.Gil,
             VendorShopType.GrandCompanySeals => VendorCurrencyGroup.GrandCompanySeals,
             _ when currencyItemId == BicolorCurrencyItemId => VendorCurrencyGroup.BicolorGemstones,
             _ when TomestoneIds.Contains(currencyItemId) => VendorCurrencyGroup.Tomestones,
@@ -771,12 +976,36 @@ public static class VendorShopResolver
 
     private static VendorCurrencyGroup ClassifyCurrency(uint currencyItemId, IReadOnlySet<uint> tomestoneItemIds)
     {
-        if (currencyItemId == BicolorCurrencyItemId) return VendorCurrencyGroup.BicolorGemstones;
-        if (TomestoneIds.Contains(currencyItemId) || IsLegacyTomestoneCurrency(currencyItemId, tomestoneItemIds)) return VendorCurrencyGroup.Tomestones;
-        if (HuntSealIds.Contains(currencyItemId))    return VendorCurrencyGroup.HuntSeals;
-        if (ScripIds.Contains(currencyItemId))       return VendorCurrencyGroup.Scrips;
-        if (currencyItemId == MgpCurrencyItemId)     return VendorCurrencyGroup.MGP;
-        if (currencyItemId == WolfMarkCurrencyItemId) return VendorCurrencyGroup.PvP;
+        if (currencyItemId == BicolorCurrencyItemId)
+        {
+            return VendorCurrencyGroup.BicolorGemstones;
+        }
+
+        if (TomestoneIds.Contains(currencyItemId) || IsLegacyTomestoneCurrency(currencyItemId, tomestoneItemIds))
+        {
+            return VendorCurrencyGroup.Tomestones;
+        }
+
+        if (HuntSealIds.Contains(currencyItemId))
+        {
+            return VendorCurrencyGroup.HuntSeals;
+        }
+
+        if (ScripIds.Contains(currencyItemId))
+        {
+            return VendorCurrencyGroup.Scrips;
+        }
+
+        if (currencyItemId == MgpCurrencyItemId)
+        {
+            return VendorCurrencyGroup.MGP;
+        }
+
+        if (currencyItemId == WolfMarkCurrencyItemId)
+        {
+            return VendorCurrencyGroup.PvP;
+        }
+
         return VendorCurrencyGroup.Other;
     }
     private static uint NormalizeCurrencyItemIdForVendorGrouping(uint currencyItemId, IReadOnlySet<uint> tomestoneItemIds)
@@ -849,10 +1078,13 @@ public static class VendorShopResolver
     private static List<VendorShopEntry> BuildGilShopEntries(
         Dictionary<uint, HashSet<uint>> npcMap, Dictionary<uint, string> npcNames)
     {
-        var entries  = new List<VendorShopEntry>();
+        var entries = new List<VendorShopEntry>();
         var gilSheet = Dalamud.GameData.GetSubrowExcelSheet<GilShopItem>();
         var itemSheet = Dalamud.GameData.GetExcelSheet<Item>();
-        if (gilSheet == null || itemSheet == null) return entries;
+        if (gilSheet == null || itemSheet == null)
+        {
+            return entries;
+        }
 
         foreach (var shopRow in gilSheet)
         {
@@ -860,14 +1092,25 @@ public static class VendorShopResolver
             foreach (var row in shopRow)
             {
                 var itemId = row.Item.RowId;
-                if (itemId == 0) continue;
-                if (!itemSheet.TryGetRow(itemId, out var item)) continue;
+                if (itemId == 0)
+                {
+                    continue;
+                }
+
+                if (!itemSheet.TryGetRow(itemId, out var item))
+                {
+                    continue;
+                }
+
                 var price = item.PriceMid;
-                if (price == 0) continue;
+                if (price == 0)
+                {
+                    continue;
+                }
 
                 entries.Add(new VendorShopEntry(
                     itemId, item.Name.ExtractText(), (ushort)item.Icon,
-                    price, GilCurrencyItemId, "Gil", new List<VendorNpc>(npcs), VendorShopType.GilShop, VendorCurrencyGroup.Gil));
+                    price, GilCurrencyItemId, "Gil", [with(npcs)], VendorShopType.GilShop, VendorCurrencyGroup.Gil));
             }
         }
 
@@ -889,14 +1132,18 @@ public static class VendorShopResolver
         var multiCostListings    = 0;
         var reprioritizedListings = 0;
         var skippedExchangeListings = 0;
-        var specialSheet         = Dalamud.GameData.GetExcelSheet<SpecialShop>();
-        var itemSheet            = Dalamud.GameData.GetExcelSheet<Item>();
-        if (specialSheet == null || itemSheet == null) return entries;
-        var tomestoneItemIds     = BuildTomestoneItemIdSet(tomestoneLookup);
+        var specialSheet = Dalamud.GameData.GetExcelSheet<SpecialShop>();
+        var itemSheet = Dalamud.GameData.GetExcelSheet<Item>();
+        if (specialSheet == null || itemSheet == null)
+        {
+            return entries;
+        }
+
+        var tomestoneItemIds = BuildTomestoneItemIdSet(tomestoneLookup);
 
         foreach (var shop in specialSheet)
         {
-            var npcs            = ResolveSpecialShopNpcs(shop.RowId, displayNpcMap, directSpecialMap, inclusionMap, inclusionRoutes, npcNames);
+            var npcs = ResolveSpecialShopNpcs(shop.RowId, displayNpcMap, directSpecialMap, inclusionMap, inclusionRoutes, npcNames);
             var useCurrencyType = shop.UseCurrencyType;
             var shopItemIndex   = 0;
             var sourceItemIndex = -1;
@@ -1052,7 +1299,7 @@ public static class VendorShopResolver
         {
             <= 4u => 0,
             <= 8u => 1,
-            _     => 2,
+            _ => 2,
         };
 
     private static int GetGrandCompanyCategoryTabIndex(int subCategory)
@@ -1068,46 +1315,76 @@ public static class VendorShopResolver
     private static List<VendorShopEntry> BuildGcShopEntries(
         Dictionary<uint, HashSet<uint>> npcMap, Dictionary<uint, string> npcNames)
     {
-        var entries      = new List<VendorShopEntry>();
-        var catSheet     = Dalamud.GameData.GetSubrowExcelSheet<GCScripShopItem>();
-        var itemSheet    = Dalamud.GameData.GetExcelSheet<Item>();
-        var gcShopSheet  = Dalamud.GameData.GetExcelSheet<GCShop>();
-        var gcCatSheet   = Dalamud.GameData.GetExcelSheet<GCScripShopCategory>();
-        if (catSheet == null || itemSheet == null || gcCatSheet == null) return entries;
+        var entries = new List<VendorShopEntry>();
+        var catSheet = Dalamud.GameData.GetSubrowExcelSheet<GCScripShopItem>();
+        var itemSheet = Dalamud.GameData.GetExcelSheet<Item>();
+        var gcShopSheet = Dalamud.GameData.GetExcelSheet<GCShop>();
+        var gcCatSheet = Dalamud.GameData.GetExcelSheet<GCScripShopCategory>();
+        if (catSheet == null || itemSheet == null || gcCatSheet == null)
+        {
+            return entries;
+        }
 
         // GrandCompany.RowId > GCShop.RowId (one shop per grand company)
         var grandCompanyToGcShop = new Dictionary<uint, uint>();
         if (gcShopSheet != null)
+        {
             foreach (var gcShop in gcShopSheet)
+            {
                 if (gcShop.GrandCompany.RowId > 0)
+                {
                     grandCompanyToGcShop.TryAdd(gcShop.GrandCompany.RowId, gcShop.RowId);
+                }
+            }
+        }
 
         foreach (var categoryRow in catSheet)
         {
             if (!gcCatSheet.TryGetRow(categoryRow.RowId, out var category))
+            {
                 continue;
+            }
 
             var grandCompanyId = category.GrandCompany.RowId;
             if (grandCompanyId == 0)
+            {
                 continue;
+            }
+
             if (!grandCompanyToGcShop.TryGetValue(grandCompanyId, out var gcShopId))
+            {
                 continue;
+            }
 
             var currencyItemId = GetGrandCompanySealCurrencyItemId(grandCompanyId);
             var currencyName = GetGrandCompanySealCurrencyName(itemSheet, grandCompanyId);
             var gcCategoryIndex = GetGrandCompanyCategoryTabIndex(category.SubCategory);
             if (gcCategoryIndex < 0)
+            {
                 continue;
+            }
 
             var baseNpcs = ResolveNpcs(gcShopId, npcMap, npcNames);
 
             foreach (var row in categoryRow)
             {
                 var itemId = row.Item.RowId;
-                if (itemId == 0) continue;
-                if (!itemSheet.TryGetRow(itemId, out var item)) continue;
+                if (itemId == 0)
+                {
+                    continue;
+                }
+
+                if (!itemSheet.TryGetRow(itemId, out var item))
+                {
+                    continue;
+                }
+
                 var cost = row.CostGCSeals;
-                if (cost == 0) continue;
+                if (cost == 0)
+                {
+                    continue;
+                }
+
                 var gcRankIndex = GetGrandCompanyRankTabIndex(row.RequiredGrandCompanyRank.RowId);
                 var npcs = baseNpcs
                     .Select(npc => npc with
@@ -1120,7 +1397,7 @@ public static class VendorShopResolver
 
                 entries.Add(new VendorShopEntry(
                     itemId, item.Name.ExtractText(), (ushort)item.Icon,
-                    cost, currencyItemId, currencyName, new List<VendorNpc>(npcs),
+                    cost, currencyItemId, currencyName, [with(npcs)],
                     VendorShopType.GrandCompanySeals, VendorCurrencyGroup.GrandCompanySeals));
             }
         }

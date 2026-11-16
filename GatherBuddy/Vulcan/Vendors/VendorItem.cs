@@ -49,13 +49,13 @@ public sealed record VendorNpc(
 );
 
 public sealed record VendorShopEntry(
-    uint                ItemId,
-    string              ItemName,
-    ushort              IconId,
-    uint                Cost,
-    uint                CurrencyItemId,
-    string              CurrencyName,
-    List<VendorNpc>     Npcs,
-    VendorShopType      ShopType,
+    uint ItemId,
+    string ItemName,
+    ushort IconId,
+    uint Cost,
+    uint CurrencyItemId,
+    string CurrencyName,
+    List<VendorNpc> Npcs,
+    VendorShopType ShopType,
     VendorCurrencyGroup Group
 );

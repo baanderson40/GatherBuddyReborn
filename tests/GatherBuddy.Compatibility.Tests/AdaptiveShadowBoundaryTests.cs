@@ -492,14 +492,14 @@ public class AdaptiveShadowBoundaryTests
     public void SettingsExposeStatusAndStopWithoutSeparateArmingOrNativeReads()
     {
         using var assembly = new AssemblyView();
-        Assert.DoesNotContain("DrawAdaptiveSolverSettings", assembly.Calls("VulcanWindow", "DrawGeneralSettings"));
-        Assert.Contains("DrawAdaptiveSolverSettings", assembly.Calls("VulcanWindow", "DrawSettingsPanels"));
-        Assert.Contains("DrawSettingsSectionLink", assembly.Calls("VulcanWindow", "DrawSettingsPanels"));
-        var permission = assembly.Calls("VulcanWindow", "DrawAdaptiveSolverSettings");
+        Assert.Contains("DrawAdaptiveSettings", assembly.Calls("VulcanWindow", "DrawSettingsPage"));
+        Assert.Contains("DrawAdaptiveShadowDebug", assembly.Calls("VulcanWindow", "DrawDebugPage"));
+        var permission = assembly.Calls("VulcanWindow", "DrawAdaptiveShadowDebug");
         Assert.Contains("RequestStop", permission);
         Assert.DoesNotContain("TryFrame", permission);
-        Assert.Contains("Save", permission);
-        Assert.Contains("ReloadSolvers", permission); // Target changes revoke preparing/live context.
+        var settings = assembly.Calls("VulcanWindow", "DrawAdaptiveSettings");
+        Assert.Contains("Save", settings);
+        Assert.Contains("ReloadSolvers", settings); // Target changes revoke preparing/live context.
         foreach (var method in new[] { "Initialize", "ReloadSolvers", "ReloadSolversForCraft", "StartCraft" })
         {
             Assert.DoesNotContain("RequestArm", assembly.Calls("CraftingGameInterop", method));

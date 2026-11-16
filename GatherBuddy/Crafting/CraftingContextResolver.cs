@@ -1,8 +1,8 @@
-using System.Collections.Generic;
-using System.Linq;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using GatherBuddy.Vulcan;
 using Lumina.Excel.Sheets;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace GatherBuddy.Crafting;
 
@@ -142,7 +142,7 @@ public static class CraftingContextResolver
                 Skipping = sourceItem.Options.Skipping,
                 NQOnly = sourceItem.Options.NQOnly,
             },
-            IngredientPreferences = new Dictionary<uint, int>(sourceItem.IngredientPreferences),
+            IngredientPreferences = [with(sourceItem.IngredientPreferences)],
             ConsumableOverrides = sourceItem.ConsumableOverrides.Clone(),
             IsOriginalRecipe = sourceItem.IsOriginalRecipe,
             CraftSettings = useSourceSettingsOverride ? sourceSettingsOverride?.Clone() : sourceItem.CraftSettings?.Clone(),
@@ -182,7 +182,9 @@ public static class CraftingContextResolver
         var requiredJob = (uint)(recipe.CraftType.RowId + 8);
         var stats = ResolvePlayerStats(requiredJob, executionContext.ConsumableSettings, statsSource, intent);
         if (stats == null)
+        {
             return false;
+        }
 
         var initialQuality = executionContext.QualityPolicy.CalculateGuaranteedInitialQuality(recipe);
         var craft = GameStateBuilder.BuildCraftState(CraftingStateBuilder.BuildRecipeInfo(recipe), stats) with { InitialQuality = initialQuality };
@@ -197,7 +199,10 @@ public static class CraftingContextResolver
     public static bool HasRecipeCraftedBefore(Recipe recipe)
     {
         if (recipe.SecretRecipeBook.RowId > 0)
+        {
             return true;
+        }
+
         return QuestManager.IsRecipeComplete(recipe.RowId);
     }
 
@@ -205,14 +210,19 @@ public static class CraftingContextResolver
     {
         item.QualityPolicy ??= CraftingQualityPolicyResolver.Resolve(recipe, item.CraftSettings);
         if (item.IngredientPreferences.Count == 0)
+        {
             item.IngredientPreferences = item.QualityPolicy.BuildGuaranteedHQPreferences();
+        }
+
         return item.QualityPolicy;
     }
 
     public static RecipeCraftSettings? BuildConsumableSettings(CraftingListItem item, CraftingListConsumableSettings? listConsumables)
     {
         if (listConsumables == null && !item.ConsumableOverrides.HasAnyOverrides() && item.CraftSettings == null)
+        {
             return null;
+        }
 
         var foodItemId = listConsumables?.FoodItemId;
         var foodHQ = listConsumables?.FoodHQ ?? false;
@@ -251,7 +261,9 @@ public static class CraftingContextResolver
         }
 
         if (!foodItemId.HasValue && !medicineItemId.HasValue && !manualItemId.HasValue && !squadronManualItemId.HasValue)
+        {
             return null;
+        }
 
         return new RecipeCraftSettings
         {
@@ -275,7 +287,10 @@ public static class CraftingContextResolver
             var stats = GearsetStatsReader.ReadGearsetStatsForJob(requiredJob);
             var previewConsumables = ConsumableChecker.GetValidatorPreviewCraftStatConsumables(consumableSettings);
             if (stats != null && previewConsumables != null)
+            {
                 stats = GearsetStatsReader.ApplyConsumablesToStats(stats, previewConsumables);
+            }
+
             return stats;
         }
 
@@ -284,7 +299,10 @@ public static class CraftingContextResolver
             var stats = GearsetStatsReader.ReadGearsetStatsForJob(requiredJob);
             var projectedConsumables = ConsumableChecker.GetProjectedCraftStatConsumables(consumableSettings);
             if (stats != null && projectedConsumables != null)
+            {
                 stats = GearsetStatsReader.ApplyConsumablesToStats(stats, projectedConsumables);
+            }
+
             return stats;
         }
 
@@ -294,14 +312,20 @@ public static class CraftingContextResolver
             var stats = CraftingStateBuilder.GetCurrentPlayerStats();
             var pendingConsumables = ConsumableChecker.GetPendingCraftStatConsumables(consumableSettings);
             if (stats != null && pendingConsumables != null)
+            {
                 stats = GearsetStatsReader.ApplyConsumablesToStats(stats, pendingConsumables);
+            }
+
             return stats;
         }
 
         var gearsetStats = GearsetStatsReader.ReadGearsetStatsForJob(requiredJob);
         var projected = ConsumableChecker.GetProjectedCraftStatConsumables(consumableSettings);
         if (gearsetStats != null && projected != null)
+        {
             gearsetStats = GearsetStatsReader.ApplyConsumablesToStats(gearsetStats, projected);
+        }
+
         return gearsetStats;
     }
 
@@ -315,7 +339,9 @@ public static class CraftingContextResolver
         {
             var originalItem = list.Recipes.FirstOrDefault(candidate => candidate.RecipeId == recipeId);
             if (originalItem == null)
+            {
                 return false;
+            }
 
             item = new CraftingListItem(recipeId, originalItem.Quantity)
             {
@@ -324,7 +350,7 @@ public static class CraftingContextResolver
                     Skipping = originalItem.Options.Skipping,
                     NQOnly = originalItem.Options.NQOnly,
                 },
-                IngredientPreferences = new Dictionary<uint, int>(originalItem.IngredientPreferences),
+                IngredientPreferences = [with(originalItem.IngredientPreferences)],
                 ConsumableOverrides = originalItem.ConsumableOverrides.Clone(),
                 IsOriginalRecipe = true,
                 CraftSettings = originalItem.CraftSettings?.Clone(),
@@ -381,7 +407,9 @@ public static class CraftingContextResolver
     private static void ApplyOverride(ConsumableOverride? overrideSetting, ref uint? itemId, ref bool hq)
     {
         if (overrideSetting == null)
+        {
             return;
+        }
 
         switch (overrideSetting.Mode)
         {
@@ -401,7 +429,9 @@ public static class CraftingContextResolver
     private static void ApplyOverride(ConsumableOverride? overrideSetting, ref uint? itemId)
     {
         if (overrideSetting == null)
+        {
             return;
+        }
 
         switch (overrideSetting.Mode)
         {

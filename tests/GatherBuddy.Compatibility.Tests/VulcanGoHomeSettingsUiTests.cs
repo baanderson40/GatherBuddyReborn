@@ -14,20 +14,22 @@ public class VulcanGoHomeSettingsUiTests
         using var pe = new PEReader(file);
         var metadata = pe.GetMetadataReader();
         var type = Assert.Single(metadata.TypeDefinitions,
-            h => metadata.GetString(metadata.GetTypeDefinition(h).Name) == "VulcanWindow");
+            h => metadata.GetString(metadata.GetTypeDefinition(h).Name) == "GatherBuddySettings");
         var methods = metadata.GetTypeDefinition(type).GetMethods().ToArray();
-        var general = Assert.Single(methods,
-            h => metadata.GetString(metadata.GetMethodDefinition(h).Name) == "DrawGeneralSettings");
-        Assert.Contains("DrawGoHomeSettings", TeleportNativeBoundaryTests.Calls(pe, metadata, general));
         var home = Assert.Single(methods,
-            h => metadata.GetString(metadata.GetMethodDefinition(h).Name) == "DrawGoHomeSettings");
+            h => metadata.GetString(metadata.GetMethodDefinition(h).Name) == "BuildAutoGatherPage");
         var calls = TeleportNativeBoundaryTests.Calls(pe, metadata, home).ToArray();
-        Assert.Contains("Checkbox", calls);
-        Assert.Contains("get_GoHomeWhenIdle", calls);
-        Assert.Contains("set_GoHomeWhenIdle", calls);
-        Assert.Contains("Save", calls);
-        Assert.DoesNotContain("set_GoHomeWhenDone", calls);
+        Assert.Contains("PluginToggle", calls);
         Assert.DoesNotContain("ExecuteCommand", calls);
         Assert.DoesNotContain("TryStartReturnHome", calls);
+
+        var settingLambdas = metadata.MethodDefinitions
+            .Where(h => metadata.GetString(metadata.GetMethodDefinition(h).Name).StartsWith("<BuildAutoGatherPage>", StringComparison.Ordinal))
+            .SelectMany(h => TeleportNativeBoundaryTests.Calls(pe, metadata, h))
+            .ToArray();
+        Assert.Contains("get_GoHomeWhenIdle", settingLambdas);
+        Assert.Contains("set_GoHomeWhenIdle", settingLambdas);
+        Assert.Contains("get_GoHomeWhenDone", settingLambdas);
+        Assert.Contains("set_GoHomeWhenDone", settingLambdas);
     }
 }

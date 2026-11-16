@@ -1,26 +1,28 @@
+using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
+using Dalamud.Interface.Utility.Raii;
+using GatherBuddy.Crafting;
+using RebornMaterial;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
-using Dalamud.Interface.Windowing;
-using Dalamud.Bindings.ImGui;
-using GatherBuddy.Crafting;
 using GatherBuddy.Automation;
+
 
 namespace GatherBuddy.Gui;
 
-public class CraftingStatusWindow : Window
+public class CraftingStatusWindow : M3Window
 {
     private CraftingQueueProcessor? _queueProcessor;
     private bool? _pendingCollapseState = null;
     private bool _requestFocus = false;
-    private bool _wasFocusedLastFrame = false;
     private IReadOnlyList<CraftingListItem>? _cachedEstimateQueue = null;
     private CraftingListConsumableSettings? _cachedEstimateConsumables = null;
     private long[] _cachedRemainingEstimatesByIndex = [];
     private int _cachedEstimateQueueCount = -1;
     private int _cachedEstimateActionDelayMs = -1;
 
-    public CraftingStatusWindow() 
+    public CraftingStatusWindow()
         : base("Crafting Status###GatherBuddyCraftingStatus", ImGuiWindowFlags.AlwaysAutoResize)
     {
         IsOpen = false;
@@ -50,7 +52,9 @@ public class CraftingStatusWindow : Window
     public void OpenOrRestore()
     {
         if (_queueProcessor == null)
+        {
             return;
+        }
 
         IsOpen = true;
         _pendingCollapseState = false;
@@ -62,10 +66,12 @@ public class CraftingStatusWindow : Window
         return _queueProcessor != null && IsOpen;
     }
 
-    public override void PreDraw()
+    protected override void PreDrawThemed()
     {
         if (!IsOpen)
+        {
             return;
+        }
 
         ImGui.SetNextWindowSizeConstraints(VulcanUiScaling.Scaled(300f, 0f),
             new Vector2(VulcanUiScaling.Scaled(420f), float.MaxValue));
@@ -86,121 +92,113 @@ public class CraftingStatusWindow : Window
     public override void Draw()
     {
         if (_queueProcessor == null)
+        {
             return;
-        
-        var isFocused = ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows);
-        if (isFocused)
-        {
-            GatherBuddy.ControllerSupport?.UpdateFocusedWindow("Crafting Status###GatherBuddyCraftingStatus");
-            _wasFocusedLastFrame = true;
-        }
-        else if (_wasFocusedLastFrame)
-        {
-            GatherBuddy.ControllerSupport?.UpdateFocusedWindow(null);
-            _wasFocusedLastFrame = false;
         }
 
+        ReportFocus();
         var currentState = _queueProcessor.CurrentState;
         var currentIndex = _queueProcessor.CurrentQueueIndex;
         var currentItem = _queueProcessor.CurrentRecipeItem;
+        var complete = currentState == CraftingQueueProcessor.QueueState.Complete;
+        var paused = _queueProcessor.Paused;
+        var totalCount = _queueProcessor.QueueCount;
         var coordinator = GatherBuddy.AutoRetainerIntegration?.Coordinator;
         var handoff = coordinator?.YieldRequested == true ? coordinator : null;
         string? recipeName = null;
         if (currentItem != null
-         && Dalamud.GameData.GetExcelSheet<Lumina.Excel.Sheets.Recipe>().TryGetRow(currentItem.RecipeId, out var recipe))
+         && Dalamud.GameData.GetExcelSheet<Lumina.Excel.Sheets.Recipe>()?.TryGetRow(currentItem.RecipeId, out var recipe) == true)
             recipeName = recipe.ItemResult.Value.Name.ExtractText();
         var gatherItemName = currentState == CraftingQueueProcessor.QueueState.WaitingForGather
             && ReferenceEquals(_queueProcessor, CraftingGatherBridge.AutoRetainerQueue)
             && GatherBuddy.AutoGather.CurrentRequestedTarget is { } target
                 ? target.Name[GatherBuddy.Language] : null;
 
-        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.0f, 1.0f, 0.8f, 1.0f));
-        ImGui.TextWrapped(CraftingStatusPresentation.GetHeader(currentState, _queueProcessor.Paused, handoff?.State,
-            recipeName, _queueProcessor.ActivePurchaseItemName, gatherItemName));
-        ImGui.PopStyleColor();
+        var width = 300f * M3.Scale;
+        using var wrap = ImRaii.TextWrapPos(ImGui.GetCursorPosX() + width);
+        var header = CraftingStatusPresentation.GetHeader(currentState, paused, handoff?.State, recipeName,
+            _queueProcessor.ActivePurchaseItemName, gatherItemName);
+        using (ImRaii.PushFont(M3.TitleMedium))
+        {
+            ImGui.TextWrapped(header);
+        }
         if (handoff != null && ImGui.IsItemHovered())
-            ImGui.SetTooltip(handoff.Status);
-        ImGui.Spacing();
+            M3Tooltip.Hovered(handoff.Status);
 
+        var (stateLabel, stateTone, stateIcon) = DescribeState(currentState, paused);
+        M3Widgets.Pill("##craft_state", stateLabel, stateTone, stateIcon);
         var progress = _queueProcessor.Progress;
-        ImGui.Text($"{progress.ConfirmedCrafts} / {progress.RequestedCrafts} crafts confirmed");
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Counts expanded craft entries, not output item units. Only inventory-confirmed output advances successful crafts; explicit skips are excluded.");
-        ImGui.ProgressBar(progress.RequestedCrafts > 0
-                ? (float)progress.ConfirmedCrafts / progress.RequestedCrafts : 0f,
-            new Vector2(-1f, VulcanUiScaling.Scaled(8f)), string.Empty);
-        ImGui.Text($"{progress.RemainingCrafts} crafts remaining");
+        M3Text.Draw($"{progress.ConfirmedCrafts} / {progress.RequestedCrafts} crafts confirmed", M3TextStyle.Muted);
+        M3Tooltip.Hovered("Counts expanded craft entries, not output item units. Only inventory-confirmed output advances successful crafts; explicit skips are excluded.");
+        M3Widgets.LinearProgress(new Vector2(width, 6f * M3.Scale), progress.RequestedCrafts > 0
+            ? Math.Clamp((float)progress.ConfirmedCrafts / progress.RequestedCrafts, 0f, 1f) : 0f);
+        M3Text.Draw($"{progress.RemainingCrafts} crafts remaining", M3TextStyle.Muted);
         if (progress.ExplicitSkips > 0)
-            ImGui.TextDisabled($"{progress.ExplicitSkips} explicitly skipped");
+            M3Text.Draw($"{progress.ExplicitSkips} explicitly skipped", M3TextStyle.Warning);
 
-        // Recovery controls remain visible even with Details collapsed.
         if (handoff?.State == AutoRetainerHandoffState.Failed)
             AutoRetainerSettingsUi.DrawStatus();
         if (currentState == CraftingQueueProcessor.QueueState.BlockedByMaterials)
         {
-            ImGui.TextWrapped("Remaining work is retained. Add materials and Recheck without purchases, or explicitly Retry acquisition under the captured run policy.");
-            if (ImGui.Button("Recheck materials (no purchases)")) _queueProcessor.RecheckAcquiredMaterials();
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Re-read current inventory and select ready recipes. Does not start purchases or gathering.");
-            if (ImGui.Button("Retry acquisition")) _queueProcessor.RetryMaterialAcquisition();
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("May spend gil/current-GC seals allowed by the captured policy, then gather remaining supported materials. Earlier purchase spending still counts toward the run cap. Close crafting/vendor interactions first.");
+            M3Widgets.Banner("##blockedMaterials", "Remaining work is retained. Add materials and recheck without purchases, or explicitly retry acquisition under the captured run policy.",
+                M3Severity.Warning, FontAwesomeIcon.ExclamationTriangle);
+            if (M3Widgets.Button("##recheckMaterials", "Recheck materials (no purchases)", M3ButtonStyle.Tonal, FontAwesomeIcon.Sync))
+                _queueProcessor.RecheckAcquiredMaterials();
+            if (M3Widgets.Button("##retryAcquisition", "Retry acquisition", M3ButtonStyle.Outlined, FontAwesomeIcon.Redo,
+                    tooltip: "May spend gil/current-GC seals allowed by the captured policy, then gather remaining supported materials. Earlier purchase spending still counts toward the run cap."))
+                _queueProcessor.RetryMaterialAcquisition();
         }
 
-        if (_queueProcessor.Paused && !string.IsNullOrWhiteSpace(_queueProcessor.PauseReason))
+        if (paused && !string.IsNullOrWhiteSpace(_queueProcessor.PauseReason))
+            M3Text.Draw(_queueProcessor.PauseReason, M3TextStyle.Warning, true);
+
+        if (ShouldShowRemainingEstimate(currentState))
         {
-            ImGui.PushTextWrapPos();
-            ImGui.TextColored(new System.Numerics.Vector4(1.0f, 0.82f, 0.24f, 1.0f), _queueProcessor.PauseReason);
-            ImGui.PopTextWrapPos();
+            M3Text.Draw($"About {CraftingTimeEstimator.FormatDuration(GetRemainingEstimate(currentIndex))} left", M3TextStyle.Muted);
+            M3Tooltip.Hovered("Estimate uses the active craft path for each queue item. Excludes gathering, repairs, and job switching.");
         }
-
-        if (!ShouldRetainRemainingEstimateCache(currentState))
+        else if (!ShouldRetainRemainingEstimateCache(currentState))
+        {
             ResetRemainingEstimateCache();
+        }
 
-        ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.Spacing();
-
-        if (currentState == CraftingQueueProcessor.QueueState.Complete)
+        ImGui.Dummy(new Vector2(width, M3.Space1));
+        if (complete)
         {
-            if (ImGui.Button("Close"))
+            M3Text.Draw($"All {totalCount} crafts done", M3TextStyle.Success);
+            if (M3Widgets.Button("##craft_close", "Close", M3ButtonStyle.Filled, FontAwesomeIcon.Check))
             {
                 IsOpen = false;
                 _queueProcessor = null;
-                return;
+            }
+            return;
+        }
+
+        var retainedStop = currentState is CraftingQueueProcessor.QueueState.BlockedByMaterials
+            or CraftingQueueProcessor.QueueState.AcquisitionFailed or CraftingQueueProcessor.QueueState.Cancelled;
+        if (paused)
+        {
+            if (!retainedStop && handoff?.IsStopping != true)
+            {
+                using (ImRaii.Disabled(handoff != null))
+                {
+                    if (M3Widgets.Button("##craft_resume", "Resume", M3ButtonStyle.Filled, FontAwesomeIcon.Play))
+                        _queueProcessor.Resume();
+                }
+                if (handoff != null) M3Tooltip.Hovered(handoff.Status);
             }
         }
-        else
+        else if (!retainedStop && M3Widgets.Button("##craft_pause", "Pause", M3ButtonStyle.Tonal, FontAwesomeIcon.Pause,
+                     tooltip: "Pause queue processing. An active crafting action may finish first."))
         {
-            var retainedStop = currentState is CraftingQueueProcessor.QueueState.BlockedByMaterials
-                or CraftingQueueProcessor.QueueState.AcquisitionFailed or CraftingQueueProcessor.QueueState.Cancelled;
-            if (!retainedStop && !_queueProcessor.Paused && handoff?.IsStopping != true)
-            {
-                if (ImGui.Button("Pause"))
-                {
-                    _queueProcessor.Pause();
-                }
-                if (handoff != null && ImGui.IsItemHovered())
-                    ImGui.SetTooltip("Prevent automatic queue resume after AutoRetainer finishes. Does not cancel the AR pass.");
-            }
-            else if (!retainedStop && handoff?.IsStopping != true)
-            {
-                ImGui.BeginDisabled(handoff != null);
-                if (ImGui.Button("Resume"))
-                {
-                    _queueProcessor.Resume();
-                }
-                ImGui.EndDisabled();
-                if (handoff != null && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-                    ImGui.SetTooltip("Wait for the AutoRetainer handoff to settle before resuming.");
-            }
-            
-            if (!retainedStop && handoff?.IsStopping != true) ImGui.SameLine();
-            if (ImGui.Button("Stop Queue"))
-            {
-                CraftingGatherBridge.StopQueue();
-                return; // Stop can clear the queue/window during this draw.
-            }
+            _queueProcessor.Pause();
+        }
+
+        ImGui.SameLine(0, M3.Space1);
+        if (M3Widgets.Button("##craft_stop", "Stop queue", M3ButtonStyle.Danger, FontAwesomeIcon.Stop))
+        {
+            CraftingGatherBridge.StopQueue();
+            return;
         }
 
         if (ImGui.CollapsingHeader("Details"))
@@ -208,32 +206,64 @@ public class CraftingStatusWindow : Window
             if (currentItem != null)
             {
                 var recipeProgress = CraftingStatusPresentation.GetRecipeProgress(_queueProcessor.Queue, currentIndex, currentItem.RecipeId);
-                var recipePhase = CraftingStatusPresentation.IsRecipePhase(currentState);
-                var label = handoff != null ? "Parked recipe" : recipePhase ? "Current recipe" : "Next queued recipe";
-                ImGui.TextWrapped($"{label}: {recipeProgress.ConfirmedCrafts} / {recipeProgress.RequestedCrafts} crafts confirmed");
-                if ((handoff != null || !recipePhase) && recipeName != null) ImGui.TextWrapped(recipeName);
+                var label = handoff != null ? "Parked recipe" : CraftingStatusPresentation.IsRecipePhase(currentState) ? "Current recipe" : "Next queued recipe";
+                M3Text.Draw($"{label}: {recipeProgress.ConfirmedCrafts} / {recipeProgress.RequestedCrafts} crafts confirmed", M3TextStyle.Body, true);
+                if ((handoff != null || !CraftingStatusPresentation.IsRecipePhase(currentState)) && recipeName != null)
+                    M3Text.Draw(recipeName, M3TextStyle.Muted, true);
             }
-            ImGui.Text($"Queue entries remaining: {Math.Max(0, _queueProcessor.QueueCount - currentIndex)}");
-            if (handoff == null && ShouldShowRemainingEstimate(currentState))
-            {
-                ImGui.Text($"Estimated crafting time: ~{CraftingTimeEstimator.FormatDuration(GetRemainingEstimate(currentIndex))}");
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("Estimate for remaining crafts; excludes gathering, repairs, travel, and AutoRetainer. Raphael uses cached solutions when available, otherwise a provisional default.");
-            }
-            if (handoff != null) ImGui.TextWrapped(handoff.Status);
+            M3Text.Draw($"Queue entries remaining: {Math.Max(0, totalCount - Math.Max(0, currentIndex))}", M3TextStyle.Muted);
+            if (handoff != null) M3Text.Draw(handoff.Status, M3TextStyle.Warning, true);
             if (!string.IsNullOrEmpty(_queueProcessor.RetainerCoordinationStatus)
-                && currentState is CraftingQueueProcessor.QueueState.NavigatingToRetainerBell or CraftingQueueProcessor.QueueState.WithdrawingFromRetainer
+                && currentState is CraftingQueueProcessor.QueueState.NavigatingToRetainerBell
+                    or CraftingQueueProcessor.QueueState.WithdrawingFromRetainer
                     or CraftingQueueProcessor.QueueState.WaitingForRetainerTravel)
-                ImGui.TextWrapped(_queueProcessor.RetainerCoordinationStatus);
-            // Preserve useful failure/shortage diagnostics, not routine acquisition chatter.
+                M3Text.Draw(_queueProcessor.RetainerCoordinationStatus, M3TextStyle.Muted, true);
             if (currentState is CraftingQueueProcessor.QueueState.BlockedByMaterials or CraftingQueueProcessor.QueueState.AcquisitionFailed)
             {
-                ImGui.TextWrapped(_queueProcessor.AcquisitionStatus);
-                foreach (var shortage in _queueProcessor.AcquisitionShortages) ImGui.TextWrapped(shortage);
+                M3Text.Draw(_queueProcessor.AcquisitionStatus, M3TextStyle.Warning, true);
+                foreach (var shortage in _queueProcessor.AcquisitionShortages)
+                    M3Text.Draw(shortage, M3TextStyle.Muted, true);
             }
         }
-        if (ImGui.Button("Open Vulcan") && GatherBuddy.VulcanWindow != null)
-            GatherBuddy.VulcanWindow.IsOpen = true;
+
+        ImGui.Dummy(new Vector2(0f, M3.Space1));
+        var delay = GatherBuddy.Config.VulcanExecutionDelayMs;
+        var gutter = M3Widgets.SliderValueGutter("1000 ms");
+        if (M3Widgets.SliderInt("##craft_action_delay", ref delay, 0, 1000, $"{delay} ms", width - gutter))
+        {
+            GatherBuddy.Config.VulcanExecutionDelayMs = Math.Clamp(delay, 0, 1000);
+            GatherBuddy.Config.Save();
+        }
+        M3Tooltip.Hovered("Delay between each crafting action.");
+        if (M3Widgets.Button("##craft_open_vulcan", "Open Vulcan", M3ButtonStyle.Text, FontAwesomeIcon.Hammer))
+            GatherBuddy.VulcanWindow?.RestoreWindow();
+    }
+
+    private static (string Label, Vector4 Tone, FontAwesomeIcon Icon) DescribeState(CraftingQueueProcessor.QueueState state, bool paused)
+    {
+        if (paused && state != CraftingQueueProcessor.QueueState.Complete)
+            return ("Paused", M3.Severity(M3Severity.Warning), FontAwesomeIcon.Pause);
+        var label = state switch
+        {
+            CraftingQueueProcessor.QueueState.Idle => "Idle",
+            CraftingQueueProcessor.QueueState.NavigatingToRetainerBell => "Retainer bell",
+            CraftingQueueProcessor.QueueState.WaitingForGather => "Gathering materials",
+            CraftingQueueProcessor.QueueState.WaitingForJobSwitch => "Switching job",
+            CraftingQueueProcessor.QueueState.Repairing => "Repairing",
+            CraftingQueueProcessor.QueueState.ExtractingMateria => "Extracting materia",
+            CraftingQueueProcessor.QueueState.WaitingForRaphaelSolution => "Solving",
+            CraftingQueueProcessor.QueueState.ReadyForCraft => "Ready to craft",
+            CraftingQueueProcessor.QueueState.Crafting => "Crafting",
+            CraftingQueueProcessor.QueueState.Complete => "Complete",
+            CraftingQueueProcessor.QueueState.BlockedByMaterials => "Materials blocked",
+            CraftingQueueProcessor.QueueState.AcquisitionFailed => "Acquisition failed",
+            _ => "Working",
+        };
+        return state == CraftingQueueProcessor.QueueState.Complete
+            ? (label, M3.Severity(M3Severity.Success), FontAwesomeIcon.CheckCircle)
+            : state is CraftingQueueProcessor.QueueState.Crafting or CraftingQueueProcessor.QueueState.ReadyForCraft
+                ? (label, M3.Scheme.Primary, FontAwesomeIcon.Hammer)
+                : (label, M3.Severity(M3Severity.Info), FontAwesomeIcon.HourglassHalf);
     }
 
     private void ResetRemainingEstimateCache()
@@ -248,7 +278,9 @@ public class CraftingStatusWindow : Window
     private long GetRemainingEstimate(int currentIndex)
     {
         if (_queueProcessor == null)
+        {
             return 0;
+        }
 
         var queue = _queueProcessor.Queue;
         var consumables = _queueProcessor.ListConsumables;
@@ -257,7 +289,9 @@ public class CraftingStatusWindow : Window
          && ReferenceEquals(_cachedEstimateConsumables, consumables)
          && _cachedEstimateQueueCount == queue.Count
          && _cachedEstimateActionDelayMs == actionDelayMs)
+        {
             return GetCachedRemainingEstimateAtIndex(currentIndex);
+        }
 
         _cachedEstimateQueue = queue;
         _cachedEstimateConsumables = consumables;
@@ -270,7 +304,9 @@ public class CraftingStatusWindow : Window
     private long GetCachedRemainingEstimateAtIndex(int currentIndex)
     {
         if (_cachedRemainingEstimatesByIndex.Length == 0)
+        {
             return 0;
+        }
 
         var safeIndex = Math.Clamp(currentIndex, 0, _cachedRemainingEstimatesByIndex.Length - 1);
         return _cachedRemainingEstimatesByIndex[safeIndex];
@@ -279,7 +315,9 @@ public class CraftingStatusWindow : Window
     private static long[] BuildRemainingEstimates(IReadOnlyList<CraftingListItem> queue, int actionDelayMs, CraftingListConsumableSettings? consumables)
     {
         if (queue.Count == 0)
+        {
             return [];
+        }
 
         var remainingByIndex = new long[queue.Count];
         long remainingMs = 0;
@@ -305,6 +343,80 @@ public class CraftingStatusWindow : Window
             || state == CraftingQueueProcessor.QueueState.WaitingForJobSwitch
             || state == CraftingQueueProcessor.QueueState.Repairing
             || state == CraftingQueueProcessor.QueueState.ExtractingMateria;
+    }
+
+    private static string GetStateDisplayName(CraftingQueueProcessor.QueueState state)
+    {
+        return state switch
+        {
+            CraftingQueueProcessor.QueueState.Idle => "Idle",
+            CraftingQueueProcessor.QueueState.NavigatingToRetainerBell => "Navigating to Retainer Bell",
+            CraftingQueueProcessor.QueueState.WaitingForGather => "Gathering Materials",
+            CraftingQueueProcessor.QueueState.WaitingForJobSwitch => "Switching Job",
+            CraftingQueueProcessor.QueueState.Repairing => "Repairing Equipment",
+            CraftingQueueProcessor.QueueState.ExtractingMateria => "Extracting Materia",
+            CraftingQueueProcessor.QueueState.WaitingForRaphaelSolution => "Solving with Raphael",
+            CraftingQueueProcessor.QueueState.ReadyForCraft => "Ready to Craft",
+            CraftingQueueProcessor.QueueState.Crafting => "Crafting",
+            CraftingQueueProcessor.QueueState.Complete => "Complete",
+            _ => "Unknown"
+        };
+    }
+
+    private (int currentCraft, int totalCrafts) GetCurrentRecipeCraftNumbers()
+    {
+        if (_queueProcessor == null)
+        {
+            return (0, 0);
+        }
+
+        var currentItem = _queueProcessor.CurrentRecipeItem;
+        if (currentItem == null)
+        {
+            return (0, 0);
+        }
+
+        var currentIndex = _queueProcessor.CurrentQueueIndex;
+        var currentRecipeId = currentItem.RecipeId;
+
+        var firstIndex = currentIndex;
+        while (firstIndex > 0)
+        {
+            var prevItem = GetQueueItemAt(firstIndex - 1);
+            if (prevItem == null || prevItem.RecipeId != currentRecipeId)
+            {
+                break;
+            }
+
+            firstIndex--;
+        }
+
+        var lastIndex = currentIndex;
+        while (lastIndex < _queueProcessor.QueueCount - 1)
+        {
+            var nextItem = GetQueueItemAt(lastIndex + 1);
+            if (nextItem == null || nextItem.RecipeId != currentRecipeId)
+            {
+                break;
+            }
+
+            lastIndex++;
+        }
+
+        var currentCraftNumber = currentIndex - firstIndex + 1;
+        var totalCrafts = lastIndex - firstIndex + 1;
+
+        return (currentCraftNumber, totalCrafts);
+    }
+
+    private CraftingListItem? GetQueueItemAt(int index)
+    {
+        if (_queueProcessor == null || index < 0 || index >= _queueProcessor.QueueCount)
+        {
+            return null;
+        }
+
+        return _queueProcessor.Queue[index];
     }
 
 }

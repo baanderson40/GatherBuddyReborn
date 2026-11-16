@@ -1,7 +1,7 @@
+using Lumina.Excel.Sheets;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Lumina.Excel.Sheets;
 
 namespace GatherBuddy.Crafting;
 
@@ -52,7 +52,9 @@ public sealed class CraftingQualityPolicy
         foreach (var (itemId, demand) in _ingredientDemands)
         {
             if (demand.GuaranteedHQ > 0)
+            {
                 guaranteed[itemId] = demand.GuaranteedHQ;
+            }
         }
 
         return guaranteed;
@@ -102,13 +104,17 @@ public static class CraftingQualityPolicyResolver
         IngredientQualityDemand demand)
     {
         if (demand.RequiredHQ > 0 && demand.RequiredNQ == 0)
+        {
             return PlannedOutputQuality.HQ;
+        }
 
         if (demand.RequiredNQ > 0
             && demand.RequiredHQ == 0
             && recipe.CanQuickSynth
             && qualityPolicy.OverrideMode == CraftingQualityOverrideMode.RequireNQOnly)
+        {
             return PlannedOutputQuality.NQ;
+        }
 
         return PlannedOutputQuality.Unknown;
     }
@@ -121,12 +127,16 @@ public static class CraftingQualityPolicyResolver
         var preferences = new Dictionary<uint, int>();
         var itemSheet = Dalamud.GameData.GetExcelSheet<Item>();
         if (itemSheet == null)
+        {
             return preferences;
+        }
 
         foreach (var (itemId, amount) in RecipeManager.GetIngredients(recipe))
         {
             if (itemSheet.TryGetRow(itemId, out var item) && item.CanBeHq)
+            {
                 preferences[itemId] = amount;
+            }
         }
 
         return preferences;
@@ -136,12 +146,16 @@ public static class CraftingQualityPolicyResolver
     {
         var expected = BuildAllHQPreferences(recipe);
         if (preferences.Count != expected.Count)
+        {
             return false;
+        }
 
         foreach (var (itemId, amount) in expected)
         {
             if (!preferences.TryGetValue(itemId, out var preferredAmount) || preferredAmount != amount)
+            {
                 return false;
+            }
         }
 
         return true;
@@ -163,11 +177,15 @@ public static class CraftingQualityPolicyResolver
         }
 
         if (!useAllHQByDefault || HasExplicitQualitySettings(sourceSettings))
+        {
             return settings;
+        }
 
         var allHQPreferences = BuildAllHQPreferences(recipe);
         if (allHQPreferences.Count == 0 && settings == null)
+        {
             return null;
+        }
 
         settings ??= new RecipeCraftSettings();
         settings.UseAllNQ = false;
@@ -179,7 +197,7 @@ public static class CraftingQualityPolicyResolver
         RecipeCraftSettings? settings,
         CraftingQualityOverrideMode overrideMode = CraftingQualityOverrideMode.None)
     {
-        var explicitPreferences = settings?.IngredientPreferences ?? new Dictionary<uint, int>();
+        var explicitPreferences = settings?.IngredientPreferences ?? [];
         var hasExplicitHQRequirements = explicitPreferences.Values.Any(preferredHQ => preferredHQ > 0);
         var itemSheet = Dalamud.GameData.GetExcelSheet<Item>();
         var ingredientDemands = new Dictionary<uint, IngredientQualityDemand>();

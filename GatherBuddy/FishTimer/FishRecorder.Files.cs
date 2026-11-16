@@ -1,20 +1,20 @@
-﻿using System;
+﻿using GatherBuddy.Plugin;
+using GatherBuddy.Time;
+using Newtonsoft.Json;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using GatherBuddy.Plugin;
-using GatherBuddy.Time;
-using Newtonsoft.Json;
 
 namespace GatherBuddy.FishTimer;
 
 public partial class FishRecorder
 {
-    public const    string        FishRecordFileName = "fish_records.dat";
+    public const string FishRecordFileName = "fish_records.dat";
     public readonly DirectoryInfo FishRecordDirectory;
 
-    public  int       Changes  = 0;
-    public  TimeStamp SaveTime = TimeStamp.MaxValue;
+    public int Changes = 0;
+    public TimeStamp SaveTime = TimeStamp.MaxValue;
 
     public int AddChanges()
     {
@@ -25,7 +25,7 @@ public partial class FishRecorder
     public void WriteFile()
     {
         var file = new FileInfo(Path.Combine(FishRecordDirectory.FullName, FishRecordFileName));
-        Changes  = 0;
+        Changes = 0;
         SaveTime = TimeStamp.MaxValue;
         WriteFileInternal(file, false);
     }
@@ -76,7 +76,7 @@ public partial class FishRecorder
     {
         try
         {
-            var bytes   = Functions.DecompressedBase64(data);
+            var bytes = Functions.DecompressedBase64(data);
             var records = ReadBytes(bytes, "Imported Data");
             MergeRecordsIn(records);
         }
@@ -89,16 +89,22 @@ public partial class FishRecorder
     public void MergeRecordsIn(IReadOnlyList<FishRecord> newRecords)
     {
         foreach (var record in newRecords.Where(CheckSimilarity))
+        {
             AddUnchecked(record);
+        }
 
         if (Changes > 0)
+        {
             WriteFile();
+        }
     }
 
     public static List<FishRecord> ReadFile(FileInfo file)
     {
         if (!file.Exists)
-            return new List<FishRecord>();
+        {
+            return [];
+        }
 
         try
         {
@@ -108,7 +114,7 @@ public partial class FishRecorder
         catch (Exception e)
         {
             GatherBuddy.Log.Error($"Unknown error reading fish record file {file.FullName}:\n{e}");
-            return new List<FishRecord>();
+            return [];
         }
     }
 
@@ -126,57 +132,60 @@ public partial class FishRecorder
     private static List<FishRecord> ReadBytes(byte[] data, string name)
     {
         if (data.Length == 0)
-            return new List<FishRecord>();
+        {
+            return [];
+        }
 
         switch (data[0])
         {
             case 1:
-            {
-                if (data.Length % FishRecord.Version1ByteLength != 1)
                 {
-                    GatherBuddy.Log.Error($"{name} has no valid size for its record version, skipped.\n");
-                    return new List<FishRecord>();
-                }
-
-                var numRecords = (data.Length - 1) / FishRecord.Version1ByteLength;
-                var ret        = new List<FishRecord>(numRecords);
-                for (var i = 0; i < numRecords; ++i)
-                {
-                    if (!FishRecord.FromBytesV1(data, 1 + i * FishRecord.Version1ByteLength, out var record))
+                    if (data.Length % FishRecord.Version1ByteLength != 1)
                     {
-                        GatherBuddy.Log.Error($"{name}'s {i}th record is invalid, skipped.\n");
-                        continue;
+                        GatherBuddy.Log.Error($"{name} has no valid size for its record version, skipped.\n");
+                        return [];
                     }
 
-                    ret.Add(record);
-                }
+                    var numRecords = (data.Length - 1) / FishRecord.Version1ByteLength;
+                    var ret = new List<FishRecord>(numRecords);
+                    for (var i = 0; i < numRecords; ++i)
+                    {
+                        if (!FishRecord.FromBytesV1(data, 1 + i * FishRecord.Version1ByteLength, out var record))
+                        {
+                            GatherBuddy.Log.Error($"{name}'s {i}th record is invalid, skipped.\n");
+                            continue;
+                        }
 
-                return ret;
-            }
+                        ret.Add(record);
+                    }
+
+                    return ret;
+                }
             case 2:
-            {
-                var span = data.AsSpan()[1..];
-                try
                 {
-                    var list = FishRecordSerialization.Read(span.ToArray());
-                    return list;
+                    var span = data.AsSpan()[1..];
+                    try
+                    {
+                        return FishRecordSerialization.Read(span.ToArray());
+                    }
+                    catch (Exception e)
+                    {
+                        GatherBuddy.Log.Error($"{name} was unable to be deserialized using V2 logic: {e}");
+                        return [];
+                    }
                 }
-                catch (Exception e)
-                {
-                    GatherBuddy.Log.Error($"{name} was unable to be deserialized using V2 logic: {e}");
-                    return new List<FishRecord>();
-                }
-            }
             default:
                 GatherBuddy.Log.Error($"{name} has no valid record version, skipped.\n");
-                return new List<FishRecord>();
+                return [];
         }
     }
 
     private void LoadFile(FileInfo file)
     {
         if (!file.Exists)
+        {
             return;
+        }
 
         try
         {

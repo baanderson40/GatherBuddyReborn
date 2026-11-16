@@ -7,7 +7,7 @@ using Dalamud.Bindings.ImGui;
 using GatherBuddy.Crafting;
 using GatherBuddy.Plugin;
 using GatherBuddy.Vulcan.Vendors;
-using ImRaii = ElliLib.Raii.ImRaii;
+using ImRaii = Dalamud.Interface.Utility.Raii.ImRaii;
 
 namespace GatherBuddy.Gui;
 

@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
@@ -13,6 +13,7 @@
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" PrivateAssets="all" />
     <ProjectReference Include="../../GatherBuddy/GatherBuddy.csproj" />
+    <Reference Include="Dalamud" HintPath="$(DalamudLibPath)Dalamud.dll" Private="true" />
     <!-- Actual queue event signatures use Lumina's Recipe. Supply host data
          assemblies for managed-only parking tests; no game process is loaded. -->
     <Reference Include="Lumina.Excel" HintPath="$(DalamudLibPath)Lumina.Excel.dll" Private="true" />

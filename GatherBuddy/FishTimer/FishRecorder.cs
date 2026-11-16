@@ -1,11 +1,11 @@
-﻿using System;
+﻿using Dalamud.Plugin.Services;
+using GatherBuddy.FishTimer.Parser;
+using GatherBuddy.Models;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using Dalamud.Plugin.Services;
-using GatherBuddy.FishTimer.Parser;
-using GatherBuddy.Models;
 
 namespace GatherBuddy.FishTimer;
 
@@ -102,7 +102,10 @@ public partial class FishRecorder : IDisposable
     {
         Records.Add(record);
         if (ShouldUploadRecord(record))
+        {
             RecordsToUpload.Enqueue(record);
+        }
+
         AddRecordToTimes(record);
         AddChanges();
     }
@@ -110,7 +113,9 @@ public partial class FishRecorder : IDisposable
     internal bool AddChecked(FishRecord record)
     {
         if (!CheckSimilarity(record))
+        {
             return false;
+        }
 
         AddUnchecked(record);
         return true;
@@ -119,11 +124,13 @@ public partial class FishRecorder : IDisposable
     private void AddRecordToTimes(FishRecord record)
     {
         if (record.Catch == null || !record.Flags.HasFlag(Effects.Valid) || record.Flags.HasLure() && !record.Flags.HasValidLure())
+        {
             return;
+        }
 
         if (!Times.TryGetValue(record.Catch.ItemId, out var times))
         {
-            times                      = new FishRecordTimes();
+            times = new FishRecordTimes();
             Times[record.Catch.ItemId] = times;
         }
 
@@ -134,7 +141,9 @@ public partial class FishRecorder : IDisposable
     {
         AddChecked(record);
         if (Changes > 20)
+        {
             WriteFile();
+        }
     }
 
     public void Remove(int idx)
@@ -144,13 +153,17 @@ public partial class FishRecorder : IDisposable
         Records.RemoveAt(idx);
         RemoveRecordFromTimes(record);
         if (AddChanges() > 20)
+        {
             WriteFile();
+        }
     }
 
     private void RemoveRecordFromTimes(FishRecord record)
     {
         if (!record.Flags.HasFlag(Effects.Valid) || !record.HasCatch)
+        {
             return;
+        }
 
         if (!Times.TryGetValue(record.Catch!.ItemId, out var data) || !data.Data.TryGetValue(record.Bait.Id, out var times))
         {
@@ -159,7 +172,9 @@ public partial class FishRecorder : IDisposable
         }
 
         if (times.Max != record.Bite && times.MaxChum != record.Bite && times.Min != record.Bite && times.MinChum != record.Bite)
+        {
             return;
+        }
 
         data.Data.Remove(record.Bait.Id);
         foreach (var rec in Records.Where(r
@@ -167,18 +182,31 @@ public partial class FishRecorder : IDisposable
                   && (!record.Flags.HasLure() || record.Flags.HasValidLure())
                   && r.Catch?.ItemId == record.Catch.ItemId
                   && r.Bait.Id == record.Bait.Id))
+        {
             data.Apply(rec.Bait.Id, rec.Bite, rec.Flags.HasFlag(Effects.Chum));
+        }
 
         if (data.Data.Count != 0)
         {
             if (data.All.Max == record.Bite)
+            {
                 data.All.Max = data.Data.Values.Max(r => r.Max);
+            }
+
             if (data.All.MaxChum == record.Bite)
+            {
                 data.All.MaxChum = data.Data.Values.Max(r => r.MaxChum);
+            }
+
             if (data.All.Min == record.Bite)
+            {
                 data.All.Min = data.Data.Values.Min(r => r.Min);
+            }
+
             if (data.All.MinChum == record.Bite)
+            {
                 data.All.MinChum = data.Data.Values.Min(r => r.MinChum);
+            }
         }
         else
         {
@@ -190,13 +218,17 @@ public partial class FishRecorder : IDisposable
     {
         Times.Clear();
         foreach (var record in Records)
+        {
             AddRecordToTimes(record);
+        }
     }
 
     public void RemoveInvalid()
     {
         if (Records.RemoveAll(r => !r.Flags.HasFlag(Effects.Valid)) <= 0)
+        {
             return;
+        }
 
         ResetTimes();
         WriteFile();
@@ -211,12 +243,16 @@ public partial class FishRecorder : IDisposable
             for (var j = Records.Count - 1; j > i; --j)
             {
                 if (Similar(rec, Records[j]))
+                {
                     Records.RemoveAt(j);
+                }
             }
         }
 
         if (oldCount == Records.Count)
+        {
             return;
+        }
 
         ResetTimes();
         WriteFile();
@@ -261,13 +297,13 @@ public partial class FishRecorder : IDisposable
 
         var recordPosition = record.Position;
         var positionExists = allKnownPositions.Any(pos => ArePositionsIdentical(pos, recordPosition));
-        
+
         if (positionExists)
         {
             GatherBuddy.Log.Debug($"[Upload Filter] Skipping upload - position already exists in database or upload queue");
             return false;
         }
-        
+
         GatherBuddy.Log.Information($"[Upload Filter] Queuing record for upload - new position for '{record.FishingSpot.Name}' ({recordPosition.X:F2}, {recordPosition.Y:F2}, {recordPosition.Z:F2})");
         return true;
     }
