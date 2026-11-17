@@ -23,11 +23,12 @@ public class TransientExecutionTests
         return execution;
     }
     private static void Settle(TransientVendorExecution execution, FakePort port, uint quantity, ulong? spend,
-        bool interrupted = false, bool fatal = false)
+        bool interrupted = false, bool fatal = false, uint? submitted = null)
     {
         var allocation = port.Requests.Last().Allocation;
         port.Inventory[allocation.ItemId] = port.ReadItemCount(allocation.ItemId) + quantity;
-        port.Receipts.Enqueue(new(Session, allocation.AllocationId, quantity, spend, interrupted, fatal, "Receipt"));
+        port.Receipts.Enqueue(new(Session, allocation.AllocationId, quantity, spend, interrupted, fatal, "Receipt")
+        { SubmittedOutputQuantity = submitted });
         execution.Tick(Now);
         execution.Tick(Now);
     }
@@ -79,6 +80,30 @@ public class TransientExecutionTests
     }
 
     [Fact]
+    public void ScripAllocationUsesItsOwnReserveAndRunCapBudget()
+    {
+        var policy = ResolvedVendorPurchasePolicy.Resolve(new()
+        {
+            Enabled = true,
+            AllowedCurrencyItemIds = [33913],
+            CurrencyReservesByItemId = new() { [33913] = 15 },
+            MaximumSpendPerRunByCurrencyItemId = new() { [33913] = 60 },
+        });
+        var allocation = new VendorPurchaseAllocation(Session, 100, 10, 1, 33913, VendorCurrencyGroup.Scrips,
+            10, VendorShopType.SpecialCurrency,
+            new(10, "Scrip vendor", 20, VendorMenuShopType.SpecialShop, ShopItemIndex: 0, SourceShopId: 20, SourceItemIndex: 0));
+        var port = new FakePort();
+        var execution = new TransientVendorExecution(port);
+        Assert.Equal(TransientVendorStartResult.Started, execution.Start(Session, policy, [allocation], new Dictionary<uint, uint> { [100] = 10 }));
+
+        execution.Tick(Now);
+
+        var budget = Assert.Single(port.Requests).Budget;
+        Assert.Equal(15ul, budget.Reserve);
+        Assert.Equal(60ul, budget.MaximumSpend);
+    }
+
+    [Fact]
     public void SuccessfulPurchaseWaitsForCleanupThenReleases()
     {
         var port = new FakePort { CleanupReady = false };
@@ -93,6 +118,56 @@ public class TransientExecutionTests
         Assert.Equal(MaterialAcquisitionCompletion.Completed, execution.LastResult!.Completion);
         Assert.Equal(50ul, execution.LastResult.SettledSpending[1]);
         Assert.True(port.Released);
+    }
+
+    [Fact]
+    public void SuccessfulNinetyNineTransactionBatchContinuesWithRemainingQuantity()
+    {
+        var port = new FakePort();
+        var allocation = Allocation(quantity: 150);
+        var execution = Start(port, [allocation], target: 150);
+
+        execution.Tick(Now);
+        Assert.Equal(99u, Assert.Single(port.Requests).Quantity);
+        Settle(execution, port, quantity: 99, spend: 990, submitted: 99);
+
+        execution.Tick(Now);
+        Assert.Equal(51u, port.Requests[^1].Quantity);
+        Assert.Equal(TransientVendorState.Purchasing, execution.State);
+    }
+
+    [Fact]
+    public void CertainZeroSubmissionFailureDoesNotPoisonFollowingAllocations()
+    {
+        var port = new FakePort();
+        var first = Allocation(quantity: 1, item: 100);
+        var second = Allocation(quantity: 1, item: 200);
+        var execution = Start(port, [first, second], target: 1);
+        execution.Tick(Now);
+
+        Settle(execution, port, quantity: 0, spend: null, submitted: 0);
+        Assert.True(execution.State == TransientVendorState.Ready,
+            $"state={execution.State}; {string.Join(" | ", execution.Trace!.Events.Select(entry => entry.Detail))}");
+        execution.Tick(Now);
+
+        Assert.Equal(2, port.Requests.Count);
+        Assert.Equal(200u, port.Requests[^1].Allocation.ItemId);
+        Assert.Equal(TransientVendorState.Purchasing, execution.State);
+    }
+
+    [Fact]
+    public void AcquiredOutputWithoutSubmittedQuantityRemainsUncertain()
+    {
+        var port = new FakePort();
+        var execution = Start(port, [Allocation(quantity: 1)], target: 1);
+        execution.Tick(Now);
+
+        Settle(execution, port, quantity: 1, spend: 10, submitted: 0);
+
+        Assert.Equal(MaterialAcquisitionCompletion.Failed, execution.LastResult!.Completion);
+        Assert.False(execution.LastResult.AccountingCertain);
+        Assert.Contains(execution.Trace!.Events, entry => entry.Action == "ReceiptRejected"
+            && entry.Detail.Contains("acquired output without verified submission quantity", StringComparison.Ordinal));
     }
 
     [Fact]

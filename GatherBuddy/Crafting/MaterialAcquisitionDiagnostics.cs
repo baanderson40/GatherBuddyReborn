@@ -19,7 +19,7 @@ public static class MaterialAcquisitionDiagnostics
         {
             $"BEGIN session={input.SessionId}; READ ONLY; current inventory only; no retainer withdrawal simulated.",
             "Planned quantities are not purchases. Unknown vendor access must be verified before live execution.",
-            $"Policy origin={input.Policy.Origin}; enabled={input.Policy.Enabled}; allowed={string.Join(",", input.Policy.AllowedCurrencyGroups)}; priority={string.Join(" -> ", input.Policy.CurrencyPriority)}; gilCap={input.Policy.MaximumGilSpendPerRun?.ToString() ?? "unlimited"}.",
+            $"Policy origin={input.Policy.Origin}; enabled={input.Policy.Enabled}; allowedGroups={string.Join(",", input.Policy.AllowedCurrencyGroups)}; allowedCurrencyIds={string.Join(",", input.Policy.AllowedCurrencyItemIds)}; priority={string.Join(" -> ", input.Policy.CurrencyPriority)}; gilCap={input.Policy.MaximumGilSpendPerRun?.ToString() ?? "unlimited"}; currencyCaps={string.Join(",", input.Policy.MaximumSpendPerRunByCurrencyItemId.Select(p => $"{p.Key}:{p.Value}"))}.",
             $"Vendor data={input.VendorDataStatus}; plan={plan.Status}; materials={plan.Materials.Count}; allocations={plan.Allocations.Count}.",
         };
         foreach (var currency in input.CurrencyBalances.OrderBy(pair => pair.Key))
@@ -30,7 +30,7 @@ public static class MaterialAcquisitionDiagnostics
             lines.Add($"REQUIREMENT {Name(requirement.ItemId)}: total={requirement.QualityDemand.Total}; quality={Quality(requirement.QualityDemand)}; ownedNQ={owned.NQ}; ownedHQ={owned.HQ}; gatherNQ={requirement.CanGatherNQ}; gatherHQ={requirement.CanGatherHQ}; allowPurchasing={requirement.AllowPurchasing}.");
         }
         foreach (var offer in input.Offers.OrderBy(offer => offer.ItemId).ThenBy(offer => offer.CurrencyItemId).ThenBy(offer => offer.Vendor.NpcId).ThenBy(offer => offer.Vendor.ShopId))
-            lines.Add($"OFFER {Name(offer.ItemId)}: vendor={Clean(offer.Vendor.Name)} [{offer.Vendor.NpcId}]; shop={offer.Vendor.ShopId}; sourceShop={offer.Vendor.SourceShopId}; type={offer.ShopType}/{offer.Vendor.MenuShopType}; row={offer.Vendor.ShopItemIndex}; currency={Name(offer.CurrencyItemId)} ({offer.CurrencyGroup}); cost={offer.CostPerTransaction}; output={offer.OutputQuantityPerTransaction}; supported={offer.Supported}; access={offer.Access}; currencyAllowed={input.Policy.Allows(offer.CurrencyGroup)}; rejection={Clean(offer.RejectionReason ?? "none; affordability evaluated by planner")}.");
+            lines.Add($"OFFER {Name(offer.ItemId)}: vendor={Clean(offer.Vendor.Name)} [{offer.Vendor.NpcId}]; shop={offer.Vendor.ShopId}; sourceShop={offer.Vendor.SourceShopId}; type={offer.ShopType}/{offer.Vendor.MenuShopType}; row={offer.Vendor.ShopItemIndex}; currency={Name(offer.CurrencyItemId)} ({offer.CurrencyGroup}); cost={offer.CostPerTransaction}; output={offer.OutputQuantityPerTransaction}; supported={offer.Supported}; access={offer.Access}; currencyAllowed={input.Policy.Allows(offer.CurrencyGroup, offer.CurrencyItemId)}; rejection={Clean(offer.RejectionReason ?? "none; affordability evaluated by planner")}.");
         foreach (var allocation in plan.Allocations)
             lines.Add($"ALLOCATION {Name(allocation.ItemId)}: quantity={allocation.RequestedOutputQuantity}; transactions={allocation.TransactionCount}; currency={Name(allocation.CurrencyItemId)}; expectedCost={allocation.ExpectedCurrencyCost}; allCosts={string.Join(", ", allocation.ExpectedCosts.Select(c => $"{Name(c.Key)}={c.Value}"))}; vendor={allocation.Vendor.NpcId}; shop={allocation.Vendor.ShopId}; sourceShop={allocation.Vendor.SourceShopId}; sourceRow={allocation.Vendor.SourceItemIndex}; authorizedAlternativeVendors={allocation.AuthorizedAlternatives.Count}; allocation={allocation.AllocationId}.");
         foreach (var material in plan.Materials)
@@ -62,7 +62,7 @@ public static class MaterialAcquisitionDiagnostics
         var lines = new List<string>
         {
             $"BEGIN session={input.SessionId}; READ ONLY; current inventory only; no retainer withdrawal simulated.",
-            $"Policy: enabled={input.Policy.Enabled}; origin={input.Policy.Origin}; allowed={string.Join(",", input.Policy.AllowedCurrencyGroups)}; priority={string.Join(" -> ", input.Policy.CurrencyPriority)}; gilCap={input.Policy.MaximumGilSpendPerRun?.ToString() ?? "unlimited"}.",
+            $"Policy: enabled={input.Policy.Enabled}; origin={input.Policy.Origin}; allowedGroups={string.Join(",", input.Policy.AllowedCurrencyGroups)}; allowedCurrencyIds={string.Join(",", input.Policy.AllowedCurrencyItemIds)}; priority={string.Join(" -> ", input.Policy.CurrencyPriority)}; gilCap={input.Policy.MaximumGilSpendPerRun?.ToString() ?? "unlimited"}; currencyCaps={string.Join(",", input.Policy.MaximumSpendPerRunByCurrencyItemId.Select(p => $"{p.Key}:{p.Value}"))}.",
             $"Plan={plan.Status}; missingMaterialTypes={missing.Count}; allocations={plan.Allocations.Count}. All quantities/spending below are planned, not executed.",
         };
         foreach (var id in relevantCurrencies.Order())

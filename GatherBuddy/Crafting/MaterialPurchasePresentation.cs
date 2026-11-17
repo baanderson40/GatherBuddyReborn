@@ -23,8 +23,11 @@ public sealed record MaterialPurchaseDisplayContext(ResolvedVendorPurchasePolicy
         };
         var key = FormattableString.Invariant($"{listId}|{owner}|{policy.Enabled}|{policy.Origin}|{policy.MaximumGilSpendPerRun}|{policy.GrandCompanySealReserve}")
             + "|" + string.Join(",", policy.AllowedCurrencyGroups)
+            + "|" + string.Join(",", policy.AllowedCurrencyItemIds.Order())
             + "|" + string.Join(",", policy.CurrencyPriority)
             + "|" + string.Join(",", policy.CurrencyReservesByItemId.OrderBy(p => p.Key)
+                .Select(p => p.Key.ToString(CultureInfo.InvariantCulture) + ":" + p.Value.ToString(CultureInfo.InvariantCulture)))
+            + "|" + string.Join(",", policy.MaximumSpendPerRunByCurrencyItemId.OrderBy(p => p.Key)
                 .Select(p => p.Key.ToString(CultureInfo.InvariantCulture) + ":" + p.Value.ToString(CultureInfo.InvariantCulture)));
         return new(policy, owner, key, $"{(useRun ? "Captured run" : "Next run")}: {source} — purchases {(policy.Enabled ? "enabled" : "disabled")}");
     }
@@ -35,10 +38,12 @@ public static class IntegratedMaterialOfferSupport
 {
     public static AcquisitionVendorOffer Apply(AcquisitionVendorOffer offer, uint? stackSize, bool housing, bool equippable)
     {
-        var supported = (offer.ShopType != VendorShopType.SpecialCurrency || offer.CurrencyGroup == VendorCurrencyGroup.BicolorGemstones)
-            && !housing && !equippable && stackSize is > 1 && offer.OutputQuantityPerTransaction <= stackSize.Value;
+        var supported = (offer.ShopType != VendorShopType.SpecialCurrency
+                || offer.CurrencyGroup == VendorCurrencyGroup.BicolorGemstones
+                || AutomaticVendorCurrencyCatalog.Supports(offer.CurrencyGroup, offer.CurrencyItemId))
+            && !housing && !equippable && stackSize is { } stack && stack > 1 && offer.OutputQuantityPerTransaction <= stack;
         return supported ? offer : offer with { Supported = false,
-            RejectionReason = "Integrated execution supports stackable gil/GC and validated gemstone material exchanges only.",
+            RejectionReason = "Integrated execution supports stackable gil/GC, gemstones, and validated scrip/tomestone material exchanges only.",
             RejectionKind = AcquisitionOfferRejectionKind.Unsupported };
     }
 }
@@ -53,6 +58,8 @@ public sealed record MaterialPurchaseCandidate(MaterialPurchaseCandidateKind Kin
         VendorCurrencyGroup.Gil => "Gil",
         VendorCurrencyGroup.GrandCompanySeals => "Current-GC seals",
         VendorCurrencyGroup.BicolorGemstones => "Bicolor Gemstones",
+        VendorCurrencyGroup.Scrips => "Scrips",
+        VendorCurrencyGroup.Tomestones => "Tomestones",
         _ => group.ToString(),
     }));
     public const string Disclaimer = "Automatic purchase candidate, not a guaranteed purchase. Final buying depends on funds, reserves, spending limits, inventory capacity, access and live shop validation. Unfulfilled demand falls back to gathering or shortage reporting.";
@@ -71,9 +78,9 @@ public static class MaterialPurchasePresentation
         if (status != VendorOfferDataStatus.Ready)
             return new(MaterialPurchaseCandidateKind.PendingData, Array.Empty<VendorCurrencyGroup>(), "Automatic offer data pending or unavailable; normal source grouping shown.");
         var groups = offers.Where(o => o.ItemId == itemId && MaterialAcquisitionPlanner.IsValid(o) && o.Access != VendorOfferAccess.Inaccessible
-                && o.Costs.All(c => policy.Allows(c.CurrencyGroup)
+                && o.Costs.All(c => policy.Allows(c.CurrencyGroup, c.CurrencyItemId)
                     && (c.CurrencyGroup != VendorCurrencyGroup.GrandCompanySeals || GrandCompanySealPolicy.IsCurrentCurrency(c.CurrencyItemId, currentSeals))
-                    && (c.CurrencyGroup != VendorCurrencyGroup.Gil || policy.MaximumGilSpendPerRun != 0)))
+                    && policy.GetMaximumSpendPerRun(c.CurrencyItemId) != 0))
             .SelectMany(o => o.Costs.Select(c => c.CurrencyGroup)).Distinct()
             .OrderBy(g => { var index = policy.CurrencyPriority.ToList().IndexOf(g); return index < 0 ? int.MaxValue : index; }).ToArray();
         if (groups.Length == 0) return MaterialPurchaseCandidate.None("No supported, accessible automatic offer authorized by the displayed policy.");

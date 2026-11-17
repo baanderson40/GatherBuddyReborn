@@ -35,6 +35,7 @@ public sealed class CraftingAcquisitionCoordinator
     public CraftingAcquisitionState State { get; private set; } = CraftingAcquisitionState.Planning;
     public string Status { get; private set; } = "Planning material acquisition";
     public MaterialAcquisitionPlan? PurchasePlan { get; private set; }
+    public MaterialAcquisitionPlanningInput? PurchaseInput { get; private set; }
     public MaterialAcquisitionPlanningInput? FinalInput { get; private set; }
     public MaterialAcquisitionPlan? FinalPlan { get; private set; }
     public string? PurchaseFailureReason { get; private set; }
@@ -84,6 +85,7 @@ public sealed class CraftingAcquisitionCoordinator
                 return;
             }
             if (input.SessionId != SessionId) { Fail("Acquisition capture belongs to another session"); return; }
+            if (!_reconciling) PurchaseInput = input;
             var plan = MaterialAcquisitionPlanner.Plan(input);
             if (plan.Status == AcquisitionPlanningStatus.WaitingForVendorData)
             { State = CraftingAcquisitionState.WaitingForVendorData; Status = "Waiting for vendor caches (30 second limit)"; return; }

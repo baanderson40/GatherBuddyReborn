@@ -16,6 +16,8 @@ public class PolicyTests
         Assert.Equal(VendorPurchaseOverrideMode.Inherit, list.Mode);
         Assert.False(ResolvedVendorPurchasePolicy.Resolve(global, list).Enabled);
         Assert.False(ResolvedVendorPurchasePolicy.Resolve(null).Enabled);
+        Assert.Empty(global.AllowedCurrencyItemIds);
+        Assert.Empty(global.MaximumSpendPerRunByCurrencyItemId);
     }
 
     [Fact]
@@ -57,8 +59,10 @@ public class PolicyTests
     public void NullCollectionsAndInvalidOverrideAreSafe()
     {
         var policy = JsonConvert.DeserializeObject<AutomaticVendorPurchasePolicy>(
-            "{\"AllowedCurrencyGroups\":null,\"CurrencyPriority\":null,\"CurrencyReservesByItemId\":null}")!;
+            "{\"AllowedCurrencyGroups\":null,\"CurrencyPriority\":null,\"AllowedCurrencyItemIds\":null,\"CurrencyReservesByItemId\":null,\"MaximumSpendPerRunByCurrencyItemId\":null}")!;
         Assert.NotNull(policy.CurrencyReservesByItemId);
+        Assert.NotNull(policy.AllowedCurrencyItemIds);
+        Assert.NotNull(policy.MaximumSpendPerRunByCurrencyItemId);
         Assert.Equal(2, policy.AllowedCurrencyGroups.Count);
         var list = JsonConvert.DeserializeObject<VendorPurchaseListSettings>("{\"Mode\":999,\"CustomPolicy\":null}")!;
         Assert.Equal(VendorPurchaseOverrideMode.Disabled, list.Mode);
@@ -119,5 +123,45 @@ public class PolicyTests
         var policy = new AutomaticVendorPurchasePolicy { MaximumGilSpendPerRun = cap };
         var copy = JsonConvert.DeserializeObject<AutomaticVendorPurchasePolicy>(JsonConvert.SerializeObject(policy));
         Assert.Equal(cap, ResolvedVendorPurchasePolicy.Resolve(copy).MaximumGilSpendPerRun);
+    }
+
+    [Fact]
+    public void CurrencySpecificAllowlistReserveAndCapsRoundTripAndSnapshot()
+    {
+        var policy = new AutomaticVendorPurchasePolicy
+        {
+            Enabled = true,
+            AllowedCurrencyItemIds = [33913, 48],
+            CurrencyReservesByItemId = new() { [33913] = 200, [48] = 300 },
+            MaximumSpendPerRunByCurrencyItemId = new() { [33913] = 1000, [48] = 0 },
+        };
+        var copy = JsonConvert.DeserializeObject<AutomaticVendorPurchasePolicy>(JsonConvert.SerializeObject(policy))!;
+        var snapshot = ResolvedVendorPurchasePolicy.Resolve(copy);
+
+        Assert.True(snapshot.Allows(VendorCurrencyGroup.Scrips, 33913));
+        Assert.False(snapshot.Allows(VendorCurrencyGroup.Scrips, 33914));
+        Assert.True(snapshot.Allows(VendorCurrencyGroup.Tomestones, 48));
+        Assert.Equal(200ul, snapshot.GetReserve(33913));
+        Assert.Equal(300ul, snapshot.GetReserve(48));
+        Assert.Equal(1000ul, snapshot.GetMaximumSpendPerRun(33913));
+        Assert.Equal(0ul, snapshot.GetMaximumSpendPerRun(48));
+        Assert.Null(snapshot.GetMaximumSpendPerRun(49));
+        Assert.Throws<NotSupportedException>(() => ((IList<uint>)snapshot.AllowedCurrencyItemIds).Add(41784));
+    }
+
+    [Fact]
+    public void LegacyScripAndTomestoneGroupsDoNotGrantCurrencyPermissions()
+    {
+        var policy = new AutomaticVendorPurchasePolicy
+        {
+            Enabled = true,
+            AllowedCurrencyGroups = [VendorCurrencyGroup.Scrips, VendorCurrencyGroup.Tomestones],
+        };
+        var snapshot = ResolvedVendorPurchasePolicy.Resolve(policy);
+
+        Assert.False(snapshot.Allows(VendorCurrencyGroup.Scrips, 33913));
+        Assert.False(snapshot.Allows(VendorCurrencyGroup.Scrips, 33914));
+        Assert.False(snapshot.Allows(VendorCurrencyGroup.Tomestones, 28));
+        Assert.False(snapshot.Allows(VendorCurrencyGroup.Tomestones, 48));
     }
 }

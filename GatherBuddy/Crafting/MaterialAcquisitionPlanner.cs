@@ -57,7 +57,7 @@ public static class MaterialAcquisitionPlanner
                         if (compatible == 0) break;
                         if (!IsValid(offer)) continue;
                         if (offer.Access == VendorOfferAccess.Inaccessible) continue;
-                        if (offer.Costs.Any(c => !input.Policy.Allows(c.CurrencyGroup))) continue;
+                        if (offer.Costs.Any(c => !input.Policy.Allows(c.CurrencyGroup, c.CurrencyItemId))) continue;
 
                         var balance = input.CurrencyBalances.GetValueOrDefault(offer.CurrencyItemId);
                         var reserve = input.Policy.GetReserve(offer.CurrencyItemId);
@@ -69,14 +69,14 @@ public static class MaterialAcquisitionPlanner
                             trace?.Record("P2", "RejectFunding", $"item={item.ItemId}; currency={offer.CurrencyItemId}; reason={FundingShortage(input, offer, commitments)}");
                             continue;
                         }
-                        if (offer.CurrencyItemId == VendorShopResolverGilId && input.Policy.MaximumGilSpendPerRun is { } cap)
+                        if (input.Policy.GetMaximumSpendPerRun(offer.CurrencyItemId) is { } cap)
                         {
-                            var capRemaining = Subtract(Subtract(cap, input.Ledger.SettledSpending.GetValueOrDefault(VendorShopResolverGilId)),
-                                commitments.GetValueOrDefault(VendorShopResolverGilId));
-                            trace?.Record("P2", "GilBudget", $"item={item.ItemId}; cap={cap}; remainingCap={capRemaining}; currencySpendable={available}");
+                            var capRemaining = Subtract(Subtract(cap, input.Ledger.SettledSpending.GetValueOrDefault(offer.CurrencyItemId)),
+                                commitments.GetValueOrDefault(offer.CurrencyItemId));
+                            trace?.Record("P2", "CurrencyBudget", $"item={item.ItemId}; currency={offer.CurrencyItemId}; cap={cap}; remainingCap={capRemaining}; currencySpendable={available}");
                             if (capRemaining < offer.CostPerTransaction)
                             {
-                                trace?.Record("P2", "RejectFunding", $"item={item.ItemId}; currency=1; reason=SpendingCapReached");
+                                trace?.Record("P2", "RejectFunding", $"item={item.ItemId}; currency={offer.CurrencyItemId}; reason=SpendingCapReached");
                                 continue;
                             }
                             available = Math.Min(available, capRemaining);
@@ -165,7 +165,7 @@ public static class MaterialAcquisitionPlanner
         if (offer.RejectionKind == AcquisitionOfferRejectionKind.WrongGrandCompany && offer.Access == VendorOfferAccess.Inaccessible)
             return AcquisitionOfferRejectionKind.WrongGrandCompany;
         if (!IsValid(offer)) return AcquisitionOfferRejectionKind.Unsupported;
-        if (offer.Costs.Any(c => !policy.Allows(c.CurrencyGroup))) return AcquisitionOfferRejectionKind.CurrencyDisallowed;
+        if (offer.Costs.Any(c => !policy.Allows(c.CurrencyGroup, c.CurrencyItemId))) return AcquisitionOfferRejectionKind.CurrencyDisallowed;
         if (offer.Access == VendorOfferAccess.Inaccessible)
             return offer.RejectionKind == AcquisitionOfferRejectionKind.MissingLocation
                 ? AcquisitionOfferRejectionKind.MissingLocation : AcquisitionOfferRejectionKind.VendorInaccessible;
@@ -202,7 +202,7 @@ public static class MaterialAcquisitionPlanner
             else
             {
                 var supported = offers.Where(IsValid).ToList();
-                var allowed = supported.Where(offer => offer.Costs.All(c => input.Policy.Allows(c.CurrencyGroup))).ToList();
+                var allowed = supported.Where(offer => offer.Costs.All(c => input.Policy.Allows(c.CurrencyGroup, c.CurrencyItemId))).ToList();
                 if (allowed.Count > 0) Add(MaterialShortageReason.VendorInaccessible);
                 else if (supported.Count > 0) Add(MaterialShortageReason.CurrencyDisallowed);
                 else Add(MaterialShortageReason.UnsupportedOffer);
@@ -227,7 +227,7 @@ public static class MaterialAcquisitionPlanner
     private static ulong Spendable(MaterialAcquisitionPlanningInput input, uint currency, Dictionary<uint, ulong> commitments)
     {
         var available = Subtract(Subtract(input.CurrencyBalances.GetValueOrDefault(currency), input.Policy.GetReserve(currency)), commitments.GetValueOrDefault(currency));
-        if (currency == 1 && input.Policy.MaximumGilSpendPerRun is { } cap)
+        if (input.Policy.GetMaximumSpendPerRun(currency) is { } cap)
             available = Math.Min(available, Subtract(Subtract(cap, input.Ledger.SettledSpending.GetValueOrDefault(currency)), commitments.GetValueOrDefault(currency)));
         return available;
     }
@@ -241,8 +241,8 @@ public static class MaterialAcquisitionPlanner
         if (available < cost.Amount)
             return Subtract(balance, committed) >= cost.Amount
                 ? MaterialShortageReason.ReserveReached : MaterialShortageReason.InsufficientCurrency;
-        if (cost.CurrencyItemId == VendorShopResolverGilId && input.Policy.MaximumGilSpendPerRun is { } cap
-            && Subtract(Subtract(cap, input.Ledger.SettledSpending.GetValueOrDefault(VendorShopResolverGilId)), committed) < cost.Amount)
+        if (input.Policy.GetMaximumSpendPerRun(cost.CurrencyItemId) is { } cap
+            && Subtract(Subtract(cap, input.Ledger.SettledSpending.GetValueOrDefault(cost.CurrencyItemId)), committed) < cost.Amount)
             return MaterialShortageReason.SpendingCapReached;
         return null;
     }

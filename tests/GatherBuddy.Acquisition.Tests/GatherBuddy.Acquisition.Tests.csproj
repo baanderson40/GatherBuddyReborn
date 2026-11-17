@@ -53,5 +53,8 @@
     <Compile Include="../../GatherBuddy/Crafting/MaterialAcquisitionDiagnostics.cs" Link="Production/MaterialAcquisitionDiagnostics.cs" />
     <Compile Include="../../GatherBuddy/Crafting/IngredientQualityDemand.cs" Link="Production/IngredientQualityDemand.cs" />
     <Compile Include="../../GatherBuddy/Vulcan/Vendors/VendorItem.cs" Link="Production/VendorItem.cs" />
+    <Compile Include="../../GatherBuddy/Vulcan/Vendors/AutomaticVendorCurrencyCatalog.cs" Link="Production/AutomaticVendorCurrencyCatalog.cs" />
+    <Compile Include="../../GatherBuddy/Vulcan/Vendors/AutomaticVendorAcquisitionEntryFactory.cs" Link="Production/AutomaticVendorAcquisitionEntryFactory.cs" />
+    <Compile Include="../../GatherBuddy/Vulcan/Vendors/SpecialShopCostMetadata.cs" Link="Production/SpecialShopCostMetadata.cs" />
   </ItemGroup>
 </Project>

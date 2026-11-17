@@ -22,9 +22,11 @@ public static class VendorShopResolver
     public const uint BicolorCurrencyItemId = 26807;
     public const uint MgpCurrencyItemId = 29;
     public const uint WolfMarkCurrencyItemId = 25;
-    private static readonly HashSet<uint> TomestoneIds = [28, 48, 49];                 // Poetics, Mathematics, Mnemonics
+    private static readonly HashSet<uint> TomestoneIds = AutomaticVendorCurrencyCatalog.Currencies
+        .Where(currency => currency.Group == VendorCurrencyGroup.Tomestones).Select(currency => currency.ItemId).ToHashSet();
     private static readonly HashSet<uint> HuntSealIds = [AlliedSealCurrencyItemId, CenturioSealCurrencyItemId, SackOfNutsCurrencyItemId];
-    private static readonly HashSet<uint> ScripIds = [33913, 33914, 41784, 41785]; // Purple/Orange Crafter/Gatherer
+    private static readonly HashSet<uint> ScripIds = AutomaticVendorCurrencyCatalog.Currencies
+        .Where(currency => currency.Group == VendorCurrencyGroup.Scrips).Select(currency => currency.ItemId).ToHashSet();
     private static readonly HashSet<uint> CurrencyTypeMapPreferredShopIds = [1770637, 1770638];
 
     // Sourced from AllaganLib SpecialShopListing.currencies
@@ -1132,6 +1134,10 @@ public static class VendorShopResolver
         var multiCostListings    = 0;
         var reprioritizedListings = 0;
         var skippedExchangeListings = 0;
+        var acquisitionCurrencyCandidates = 0;
+        var acquisitionCurrencyAdded = 0;
+        var acquisitionCurrencyRejected = 0;
+        var acquisitionCurrencyRejectionSamples = new List<string>();
         var specialSheet = Dalamud.GameData.GetExcelSheet<SpecialShop>();
         var itemSheet = Dalamud.GameData.GetExcelSheet<Item>();
         if (specialSheet == null || itemSheet == null)
@@ -1175,9 +1181,46 @@ public static class VendorShopResolver
                         if (hasAdditionalDistinctCosts)
                         {
                             skippedExchangeListings++;
+                            if (AutomaticVendorCurrencyCatalog.Supports(selectedCost.Group, selectedCost.CurrencyItemId))
+                            {
+                                acquisitionCurrencyCandidates++;
+                                acquisitionCurrencyRejected++;
+                                if (acquisitionCurrencyRejectionSamples.Count < 4)
+                                    acquisitionCurrencyRejectionSamples.Add($"shop={shop.RowId};row={sourceItemIndex};item={(receivedItems.Count == 0 ? 0 : receivedItems[0].Item.RowId)};currency={selectedCost.CurrencyItemId};reason=MultipleDistinctCostCurrencies");
+                            }
                             continue;
                         }
                     }
+
+                    if (AutomaticVendorCurrencyCatalog.Supports(selectedCost.Group, selectedCost.CurrencyItemId))
+                    {
+                        acquisitionCurrencyCandidates++;
+                        string? rejectionReason = null;
+                        Item acquisitionItem = default;
+                        var itemExists = receivedItems.Count == 1
+                            && itemSheet.TryGetRow(receivedItems[0].Item.RowId, out acquisitionItem);
+                        if (itemExists && AutomaticVendorAcquisitionEntryFactory.TryCreate(acquisitionItem.RowId,
+                                acquisitionItem.Name.ExtractText(), (ushort)acquisitionItem.Icon,
+                                selectedCost.CurrencyItemId, selectedCost.CurrencyName, selectedCost.Group, selectedCost.Amount,
+                                (uint)receivedItems[0].ReceiveCount, receivedItems[0].ReceiveHq,
+                                resolvedCostCount, npcs, shop.RowId, sourceItemIndex, out var acquisitionEntry, out rejectionReason))
+                        {
+                            acquisitionEntries.Add(acquisitionEntry!);
+                            acquisitionCurrencyAdded++;
+                        }
+                        else
+                        {
+                            acquisitionCurrencyRejected++;
+                            if (acquisitionCurrencyRejectionSamples.Count < 4)
+                            {
+                                var itemId = receivedItems.Count == 0 ? 0 : receivedItems[0].Item.RowId;
+                                var reason = receivedItems.Count != 1 ? $"ReceiveItemCount={receivedItems.Count}"
+                                    : itemExists ? rejectionReason ?? "UnknownProjectionRejection" : "OutputItemMissingFromSheet";
+                                acquisitionCurrencyRejectionSamples.Add($"shop={shop.RowId};row={sourceItemIndex};item={itemId};currency={selectedCost.CurrencyItemId};reason={reason}");
+                            }
+                        }
+                    }
+
                     var addedListing = false;
 
                     foreach (var received in entry.ReceiveItems)
@@ -1212,6 +1255,8 @@ public static class VendorShopResolver
                 }
             }
         }
+
+        GatherBuddy.Log.Debug($"[VendorShopResolver] Automatic currency acquisition projection: candidates={acquisitionCurrencyCandidates}; added={acquisitionCurrencyAdded}; rejected={acquisitionCurrencyRejected}; samples=[{string.Join(" | ", acquisitionCurrencyRejectionSamples)}]");
 
         var deduped = MergeEquivalentOtherEntriesIntoTomestones(DeduplicateEntries(entries));
         deduped.Sort((a, b) =>

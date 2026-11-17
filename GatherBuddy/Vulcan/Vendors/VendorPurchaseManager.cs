@@ -71,6 +71,7 @@ public sealed class VendorPurchaseManager : IDisposable
         public ulong? ConfirmedCurrencySpent { get; init; }
         public bool AccountingUncertain { get; init; }
         public IReadOnlyDictionary<uint, ulong>? ConfirmedCosts { get; init; }
+        public uint SubmittedOutputQuantity { get; init; }
         public bool VendorRouteUnavailable { get; init; }
         public bool UnsupportedExchangeLayout { get; init; }
     }
@@ -91,6 +92,7 @@ public sealed class VendorPurchaseManager : IDisposable
     private int _ownedCountBeforePurchase;
     private uint _completedQuantity;
     private uint _currentBatchQuantity;
+    private uint _submittedOutputQuantity;
     private string _statusText = string.Empty;
     private bool _inclusionPageSelected;
     private bool _inclusionSubPageSelected;
@@ -115,8 +117,8 @@ public sealed class VendorPurchaseManager : IDisposable
     private uint OutputPerTransaction => _purchaseConstraints?.AuthorizedExchange?.OutputQuantityPerTransaction ?? 1;
     private uint BatchTransactions => _currentBatchQuantity / OutputPerTransaction;
     public VendorAutomationLease AutomationLease { get; } = new();
-    public bool HasSubmittedBatch => _request != null && _currentBatchQuantity > 0
-        && _state is State.ConfirmingPurchase or State.WaitingForPurchaseComplete;
+    public bool HasSubmittedBatch => _request != null && _submittedOutputQuantity > 0
+        && _state == State.WaitingForPurchaseComplete;
 
     public event Action<PurchaseResult>? PurchaseFinished;
 
@@ -202,6 +204,7 @@ public sealed class VendorPurchaseManager : IDisposable
         _ownedCountBeforePurchase = CountItemOnCharacter(entry.ItemId);
         _completedQuantity = 0;
         _currentBatchQuantity = 0;
+        _submittedOutputQuantity = 0;
         _inclusionPageSelected = false;
         _inclusionSubPageSelected = false;
         _gcRankSelected = false;
@@ -337,6 +340,7 @@ public sealed class VendorPurchaseManager : IDisposable
         }
 
         _currentBatchQuantity = 0;
+        _submittedOutputQuantity = 0;
         _ownedExchangeConfirmed = false;
         _submittedExchangeIndex = -1;
         var desiredBatchQuantity = GetDesiredBatchQuantity(remainingQuantity);
@@ -543,6 +547,10 @@ public sealed class VendorPurchaseManager : IDisposable
                 }
                 _confirmedCurrencySpent = checked(_confirmedCurrencySpent + expectedSpend);
             }
+
+            // Exact inventory and currency deltas prove this batch settled, even if the
+            // confirmation acknowledgement was observed later in the update cycle.
+            _submittedOutputQuantity = _currentBatchQuantity;
         }
 
         _completedQuantity += purchasedThisBatch;
@@ -555,7 +563,7 @@ public sealed class VendorPurchaseManager : IDisposable
 
         if (_ownerSessionId.HasValue)
         {
-            CompletePartially($"Purchased {_completedQuantity:N0}/{_request.Quantity:N0}x {_request.ItemName}; returning settled batch to transient coordinator.");
+            Complete($"Settled vendor batch: purchased {_completedQuantity:N0}/{_request.Quantity:N0}x {_request.ItemName}.");
             return true;
         }
         BeginNextBatch();
@@ -1074,10 +1082,34 @@ public sealed class VendorPurchaseManager : IDisposable
             return;
         }
 
+        var verifiedVisibleIndex = liveItemIndex;
+        if (_purchaseConstraints?.AuthorizedExchange is { } authorizedInclusion)
+        {
+            if (!VendorInteractionHelper.TryFindAuthorizedInclusionExchange(authorizedInclusion, out verifiedVisibleIndex,
+                    out var validationError, out var validationStatus))
+            {
+                var incomplete = validationStatus == LiveExchangeStatus.Incomplete;
+                LogExchangeValidation("inclusion-selection", validationError, incomplete);
+                if (_exchangeReadiness.ShouldWait(incomplete, Environment.TickCount64))
+                {
+                    _statusText = $"Waiting for verified InclusionShop transaction for {_request.ItemName}";
+                    return;
+                }
+                Fail($"InclusionShop transaction rejected before selection: {validationError}",
+                    unsupportedExchangeLayout: validationStatus == LiveExchangeStatus.Unsupported);
+                return;
+            }
+            _exchangeReadiness.Reset();
+            LogExchangeValidation("inclusion-selection", validationError, incomplete: false);
+            if (verifiedVisibleIndex != liveItemIndex)
+            { Fail("InclusionShop visible row changed during transaction validation."); return; }
+        }
+
         _ownedCountBeforePurchase = CountItemOnCharacter(_request.ItemId);
-        if (_purchaseConstraints?.AuthorizedExchange != null)
-        { Fail("Owned gemstone exchanges require a verifiable direct SpecialShop route."); return; }
-        if (!VendorInteractionHelper.TrySelectInclusionShopItem(_request.Vendor.ShopItemIndex, _request.ItemId, _currentBatchQuantity, out var itemError))
+        var inclusionTransactions = _purchaseConstraints?.AuthorizedExchange is { } authorizedBatch
+            ? _currentBatchQuantity / authorizedBatch.OutputQuantityPerTransaction
+            : _currentBatchQuantity;
+        if (!VendorInteractionHelper.TrySelectInclusionShopItem(verifiedVisibleIndex, _request.ItemId, inclusionTransactions, out var itemError))
         {
             if (itemError != null)
             {
@@ -1087,6 +1119,8 @@ public sealed class VendorPurchaseManager : IDisposable
             return;
         }
 
+        // Keep the visible InclusionShop row identity; direct SpecialShop routes use a different callback table.
+        if (_purchaseConstraints?.AuthorizedExchange != null) _submittedExchangeIndex = verifiedVisibleIndex;
         ClearInclusionSubPageRecovery(liveItemIndex);
         _state = State.ConfirmingPurchase;
         _stateStartTime = DateTime.UtcNow;
@@ -1237,15 +1271,36 @@ public sealed class VendorPurchaseManager : IDisposable
             if (CountItemOnCharacter(_request.ItemId) > _ownedCountBeforePurchase) return;
             if (_request.ShopType == VendorShopType.SpecialCurrency && _purchaseConstraints?.AuthorizedExchange is { } liveExchange)
             {
-                if (!VendorInteractionHelper.TryFindAuthorizedExchange(liveExchange, out var liveIndex, out var validationError, out var incomplete, out _, requireSelected: true))
+                var inclusionRoute = liveExchange.Vendor.MenuShopType == VendorMenuShopType.InclusionShop;
+                var liveIndex = -1;
+                string? validationError;
+                var inclusionStatus = LiveExchangeStatus.Incomplete;
+                var incomplete = false;
+                var verified = inclusionRoute
+                    ? VendorInteractionHelper.TryFindAuthorizedInclusionExchange(liveExchange, out liveIndex,
+                        out validationError, out inclusionStatus, requireSelected: true)
+                    : VendorInteractionHelper.TryFindAuthorizedExchange(liveExchange, out liveIndex,
+                        out validationError, out incomplete, out _, requireSelected: true);
+                var incompleteExchange = inclusionRoute ? inclusionStatus == LiveExchangeStatus.Incomplete : incomplete;
+                if (!verified)
                 {
-                    LogExchangeValidation("confirmation", validationError, incomplete);
+                    LogExchangeValidation(inclusionRoute ? "inclusion-confirmation" : "confirmation", validationError, incompleteExchange);
+                    if (inclusionRoute && !incompleteExchange)
+                    {
+                        _accountingUncertain = true;
+                        Fail($"InclusionShop transaction changed after selection; confirmation blocked: {validationError}",
+                            unsupportedExchangeLayout: inclusionStatus == LiveExchangeStatus.Unsupported);
+                        return;
+                    }
                     if ((DateTime.UtcNow - _stateStartTime) > ConfirmTimeout)
                     { _accountingUncertain = true; Fail($"Authorized live exchange could not be verified before confirmation: {validationError}"); }
                     return;
                 }
-                if (liveIndex != _submittedExchangeIndex)
-                { _accountingUncertain = true; Fail("Live exchange callback index changed after selection; no confirmation authorized."); return; }
+                if (inclusionRoute)
+                    LogExchangeValidation("inclusion-confirmation", validationError, incomplete: false);
+                if (_submittedExchangeIndex >= 0 && liveIndex != _submittedExchangeIndex)
+                { _accountingUncertain = true; Fail("Live exchange row changed after selection; no confirmation authorized."); return; }
+                _submittedExchangeIndex = liveIndex;
             }
             if (_purchaseConstraints?.TargetInventoryQuantity is { } target
                 && ((ulong)Math.Max(0, CountItemOnCharacter(_request.ItemId)) >= target
@@ -1320,9 +1375,15 @@ public sealed class VendorPurchaseManager : IDisposable
         {
             if (_ownerSessionId.HasValue)
             {
-                if (VendorInteractionHelper.TryConfirmOwnedPurchase(_ownedExchangeConfirmed, out var exchangeConfirmed, out var submitted))
+                var inclusion = _purchaseConstraints?.AuthorizedExchange?.Vendor.MenuShopType == VendorMenuShopType.InclusionShop;
+                var expectedPromptItem = inclusion ? _request.ItemName : null;
+                // A single transaction is already bounded; batches require the pending quantity to be visible in the prompt.
+                var expectedTransactions = inclusion && BatchTransactions > 1 ? BatchTransactions : 0u;
+                if (VendorInteractionHelper.TryConfirmOwnedPurchase(_ownedExchangeConfirmed, out var exchangeConfirmed,
+                        out var submitted, expectedPromptItem, expectedTransactions))
                 {
                     _ownedExchangeConfirmed = exchangeConfirmed;
+                    if (submitted) _submittedOutputQuantity = _currentBatchQuantity;
                     _lastActionTime = DateTime.UtcNow;
                     confirmed = submitted;
                 }
@@ -1518,6 +1579,7 @@ public sealed class VendorPurchaseManager : IDisposable
         _ownedCountBeforePurchase = 0;
         _completedQuantity = 0;
         _currentBatchQuantity = 0;
+        _submittedOutputQuantity = 0;
         _inclusionPageSelected = false;
         _inclusionSubPageSelected = false;
         _gcRankSelected = false;
@@ -1552,6 +1614,7 @@ public sealed class VendorPurchaseManager : IDisposable
     {
         SessionId = _ownerSessionId,
         AllocationId = _allocationId,
+        SubmittedOutputQuantity = _submittedOutputQuantity,
         ConfirmedCurrencySpent = _ownerSessionId.HasValue && !_accountingUncertain ? _confirmedCurrencySpent : null,
         ConfirmedCosts = _ownerSessionId.HasValue && !_accountingUncertain && _purchaseConstraints?.AuthorizedExchange != null
             ? new System.Collections.ObjectModel.ReadOnlyDictionary<uint, ulong>(_purchaseConstraints.AuthorizedExchange.Costs.ToDictionary(c => c.CurrencyItemId, c => _confirmedCosts.GetValueOrDefault(c.CurrencyItemId))) : null,

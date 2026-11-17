@@ -32,6 +32,23 @@ public class GemstoneSchemaTests
     }
 
     [Fact]
+    public void InclusionShopSpecialCurrencyRouteRequiresExactSourceAndPageMetadata()
+    {
+        var entry = new VendorShopEntry(44848, "Condensed Solution", 0, 5, 33913, "Purple Crafter's Scrip",
+            [new VendorNpc(1, "Anna", 3801094, VendorMenuShopType.InclusionShop,
+                InclusionPageIndex: 0, InclusionSubPageIndex: 0, ShopItemIndex: 7,
+                SourceShopId: 1770783, SourceItemIndex: 7)],
+            VendorShopType.SpecialCurrency, VendorCurrencyGroup.Scrips);
+        var vendor = Assert.Single(entry.Npcs);
+
+        Assert.True(VendorPurchaseManager.IsPurchaseSupported(entry, vendor));
+        Assert.False(VendorPurchaseManager.IsPurchaseSupported(entry,
+            vendor with { SourceShopId = 0 }));
+        Assert.False(VendorPurchaseManager.IsPurchaseSupported(entry,
+            vendor with { InclusionPageIndex = -1 }));
+    }
+
+    [Fact]
     public void VendorViewStampChangesForRecoveryAndNewGenerationButNotStableFrames()
     {
         var pending = new VendorShopResolver.CacheStamp(0, false);

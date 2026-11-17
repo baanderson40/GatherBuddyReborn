@@ -59,6 +59,19 @@ public class CraftingAcquisitionTests
     }
 
     [Fact]
+    public void InitialPurchaseOffersRemainAvailableAfterEmptyReconciliationCapture()
+    {
+        var port = new Port();
+        var run = Run(port);
+        run.Tick(Now);
+        Assert.Equal(2, run.PurchaseInput!.Offers.Count);
+        port.Complete();
+        run.Tick(Now.AddSeconds(1));
+        Assert.Empty(run.FinalInput!.Offers);
+        Assert.Equal(2, run.PurchaseInput!.Offers.Count);
+    }
+
+    [Fact]
     public void PartialPurchaseGathersOnlyRemainingNQWithoutDoubleDeduction()
     {
         var port = new Port();
@@ -228,6 +241,23 @@ public class CraftingAcquisitionTests
     }
 
     [Fact]
+    public void LongAutoRetainerYieldDoesNotConsumeVendorDataTimeout()
+    {
+        var port = new Port { DataStatus = VendorOfferDataStatus.Loading };
+        var run = Run(port);
+        run.Tick(Now);
+        run.Pause(Now.AddSeconds(1));
+        run.Tick(Now.AddMinutes(15));
+        run.Resume(Now.AddMinutes(15).AddSeconds(1));
+        run.Tick(Now.AddMinutes(15).AddSeconds(2));
+        Assert.Equal(CraftingAcquisitionState.WaitingForVendorData, run.State);
+        Assert.DoesNotContain("timed out", run.PurchaseFailureReason ?? string.Empty);
+        port.DataStatus = VendorOfferDataStatus.Ready;
+        run.Tick(Now.AddMinutes(15).AddSeconds(3));
+        Assert.Equal(CraftingAcquisitionState.Purchasing, run.State);
+    }
+
+    [Fact]
     public void PauseSubmittedWorkForwardsButDoesNotReconcileUntilResume()
     {
         var port = new Port();
@@ -361,8 +391,10 @@ public class CraftingAcquisitionTests
             CapturePurchasing.Add(allowPurchasing);
             if (InventoryUnavailable) return null;
             return new(session, policy, Demands.Select(d => d with { AllowPurchasing = allowPurchasing }),
-                [new(100, 1, VendorCurrencyGroup.Gil, 10, 1, VendorShopType.GilShop, new(10, "Vendor", 20)),
-                 new(100, 20, VendorCurrencyGroup.GrandCompanySeals, 10, 1, VendorShopType.GrandCompanySeals, new(11, "GC", 21))],
+                allowPurchasing
+                    ? [new(100, 1, VendorCurrencyGroup.Gil, 10, 1, VendorShopType.GilShop, new(10, "Vendor", 20)),
+                       new(100, 20, VendorCurrencyGroup.GrandCompanySeals, 10, 1, VendorShopType.GrandCompanySeals, new(11, "GC", 21))]
+                    : Array.Empty<AcquisitionVendorOffer>(),
                 Inventory, new Dictionary<uint, ulong> { [1] = Balance, [20] = SealBalance },
                 new(new Dictionary<uint, ulong>(), new Dictionary<uint, ulong>()), allowPurchasing ? DataStatus : VendorOfferDataStatus.Ready);
         }

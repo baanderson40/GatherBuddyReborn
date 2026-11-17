@@ -146,9 +146,11 @@ public sealed class TransientVendorPurchaseService : ITransientVendorPort, IDisp
         if (_manager.IsRunning || _active != null) { reason = "Previous purchase has not settled"; return TransientPurchaseStart.Unsafe; }
         if (_unavailableShops.Contains(ShopKey(allocation.Vendor)))
         { reason = "Vendor shop route already failed this session; no repeated interaction attempted."; return TransientPurchaseStart.Skipped; }
-        if (allocation.ShopType == VendorShopType.SpecialCurrency && allocation.CurrencyGroup != VendorCurrencyGroup.BicolorGemstones)
+        if (allocation.ShopType == VendorShopType.SpecialCurrency
+            && allocation.CurrencyGroup != VendorCurrencyGroup.BicolorGemstones
+            && !AutomaticVendorCurrencyCatalog.Supports(allocation.CurrencyGroup, allocation.CurrencyItemId))
         {
-            reason = "Only gil, current-GC seals, and validated gemstone exchanges are authorized for integrated execution.";
+            reason = "Only gil, current-GC seals, gemstones, and validated scrip/tomestone exchanges are authorized for integrated execution.";
             return TransientPurchaseStart.Skipped;
         }
         if (VendorShopResolver.HousingItemIds.Contains(allocation.ItemId) || VendorShopResolver.EquippableItemIds.Contains(allocation.ItemId))
@@ -248,7 +250,7 @@ public sealed class TransientVendorPurchaseService : ITransientVendorPort, IDisp
             !certain, receipt.Message)
         {
             ConfirmedCosts = certain ? receipt.ConfirmedCosts : null,
-            SubmittedOutputQuantity = receipt.RequestedQuantity,
+            SubmittedOutputQuantity = receipt.SubmittedOutputQuantity,
             PreventVendorFallback = receipt.UnsupportedExchangeLayout,
         };
         _retainedInteraction = certain && receipt.State == VendorPurchaseManager.CompletionState.Completed ? _active : null;

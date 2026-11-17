@@ -89,4 +89,17 @@ public class PolicyEditingTests
         Assert.Null(snapshot.MaximumGilSpendPerRun);
         Assert.False(ResolvedVendorPurchasePolicy.Resolve(global, list).Allows(VendorCurrencyGroup.Gil));
     }
+
+    [Fact]
+    public void PerCurrencyScripPermissionPreservesSiblingCurrenciesAndAddsPriorityGroupOnly()
+    {
+        var policy = new AutomaticVendorPurchasePolicy { Enabled = true };
+        VendorPurchasePolicyEditing.SetCurrencyAllowed(policy, 33913, true);
+        var snapshot = ResolvedVendorPurchasePolicy.Resolve(policy);
+
+        Assert.True(snapshot.Allows(VendorCurrencyGroup.Scrips, 33913));
+        Assert.False(snapshot.Allows(VendorCurrencyGroup.Scrips, 33914));
+        Assert.DoesNotContain(VendorCurrencyGroup.Scrips, snapshot.AllowedCurrencyGroups);
+        Assert.Contains(VendorCurrencyGroup.Scrips, snapshot.CurrencyPriority);
+    }
 }

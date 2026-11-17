@@ -19,6 +19,16 @@ public static class VendorPurchasePolicyEditing
         policy.Normalize();
     }
 
+    public static void SetCurrencyAllowed(AutomaticVendorPurchasePolicy policy, uint currencyItemId, bool allowed)
+    {
+        if (!AutomaticVendorCurrencyCatalog.TryGet(currencyItemId, out _))
+            throw new ArgumentOutOfRangeException(nameof(currencyItemId));
+        policy.Normalize();
+        policy.AllowedCurrencyItemIds.RemoveAll(value => value == currencyItemId);
+        if (allowed) policy.AllowedCurrencyItemIds.Add(currencyItemId);
+        policy.Normalize();
+    }
+
     public static void SetGrandCompanyFirst(AutomaticVendorPurchasePolicy policy, bool sealsFirst)
     {
         policy.Normalize();

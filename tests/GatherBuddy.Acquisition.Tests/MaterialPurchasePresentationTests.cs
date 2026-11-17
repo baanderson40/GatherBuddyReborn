@@ -106,6 +106,24 @@ public class MaterialPurchasePresentationTests
         Assert.False(Candidate(Settings(VendorCurrencyGroup.Gil), offer).IsCandidate);
     }
 
+    [Fact]
+    public void ScripAndTomestoneOffersRequireExactCurrencyOptInAndPassSharedSupport()
+    {
+        var policy = new AutomaticVendorPurchasePolicy { Enabled = true, AllowedCurrencyItemIds = [41785] };
+        var scrip = Gil() with { CurrencyItemId = 41785, CurrencyGroup = VendorCurrencyGroup.Scrips,
+            ShopType = VendorShopType.SpecialCurrency, Costs = [new(41785, VendorCurrencyGroup.Scrips, 10)] };
+        var otherScrip = scrip with { CurrencyItemId = 41784, Costs = [new(41784, VendorCurrencyGroup.Scrips, 10)] };
+        var tome = Gil() with { CurrencyItemId = 48, CurrencyGroup = VendorCurrencyGroup.Tomestones,
+            ShopType = VendorShopType.SpecialCurrency, Costs = [new(48, VendorCurrencyGroup.Tomestones, 10)] };
+
+        Assert.True(Candidate(policy, scrip).IsCandidate);
+        Assert.False(Candidate(policy, otherScrip).IsCandidate);
+        Assert.False(Candidate(policy, tome).IsCandidate);
+        Assert.True(IntegratedMaterialOfferSupport.Apply(scrip, 99, false, false).Supported);
+        Assert.True(IntegratedMaterialOfferSupport.Apply(otherScrip, 99, false, false).Supported);
+        Assert.True(IntegratedMaterialOfferSupport.Apply(tome, 99, false, false).Supported);
+    }
+
     [Theory]
     [InlineData(VendorOfferDataStatus.Loading)]
     [InlineData(VendorOfferDataStatus.Unavailable)]

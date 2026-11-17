@@ -198,9 +198,11 @@ public partial class CraftingQueueProcessor
     {
         if (GatherBuddy.AutoRetainerIntegration?.Coordinator.YieldRequested == true)
         {
+            _acquisition?.Pause(DateTime.UtcNow);
             UpdateAutoRetainerYield();
             return;
         }
+        _acquisition?.Resume(DateTime.UtcNow);
         if (_paused)
         {
             return;

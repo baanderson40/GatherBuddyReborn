@@ -21,6 +21,17 @@ public static class VendorAcquisitionOfferAdapter
 
         var requested = itemIds.ToHashSet();
         var offers = new List<AcquisitionVendorOffer>();
+        foreach (var itemId in requested.Order())
+        {
+            var gil = VendorShopResolver.GilShopEntries.Where(entry => entry.ItemId == itemId).ToArray();
+            var special = VendorShopResolver.SpecialShopEntries.Where(entry => entry.ItemId == itemId).ToArray();
+            var acquisition = VendorShopResolver.AcquisitionSpecialEntries.Where(entry => entry.ItemId == itemId).ToArray();
+            var gc = VendorShopResolver.GcShopEntries.Where(entry => entry.ItemId == itemId).ToArray();
+            var sourceDetails = special.Concat(acquisition).SelectMany(entry => entry.Npcs.Select(npc =>
+                $"{entry.Group}:{entry.CurrencyItemId};npc={npc.NpcId};menu={npc.MenuShopType};shop={npc.ShopId};source={npc.SourceShopId}:{npc.SourceItemIndex};routePage={npc.InclusionPageIndex}/{npc.InclusionSubPageIndex}"))
+                .Distinct().Take(4);
+            Dalamud.Log.Debug($"[VendorAcquisitionOfferAdapter] Resolver matches item={itemId}; gil={gil.Length}; special={special.Length}; acquisition={acquisition.Length}; gc={gc.Length}; specialRoutes=[{string.Join(" | ", sourceDetails)}]");
+        }
         var currentSeals = Dalamud.ClientState.IsLoggedIn && Dalamud.Objects.LocalPlayer != null
             ? VendorShopResolver.GetCurrentGrandCompanySealCurrencyItemId() : 0;
         foreach (var entry in VendorShopResolver.GilShopEntries.Concat(VendorShopResolver.AcquisitionSpecialEntries)
@@ -39,8 +50,6 @@ public static class VendorAcquisitionOfferAdapter
                     rejection ??= ReadExchange(entry.ItemId, vendor, out costs, out output);
                     if (costs.Count > 1)
                         rejection ??= "Multi-cost exchange metadata is modeled, but complete live verification for that native layout is unavailable.";
-                    if (vendor.MenuShopType != VendorMenuShopType.SpecialShop)
-                        rejection ??= "Gemstone acquisition requires a verifiable direct special-shop route.";
                 }
                 var supported = rejection == null;
                 AcquisitionOfferRejectionKind? rejectionKind = supported ? null : AcquisitionOfferRejectionKind.Unsupported;
@@ -93,17 +102,19 @@ public static class VendorAcquisitionOfferAdapter
         var result = new List<AcquisitionExchangeCost>();
         foreach (var cost in costs)
         {
-            if (cost.CostType != 0 || cost.CollectabilityCost != 0)
-                return "Unsupported exchange cost type or collectable payment.";
+            var metadataRejection = SpecialShopCostMetadata.Validate(cost.CostType, cost.CollectabilityCost);
+            if (metadataRejection != null) return metadataRejection;
             var currency = VendorShopResolver.ResolveExchangeCurrency(shop.RowId, cost.ItemCost.RowId, shop.UseCurrencyType);
             var group = currency switch
             {
-                1 => VendorCurrencyGroup.Gil,
+                VendorShopResolver.GilCurrencyItemId => VendorCurrencyGroup.Gil,
                 20 or 21 or 22 => VendorCurrencyGroup.GrandCompanySeals,
-                VendorShopResolver.BicolorCurrencyItemId => VendorCurrencyGroup.BicolorGemstones,
-                _ => VendorCurrencyGroup.Other,
+                _ => VendorShopResolver.GetCurrencyGroup(VendorShopType.SpecialCurrency, currency),
             };
-            if (group == VendorCurrencyGroup.Other) return $"Exchange payment item/currency {currency} is not supported; crafting stock is protected.";
+            var supportedCurrency = group is VendorCurrencyGroup.Gil or VendorCurrencyGroup.GrandCompanySeals
+                or VendorCurrencyGroup.BicolorGemstones
+                || AutomaticVendorCurrencyCatalog.Supports(group, currency);
+            if (!supportedCurrency) return $"Exchange payment item/currency {currency} is not supported; crafting stock is protected.";
             result.Add(new(currency, group, (ulong)cost.CurrencyCost));
         }
         resolvedCosts = result.GroupBy(c => c.CurrencyItemId).Select(g => new AcquisitionExchangeCost(g.Key, g.First().CurrencyGroup,

@@ -13,8 +13,11 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Text.RegularExpressions;
 using DalamudObjectKind = global::Dalamud.Game.ClientState.Objects.Enums.ObjectKind;
 using ValueType = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType;
+using DiagnosticThrottleString = GatherBuddy.Utility.DiagnosticThrottle<string>;
+using DiagnosticThrottle = GatherBuddy.Utility.DiagnosticThrottle;
 
 namespace GatherBuddy.Vulcan.Vendors;
 
@@ -42,6 +45,8 @@ public static class VendorInteractionHelper
         public int NextStepIndex { get; set; }
     }
     private static readonly Dictionary<ShopMenuSelectionKey, ShopMenuSelectionState> ShopMenuSelectionStates = [];
+    private static readonly DiagnosticThrottleString ConfirmationPromptDiagnostics = new(TimeSpan.FromSeconds(5), 32,
+        comparer: StringComparer.OrdinalIgnoreCase);
 
     public static bool IsReadyToLeaveVendor()
         => GetVendorExitBlocker() == null;
@@ -625,6 +630,165 @@ public static class VendorInteractionHelper
         return true;
     }
 
+    /// <summary>Validates InclusionShop's own agent transaction against the exact authorized source listing.</summary>
+    public static unsafe bool TryFindAuthorizedInclusionExchange(Crafting.VendorPurchaseAllocation allocation,
+        out int visibleIndex, out string? error, out LiveExchangeStatus status, bool requireSelected = false)
+    {
+        visibleIndex = -1;
+        error = null;
+        status = LiveExchangeStatus.Incomplete;
+        if (allocation.Vendor.MenuShopType != VendorMenuShopType.InclusionShop
+            || allocation.Vendor.SourceShopId == 0 || allocation.Vendor.SourceItemIndex < 0)
+        {
+            status = LiveExchangeStatus.Unsupported;
+            error = "InclusionRouteMetadataMissing";
+            return false;
+        }
+
+        if (!GenericHelpers.TryGetAddonByName("InclusionShop", out AtkUnitBase* addon) || !addon->IsVisible)
+        { error = "InclusionShopAddonNotReady"; return false; }
+        var target = Dalamud.Targets.Target?.BaseId ?? 0;
+        if (target != allocation.Vendor.NpcId)
+        {
+            status = target == 0 ? LiveExchangeStatus.Incomplete : LiveExchangeStatus.Mismatch;
+            error = $"InclusionTargetMismatch:target={target},expected={allocation.Vendor.NpcId}";
+            return false;
+        }
+
+        var module = AgentModule.Instance();
+        var agent = module == null ? null : (AgentInclusionShop*)module->GetAgentByInternalId(AgentId.InclusionShop);
+        var data = agent == null ? null : agent->Data;
+        if (data == null)
+        { error = "InclusionAgentDataNotReady"; return false; }
+        if (!data->IsShopReady || data->NeedsAddonRefresh)
+        { error = $"InclusionAgentNotReady:ready={data->IsShopReady},refresh={data->NeedsAddonRefresh}"; return false; }
+        if (data->InclusionShopId != allocation.Vendor.ShopId)
+        {
+            status = LiveExchangeStatus.Mismatch;
+            error = $"InclusionShopMismatch:live={data->InclusionShopId},expected={allocation.Vendor.ShopId}";
+            return false;
+        }
+
+        var visibleCount = ReadAtkUInt(addon, 298);
+        if (visibleCount == 0 || visibleCount > 60 || addon->AtkValues == null || addon->AtkValuesCount < 299 + visibleCount * 18)
+        { error = $"InclusionVisibleRowsNotReady:count={visibleCount},values={addon->AtkValuesCount}"; return false; }
+        if (!TryGetVisibleInclusionShopItemIndex(addon, allocation.ItemId, out visibleIndex, out error))
+        { status = LiveExchangeStatus.Mismatch; return false; }
+
+        if (data->CategoryCount == 0 || data->CategoryCount > 30 || data->SelectedCategoryIndex >= data->CategoryCount)
+        { error = $"InclusionCategoryNotReady:count={data->CategoryCount},selected={data->SelectedCategoryIndex}"; return false; }
+        var categoryIndex = data->CategoryIndexMap[data->SelectedCategoryIndex];
+        if (categoryIndex >= 30)
+        { status = LiveExchangeStatus.Unsupported; error = $"InclusionCategoryMapOutOfBounds:index={categoryIndex}"; return false; }
+        var category = data->Categories[categoryIndex];
+        if (category.SubCategories == null || category.SubCategoryCount == 0 || category.SubCategoryCount > 60
+            || data->SelectedSubCategoryIndex >= category.SubCategoryCount)
+        { error = $"InclusionSubCategoryNotReady:count={category.SubCategoryCount},selected={data->SelectedSubCategoryIndex}"; return false; }
+        var subCategory = &category.SubCategories[data->SelectedSubCategoryIndex];
+        if (subCategory->ItemCount == 0 || subCategory->ItemCount > 60 || visibleIndex >= 60)
+        { status = LiveExchangeStatus.Unsupported; error = $"InclusionItemBoundsUnsupported:count={subCategory->ItemCount},visible={visibleIndex}"; return false; }
+        var nativeItemIndex = data->ItemIndexMap[visibleIndex];
+        if (nativeItemIndex >= subCategory->ItemCount)
+        { status = LiveExchangeStatus.Unsupported; error = $"InclusionItemMapOutOfBounds:visible={visibleIndex},native={nativeItemIndex},count={subCategory->ItemCount}"; return false; }
+
+        var liveItem = subCategory->Items[nativeItemIndex];
+        if (!TryReadInclusionSource(allocation, out var source, out var sourceCosts, out var sourceOutput, out error))
+        { status = LiveExchangeStatus.Unsupported; return false; }
+        if (!TryMatchInclusionNativeItem(liveItem, source, out var liveOutput, out var liveHq, out error))
+        { status = LiveExchangeStatus.Mismatch; return false; }
+        if (liveHq || liveOutput != sourceOutput)
+        { status = LiveExchangeStatus.Mismatch; error = $"InclusionOutputMismatch:live={liveOutput}x{allocation.ItemId},hq={liveHq};source={sourceOutput}x{allocation.ItemId}"; return false; }
+
+        int? selectedVisibleRow = null;
+        if (requireSelected)
+        {
+            var selectedItem = data->SelectedItemIndex;
+            if (selectedItem == visibleIndex || selectedItem == nativeItemIndex)
+                selectedVisibleRow = visibleIndex;
+            else
+            {
+                status = LiveExchangeStatus.Mismatch;
+                error = $"InclusionSelectedItemMismatch:selected={selectedItem},visible={visibleIndex},native={nativeItemIndex}";
+                return false;
+            }
+        }
+        var row = new LiveExchangeRow(visibleIndex, allocation.ItemId, liveOutput, liveHq, sourceCosts);
+        var match = LiveVendorExchange.Match(allocation, [row], selectedVisibleRow);
+        if (match.Status != LiveExchangeStatus.Match)
+        { status = match.Status; error = $"{match.Detail}; inclusionShop={data->InclusionShopId};category={data->SelectedCategoryIndex}/{categoryIndex};subCategory={data->SelectedSubCategoryIndex};visible={visibleIndex};native={nativeItemIndex};selected={data->SelectedItemIndex}"; return false; }
+
+        if (requireSelected)
+        {
+            var currencyCount = data->SelectedCurrencyCount;
+            if (currencyCount == 0 || currencyCount > 3)
+            { error = $"InclusionSelectedCurrenciesNotReady:count={currencyCount}"; return false; }
+            var selectedCurrencies = new uint[currencyCount];
+            for (var i = 0; i < currencyCount; i++) selectedCurrencies[i] = data->SelectedCurrencies[i].ItemId;
+            var expectedCurrencies = allocation.Costs.Select(c => c.CurrencyItemId).Distinct().Order().ToArray();
+            if (!selectedCurrencies.Order().SequenceEqual(expectedCurrencies))
+            {
+                status = LiveExchangeStatus.Mismatch;
+                error = $"InclusionSelectedCurrencyMismatch:live=[{string.Join(",", selectedCurrencies)}],expected=[{string.Join(",", expectedCurrencies)}]";
+                return false;
+            }
+        }
+
+        status = LiveExchangeStatus.Match;
+        error = $"InclusionTransactionMatched:shop={data->InclusionShopId};category={data->SelectedCategoryIndex}/{categoryIndex};subCategory={data->SelectedSubCategoryIndex};visible={visibleIndex};native={nativeItemIndex};selected={data->SelectedItemIndex};costs={string.Join(",", sourceCosts.Select(c => $"{c.CurrencyItemId}:{c.Amount}"))}";
+        return true;
+    }
+
+    private static unsafe bool TryReadInclusionSource(Crafting.VendorPurchaseAllocation allocation,
+        out SpecialShop.ItemStruct source, out IReadOnlyList<Crafting.AcquisitionExchangeCost> resolvedCosts,
+        out uint output, out string? error)
+    {
+        source = default;
+        resolvedCosts = Array.Empty<Crafting.AcquisitionExchangeCost>();
+        output = 0;
+        error = null;
+        var sheet = Dalamud.GameData.GetExcelSheet<SpecialShop>();
+        if (sheet == null || !sheet.TryGetRow(allocation.Vendor.SourceShopId, out var shop)
+            || allocation.Vendor.SourceItemIndex >= shop.Item.Count)
+        { error = "InclusionSourceListingUnavailable"; return false; }
+        source = shop.Item[allocation.Vendor.SourceItemIndex];
+        error = VendorAcquisitionOfferAdapter.ReadExchange(allocation.ItemId, allocation.Vendor, out resolvedCosts, out output);
+        return error == null;
+    }
+
+    private static unsafe bool TryMatchInclusionNativeItem(AgentInclusionShop.Item liveItem, SpecialShop.ItemStruct source,
+        out uint output, out bool hq, out string? error)
+    {
+        output = 0;
+        hq = false;
+        error = null;
+        var sourceOutputs = source.ReceiveItems.Where(item => item.Item.RowId != 0 && item.ReceiveCount > 0).ToArray();
+        var liveOutputs = Enumerable.Range(0, 2).Where(i => liveItem.GiveItemId[i] != 0 && liveItem.GiveAmount[i] > 0)
+            .Select(i => (ItemId: liveItem.GiveItemId[i], Amount: liveItem.GiveAmount[i], Hq: liveItem.GiveItemHq[i] != 0)).ToArray();
+        if (sourceOutputs.Length != 1 || liveOutputs.Length != sourceOutputs.Length)
+        { error = $"InclusionOutputCountMismatch:live={liveOutputs.Length},source={sourceOutputs.Length}"; return false; }
+        var observedOutput = liveOutputs[0];
+        var expectedOutput = sourceOutputs[0];
+        if (observedOutput.ItemId != expectedOutput.Item.RowId || observedOutput.Amount != expectedOutput.ReceiveCount
+            || observedOutput.Hq != expectedOutput.ReceiveHq)
+        { error = $"InclusionSourceOutputMismatch:live={observedOutput.ItemId}x{observedOutput.Amount}/hq={observedOutput.Hq};source={expectedOutput.Item.RowId}x{expectedOutput.ReceiveCount}/hq={expectedOutput.ReceiveHq}"; return false; }
+
+        var sourceCosts = source.ItemCosts.Where(cost => cost.ItemCost.RowId != 0 && cost.CurrencyCost != 0).ToArray();
+        var liveCosts = Enumerable.Range(0, 3).Where(i => liveItem.CostAmount[i] != 0 || liveItem.CostItemId[i] != 0)
+            .Select(i => (ItemId: liveItem.CostItemId[i], Amount: liveItem.CostAmount[i], Type: liveItem.CostType[i])).ToArray();
+        if (sourceCosts.Length == 0 || liveCosts.Length != sourceCosts.Length)
+        { error = $"InclusionCostCountMismatch:live={liveCosts.Length},source={sourceCosts.Length}"; return false; }
+        for (var i = 0; i < sourceCosts.Length; i++)
+        {
+            var actual = liveCosts[i];
+            var expected = sourceCosts[i];
+            if (actual.ItemId != expected.ItemCost.RowId || actual.Amount != expected.CurrencyCost || actual.Type != expected.CostType)
+            { error = $"InclusionCostMismatch:slot={i};live={actual.ItemId}x{actual.Amount}/type={actual.Type};source={expected.ItemCost.RowId}x{expected.CurrencyCost}/type={expected.CostType}"; return false; }
+        }
+        output = observedOutput.Amount;
+        hq = observedOutput.Hq;
+        return true;
+    }
+
     private static unsafe uint? ReadAtkNumber(AtkUnitBase* addon, int slot)
     {
         if (addon->AtkValues == null || slot < 0 || slot >= addon->AtkValuesCount) return null;
@@ -652,7 +816,8 @@ public static class VendorInteractionHelper
             VendorShopType.GilShop => GenericHelpers.TryGetAddonByName("Shop", out AtkUnitBase* gil) && gil->IsVisible,
             VendorShopType.GrandCompanySeals => GenericHelpers.TryGetAddonByName("GrandCompanyExchange", out AtkUnitBase* gc) && gc->IsVisible,
             VendorShopType.SpecialCurrency => GenericHelpers.TryGetAddonByName("ShopExchangeItem", out AtkUnitBase* item) && item->IsVisible
-                || GenericHelpers.TryGetAddonByName("ShopExchangeCurrency", out AtkUnitBase* currency) && currency->IsVisible,
+                || GenericHelpers.TryGetAddonByName("ShopExchangeCurrency", out AtkUnitBase* currency) && currency->IsVisible
+                || GenericHelpers.TryGetAddonByName("InclusionShop", out AtkUnitBase* inclusion) && inclusion->IsVisible,
             _ => false,
         };
 
@@ -760,7 +925,7 @@ public static class VendorInteractionHelper
     public static unsafe bool TryConfirmYesNo()
         => TryConfirmYesNo(out _);
 
-    public static unsafe bool TryConfirmYesNo(out bool submitted)
+    public static unsafe bool TryConfirmYesNo(out bool submitted, string? expectedItemName = null, uint expectedQuantity = 0)
     {
         submitted = false;
         if (!GenericHelpers.TryGetAddonByName<AddonSelectYesno>("SelectYesno", out var addon)
@@ -768,6 +933,25 @@ public static class VendorInteractionHelper
          || addon->YesButton == null)
         {
             return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(expectedItemName))
+        {
+            var prompt = addon->PromptText == null ? string.Empty : addon->PromptText->NodeText.ToString();
+            if (!prompt.Contains(expectedItemName, StringComparison.OrdinalIgnoreCase))
+            {
+                if (ConfirmationPromptDiagnostics.TryLog(expectedItemName, prompt, out var suppressed))
+                    GatherBuddy.Log.Debug($"[VendorInteractionHelper] Holding SelectYesno for unrelated/ambiguous InclusionShop confirmation; expected item='{expectedItemName}', prompt='{prompt}'{DiagnosticThrottle.Suffix(suppressed)}");
+                return false;
+            }
+            if (expectedQuantity > 0 && !Regex.IsMatch(prompt,
+                    $"(?<!\\d){Regex.Escape(expectedQuantity.ToString(System.Globalization.CultureInfo.InvariantCulture))}(?!\\d)",
+                    RegexOptions.CultureInvariant))
+            {
+                if (ConfirmationPromptDiagnostics.TryLog(expectedItemName, $"quantity={expectedQuantity};prompt={prompt}", out var suppressed))
+                    GatherBuddy.Log.Debug($"[VendorInteractionHelper] Holding InclusionShop confirmation without visible transaction quantity; expected={expectedQuantity}; item='{expectedItemName}'; prompt='{prompt}'{DiagnosticThrottle.Suffix(suppressed)}");
+                return false;
+            }
         }
 
         if (TryCheckSelectYesnoConfirmationBox(addon))
@@ -781,7 +965,8 @@ public static class VendorInteractionHelper
     }
 
     // Owned execution must not repeat exchange submission while waiting for the final Yes/No.
-    public static bool TryConfirmOwnedPurchase(bool exchangeAlreadyConfirmed, out bool exchangeConfirmed, out bool submitted)
+    public static bool TryConfirmOwnedPurchase(bool exchangeAlreadyConfirmed, out bool exchangeConfirmed, out bool submitted,
+        string? expectedItemName = null, uint expectedQuantity = 0)
     {
         exchangeConfirmed = exchangeAlreadyConfirmed;
         submitted = false;
@@ -791,7 +976,7 @@ public static class VendorInteractionHelper
             exchangeConfirmed = true;
             return true;
         }
-        return TryConfirmYesNo(out submitted);
+        return TryConfirmYesNo(out submitted, expectedItemName, expectedQuantity);
     }
 
     public static unsafe bool TryExitVendorInteraction()

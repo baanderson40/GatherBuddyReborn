@@ -118,23 +118,22 @@ public class CraftingStatusWindow : M3Window
         using var wrap = ImRaii.TextWrapPos(ImGui.GetCursorPosX() + width);
         var header = CraftingStatusPresentation.GetHeader(currentState, paused, handoff?.State, recipeName,
             _queueProcessor.ActivePurchaseItemName, gatherItemName);
-        using (ImRaii.PushFont(M3.TitleMedium))
-        {
-            ImGui.TextWrapped(header);
-        }
+        var (_, stateTone, stateIcon) = DescribeState(currentState, paused);
+        M3Widgets.Pill("##craft_state", header, stateTone, stateIcon);
         if (handoff != null && ImGui.IsItemHovered())
             M3Tooltip.Hovered(handoff.Status);
-
-        var (stateLabel, stateTone, stateIcon) = DescribeState(currentState, paused);
-        M3Widgets.Pill("##craft_state", stateLabel, stateTone, stateIcon);
         var progress = _queueProcessor.Progress;
-        M3Text.Draw($"{progress.ConfirmedCrafts} / {progress.RequestedCrafts} crafts confirmed", M3TextStyle.Muted);
-        M3Tooltip.Hovered("Counts expanded craft entries, not output item units. Only inventory-confirmed output advances successful crafts; explicit skips are excluded.");
-        M3Widgets.LinearProgress(new Vector2(width, 6f * M3.Scale), progress.RequestedCrafts > 0
-            ? Math.Clamp((float)progress.ConfirmedCrafts / progress.RequestedCrafts, 0f, 1f) : 0f);
-        M3Text.Draw($"{progress.RemainingCrafts} crafts remaining", M3TextStyle.Muted);
-        if (progress.ExplicitSkips > 0)
-            M3Text.Draw($"{progress.ExplicitSkips} explicitly skipped", M3TextStyle.Warning);
+        using (M3Card.Begin("##craftProgress", "Craft progress", FontAwesomeIcon.Tasks, M3.AccentFor(0)))
+        {
+            M3Text.Draw($"{progress.ConfirmedCrafts} / {progress.RequestedCrafts} crafts confirmed", M3TextStyle.Muted);
+            M3Tooltip.Hovered("Counts expanded craft entries, not output item units. Only inventory-confirmed output advances successful crafts; explicit skips are excluded.");
+            var progressWidth = MathF.Max(1f, ImGui.GetContentRegionAvail().X - M3Card.RightInset);
+            M3Widgets.LinearProgress(new Vector2(progressWidth, 6f * M3.Scale), progress.RequestedCrafts > 0
+                ? Math.Clamp((float)progress.ConfirmedCrafts / progress.RequestedCrafts, 0f, 1f) : 0f);
+            M3Text.Draw($"{progress.RemainingCrafts} crafts remaining", M3TextStyle.Muted);
+            if (progress.ExplicitSkips > 0)
+                M3Text.Draw($"{progress.ExplicitSkips} explicitly skipped", M3TextStyle.Warning);
+        }
 
         if (handoff?.State == AutoRetainerHandoffState.Failed)
             AutoRetainerSettingsUi.DrawStatus();
@@ -202,8 +201,7 @@ public class CraftingStatusWindow : M3Window
         }
 
         var completionEnabled = GatherBuddy.Config.AutoGatherConfig.EnableAutoRetainerWhenFinished;
-        if (M3Widgets.RowSwitch("AutoRetainer when finished##craftCompletionHandoff", ref completionEnabled,
-                "Enable continuous AutoRetainer after this queue finishes successfully and cleanup completes. Shared with GBR and Vulcan settings. Turning this off cancels a pending handoff but does not stop AutoRetainer already running."))
+        if (M3Widgets.RowSwitch("AutoRetainer when finished##craftCompletionHandoff", ref completionEnabled))
         {
             AutoRetainerCompletionPreference.SetEnabled(completionEnabled);
             GatherBuddy.Config.Save();
@@ -234,15 +232,6 @@ public class CraftingStatusWindow : M3Window
             }
         }
 
-        ImGui.Dummy(new Vector2(0f, M3.Space1));
-        var delay = GatherBuddy.Config.VulcanExecutionDelayMs;
-        var gutter = M3Widgets.SliderValueGutter("1000 ms");
-        if (M3Widgets.SliderInt("##craft_action_delay", ref delay, 0, 1000, $"{delay} ms", width - gutter))
-        {
-            GatherBuddy.Config.VulcanExecutionDelayMs = Math.Clamp(delay, 0, 1000);
-            GatherBuddy.Config.Save();
-        }
-        M3Tooltip.Hovered("Delay between each crafting action.");
         if (M3Widgets.Button("##craft_open_vulcan", "Open Vulcan", M3ButtonStyle.Text, FontAwesomeIcon.Hammer))
             GatherBuddy.VulcanWindow?.RestoreWindow();
     }

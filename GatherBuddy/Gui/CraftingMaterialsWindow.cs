@@ -284,7 +284,7 @@ public class CraftingMaterialsWindow : M3PanelWindow
         FilterChip(ref flow, "##materials_precrafts", "Precrafts", FontAwesomeIcon.LayerGroup, ref _matsShowPrecrafts,
             "Include intermediate craftable components and non-gear final craftables.");
         FilterChip(ref flow, "##materials_keep_fulfilled", "Keep fulfilled", FontAwesomeIcon.CheckDouble, ref _matsKeepFulfilled,
-            "Keep fulfilled materials visible even when \"Skip if Already Have Enough\" is enabled on the list.");
+            "Show materials you already have enough of.");
 
         if (showRetainer && _editor != null)
         {
@@ -432,7 +432,7 @@ public class CraftingMaterialsWindow : M3PanelWindow
             }
 
             var countRetainersTowardNeed = showRetainer && _editor.RetainerRestockEnabled;
-            var hideSatisfiedRows = _editor.SkipIfEnoughEnabled && !_matsKeepFulfilled;
+            var hideSatisfiedRows = !_matsKeepFulfilled;
             var craftMaterials = _matsShowPrecrafts
                 ? _editor.GetDisplayPrecraftMaterials()
                 : null;
@@ -559,7 +559,7 @@ public class CraftingMaterialsWindow : M3PanelWindow
             if (vendorList.Count > 0)
             {
                 _cachedPanels.Add(new MaterialPanel("##vendor", "Vendor", FontAwesomeIcon.Store, HueVendor, vendorList, CountMissing(vendorList),
-                    nonCraftRetainerMode, BuildVendorBuyListTargets(vendorList)));
+                    nonCraftRetainerMode, BuildVendorBuyListTargets(vendorList), ShowCurrencyTotals: true));
             }
 
             if (craftList is { Count: > 0 })
@@ -811,7 +811,7 @@ public class CraftingMaterialsWindow : M3PanelWindow
 
         if (panel.ShowCurrencyTotals)
         {
-            var totals = ComputeCurrencyTotals(panel.Entries, panel.PreferBicolorDefault, ignoreOwned: _matsKeepFulfilled);
+            var totals = ComputeCurrencyTotals(panel.Entries, panel.PreferBicolorDefault, ignoreOwned: false);
             if (totals.Count > 0)
             {
                 ImGui.SetCursorScreenPos(new Vector2(x, y));

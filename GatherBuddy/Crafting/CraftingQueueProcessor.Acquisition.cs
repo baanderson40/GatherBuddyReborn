@@ -143,16 +143,43 @@ public partial class CraftingQueueProcessor
             if (quantity <= 0) continue;
             var name = sheet != null && sheet.TryGetRow(item.ItemId, out var row) ? row.Name.ExtractText() : $"Item {item.ItemId}";
             var original = _acquisition?.PurchasePlan?.Materials.FirstOrDefault(m => m.ItemId == item.ItemId);
-            var reason = original?.PrimaryShortage?.Reason.ToString() ?? _acquisition?.PurchaseFailureReason
-                ?? (item.UnresolvedDemand.RequiredHQ > 0 ? "Required HQ unavailable" : "Current inventory still short after acquisition");
-            var line = $"{quantity} × {name}: {reason}";
+            var shortage = original?.PrimaryShortage;
+            var reason = shortage != null
+                ? DescribeShortageReason(shortage.Reason)
+                : _acquisition?.PurchaseFailureReason
+                    ?? (item.UnresolvedDemand.RequiredHQ > 0 ? "required HQ unavailable" : "inventory still short after acquisition");
+            var purchaseInput = _acquisition?.PurchaseInput;
+            var capturedOffers = purchaseInput?.Offers.Where(offer => offer.ItemId == item.ItemId).ToList() ?? [];
+            var offerDetails = capturedOffers.Count == 0
+                ? "resolverOffers=0"
+                : $"resolverOffers={capturedOffers.Count}; " + string.Join(" | ", capturedOffers.Take(2).Select(offer =>
+                    $"npc={offer.Vendor.NpcId}/{offer.Vendor.MenuShopType}; shop={offer.Vendor.ShopId}; source={offer.Vendor.SourceShopId}:{offer.Vendor.SourceItemIndex}; currency={offer.CurrencyItemId}/{offer.CurrencyGroup}; cost={offer.CostPerTransaction}; output={offer.OutputQuantityPerTransaction}; supported={offer.Supported}; access={offer.Access}; rejected={MaterialAcquisitionPlanner.GetOfferRejection(offer, purchaseInput!.Policy)?.ToString() ?? "none"}; reason={offer.RejectionReason ?? "none"}"));
+            var line = $"{quantity} × {name} — {reason}";
             shortages.Add(line);
             if (!AcquisitionShortages.Contains(line))
             {
-                GatherBuddy.Log.Warning($"[Vulcan Acquisition][{plan.SessionId}][P4][Shortage] {line}");
-                Communicator.Print($"[Vulcan] Material shortage: {line} {(onlyUnresolved ? "Continuing other material acquisition." : "Queue retained.")}");
+                GatherBuddy.Log.Warning($"[Vulcan Acquisition][{plan.SessionId}][P4][Shortage] {line}; {offerDetails}");
+                Communicator.Print($"[Vulcan] Material shortage: {line}.");
             }
         }
         AcquisitionShortages = shortages.AsReadOnly();
     }
+
+    private static string DescribeShortageReason(MaterialShortageReason reason) => reason switch
+    {
+        MaterialShortageReason.InsufficientCurrency => "insufficient currency",
+        MaterialShortageReason.CurrencyDisallowed => "currency or purchase source is disabled",
+        MaterialShortageReason.ReserveReached => "protected currency reserve reached",
+        MaterialShortageReason.SpendingCapReached => "spending limit reached",
+        MaterialShortageReason.UnsupportedOffer => "no supported vendor offer",
+        MaterialShortageReason.VendorInaccessible => "vendor is inaccessible",
+        MaterialShortageReason.InventoryCapacity => "inventory capacity reached",
+        MaterialShortageReason.RequiredQualityUnavailable => "required HQ unavailable",
+        MaterialShortageReason.PurchaseInterrupted => "purchase interrupted",
+        MaterialShortageReason.PartialPurchase => "purchase was only partially fulfilled",
+        MaterialShortageReason.VendorDataUnavailable => "vendor data unavailable",
+        MaterialShortageReason.BundleQuantityMismatch => "vendor bundle does not match needed quantity",
+        MaterialShortageReason.PurchasingDisabled => "automatic purchasing is disabled",
+        _ => "purchase unavailable",
+    };
 }

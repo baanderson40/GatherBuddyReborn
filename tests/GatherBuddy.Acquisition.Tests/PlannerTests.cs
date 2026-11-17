@@ -14,6 +14,10 @@ public class PlannerTests
     private static AcquisitionVendorOffer Seals(uint item = 100, ulong cost = 5)
         => new(item, 20, VendorCurrencyGroup.GrandCompanySeals, cost, 1, VendorShopType.GrandCompanySeals,
             new(11, "GC vendor", 21, VendorMenuShopType.GrandCompanyShop));
+    private static AcquisitionVendorOffer Currency(uint item, uint currency, VendorCurrencyGroup group, ulong cost)
+        => new(item, currency, group, cost, 1, VendorShopType.SpecialCurrency,
+            new(12, "Special currency vendor", 22, VendorMenuShopType.SpecialShop, ShopItemIndex: 0,
+                SourceShopId: 22, SourceItemIndex: 0));
     private static AutomaticVendorPurchasePolicy Policy() => new() { Enabled = true };
     private static MaterialAcquisitionPlanningInput Input(IEnumerable<AcquisitionMaterialDemand>? demands = null,
         IEnumerable<AcquisitionVendorOffer>? offers = null, Dictionary<uint, ulong>? balances = null,
@@ -98,6 +102,42 @@ public class PlannerTests
         Assert.Equal(70ul, plan.ResultingLedger.OutstandingCommitments[1]);
         Assert.Equal(30ul, plan.ResultingLedger.SettledSpending[1]);
         Assert.Contains(plan.Materials.Single().Shortages, s => s.Reason == MaterialShortageReason.SpendingCapReached);
+    }
+
+    [Fact]
+    public void ScripAndTomestoneCurrencyIdsRequireSeparateOptIn()
+    {
+        var scrip = Currency(100, 33913, VendorCurrencyGroup.Scrips, 5);
+        var otherScrip = Currency(100, 33914, VendorCurrencyGroup.Scrips, 1);
+        var tome = Currency(100, 48, VendorCurrencyGroup.Tomestones, 1);
+        var defaultPolicy = Policy();
+        var disallowed = MaterialAcquisitionPlanner.Plan(Input(offers: [scrip, otherScrip, tome],
+            balances: new() { [33913] = 500, [33914] = 500, [48] = 500 }, policy: defaultPolicy));
+        Assert.Empty(disallowed.Allocations);
+        Assert.All(disallowed.Materials.Single().RejectedAlternatives,
+            offer => Assert.Equal(AcquisitionOfferRejectionKind.CurrencyDisallowed, offer.Kind));
+
+        defaultPolicy.AllowedCurrencyItemIds.Add(33913);
+        var permitted = MaterialAcquisitionPlanner.Plan(Input(offers: [scrip, otherScrip, tome],
+            balances: new() { [33913] = 500, [33914] = 500, [48] = 500 }, policy: defaultPolicy));
+        Assert.Equal(33913u, Assert.Single(permitted.Allocations).CurrencyItemId);
+    }
+
+    [Fact]
+    public void ScripReserveAndPerRunCapApplyToSettledAndOutstandingSpend()
+    {
+        var policy = Policy();
+        policy.AllowedCurrencyItemIds.Add(33913);
+        policy.CurrencyReservesByItemId[33913] = 10;
+        policy.MaximumSpendPerRunByCurrencyItemId[33913] = 50;
+        var ledger = new AcquisitionCurrencyLedgerSnapshot(new Dictionary<uint, ulong> { [33913] = 5 },
+            new Dictionary<uint, ulong> { [33913] = 10 });
+        var plan = MaterialAcquisitionPlanner.Plan(Input(offers: [Currency(100, 33913, VendorCurrencyGroup.Scrips, 5)],
+            balances: new() { [33913] = 100 }, policy: policy, ledger: ledger));
+
+        Assert.Equal(7u, Assert.Single(plan.Allocations).RequestedOutputQuantity);
+        Assert.Equal(MaterialShortageReason.SpendingCapReached, plan.Materials.Single().PrimaryShortage!.Reason);
+        Assert.Equal(35ul, plan.ProjectedSpending[33913]);
     }
 
     [Fact]

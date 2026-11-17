@@ -85,7 +85,7 @@ public sealed class TransientVendorExecution
         if (!policy.Enabled) return TransientVendorStartResult.PurchasingDisabled;
         var batch = allocations.ToList();
         if (sessionId == Guid.Empty || _startedSessions.Contains(sessionId) || batch.Count == 0 || batch.Any(a => a.SessionId != sessionId
-                || a.Costs.Any(c => !policy.Allows(c.CurrencyGroup))
+                || a.Costs.Any(c => !policy.Allows(c.CurrencyGroup, c.CurrencyItemId))
                 || (a.CurrencyGroup == VendorCurrencyGroup.Gil) != (a.CurrencyItemId == 1)
                 || !inventoryTargets.TryGetValue(a.ItemId, out var target) || target == 0)
             || batch.Select(a => a.AllocationId).Distinct().Count() != batch.Count)
@@ -150,16 +150,32 @@ public sealed class TransientVendorExecution
                 var actualCosts = receipt.ConfirmedCosts ?? (allocation.Costs.Count == 1 && receipt.ConfirmedSpend.HasValue
                     ? new Dictionary<uint, ulong> { [allocation.CurrencyItemId] = receipt.ConfirmedSpend.Value } : null);
                 var submitted = receipt.SubmittedOutputQuantity ?? _activeRequested;
-                var receiptCertain = submitted > 0 && submitted <= _activeRequested
+                var zeroSubmissionCertain = submitted == 0 && receipt.AcquiredQuantity == 0
+                    && !receipt.Fatal && !receipt.Interrupted
+                    && (receipt.ConfirmedSpend ?? 0) == 0
+                    && (actualCosts == null || actualCosts.Values.All(amount => amount == 0));
+                var receiptCertain = zeroSubmissionCertain || (submitted > 0 && submitted <= _activeRequested
                     && submitted % allocation.OutputQuantityPerTransaction == 0
                     && receipt.AcquiredQuantity <= submitted
                     && receipt.AcquiredQuantity % allocation.OutputQuantityPerTransaction == 0
                     && actualCosts != null && actualCosts.Count == allocation.Costs.Count
-                    && allocation.Costs.All(c => actualCosts.GetValueOrDefault(c.CurrencyItemId) == checked(c.Amount * transactions));
+                    && allocation.Costs.All(c => actualCosts.GetValueOrDefault(c.CurrencyItemId) == checked(c.Amount * transactions)));
+                if (!receiptCertain)
+                {
+                    var receiptIssue = submitted == 0 ? "acquired output without verified submission quantity"
+                        : submitted > _activeRequested ? "submitted output exceeds active request"
+                        : submitted % allocation.OutputQuantityPerTransaction != 0 ? "submitted output is not a whole transaction"
+                        : receipt.AcquiredQuantity > submitted ? "acquired output exceeds submitted output"
+                        : receipt.AcquiredQuantity % allocation.OutputQuantityPerTransaction != 0 ? "acquired output is not a whole transaction"
+                        : actualCosts == null ? "confirmed costs/spend missing"
+                        : actualCosts.Count != allocation.Costs.Count ? "confirmed cost component count mismatch"
+                        : "confirmed costs do not equal acquired transaction count";
+                    Record("ReceiptRejected", $"allocation={allocation.AllocationId}; reason={receiptIssue}; requested={_activeRequested}; submitted={submitted}; acquired={receipt.AcquiredQuantity}; outputPerTransaction={allocation.OutputQuantityPerTransaction}; confirmedSpend={receipt.ConfirmedSpend?.ToString() ?? "unknown"}; confirmedCosts=[{(actualCosts == null ? "unknown" : string.Join(",", actualCosts.Select(cost => $"{cost.Key}:{cost.Value}")))}]; fatal={receipt.Fatal}; interrupted={receipt.Interrupted}");
+                }
                 if (!receiptCertain)
                     _uncertain = true;
                 _acquired = checked(_acquired + Math.Min(receipt.AcquiredQuantity, _activeRequested));
-                if (receiptCertain)
+                if (receiptCertain && actualCosts != null)
                 {
                     foreach (var cost in actualCosts!)
                     {
@@ -170,7 +186,7 @@ public sealed class TransientVendorExecution
                 }
                 _fatal |= receipt.Fatal || _uncertain;
                 _allocationMessage = receipt.Message;
-                _skipAllocation = receipt.AcquiredQuantity < submitted && !receipt.Interrupted;
+                _skipAllocation = (zeroSubmissionCertain || receipt.AcquiredQuantity < submitted) && !receipt.Interrupted;
                 if (_skipAllocation && receipt.AcquiredQuantity == 0 && !_fatal && !_cancel && !receipt.Interrupted && !receipt.PreventVendorFallback)
                     TryNextAuthorizedVendor();
                 Record("Receipt", $"allocation={allocation.AllocationId}; acquired={receipt.AcquiredQuantity}; confirmedSpend={receipt.ConfirmedSpend?.ToString() ?? "unknown"}; certain={!_uncertain}; message={receipt.Message}");
@@ -239,9 +255,9 @@ public sealed class TransientVendorExecution
             {
                 var other = _allocations.Skip(_index + 1).Aggregate(0ul, (sum, a) => checked(sum + a.ExpectedCosts.GetValueOrDefault(cost.CurrencyItemId)));
                 var maximumCost = current.ExpectedCosts[cost.CurrencyItemId] - _allocationCosts.GetValueOrDefault(cost.CurrencyItemId);
-                if (cost.CurrencyItemId == 1 && _policy!.MaximumGilSpendPerRun is { } cap)
+                if (_policy!.GetMaximumSpendPerRun(cost.CurrencyItemId) is { } cap)
                 {
-                    var used = _spent.GetValueOrDefault(1u);
+                    var used = _spent.GetValueOrDefault(cost.CurrencyItemId);
                     var remainingCap = cap > used ? cap - used : 0;
                     remainingCap = remainingCap > other ? remainingCap - other : 0;
                     maximumCost = Math.Min(maximumCost, remainingCap);
