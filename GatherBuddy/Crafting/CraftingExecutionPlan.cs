@@ -17,6 +17,7 @@ public sealed class CraftingExecutionPlan
     public bool SkipIfEnough { get; }
     public bool SkipFinalIfEnough { get; }
     public bool RetainerRestock { get; }
+    public bool InventoryOnly { get; }
     internal CraftingAcquisitionRun AcquisitionRun { get; } = new();
     public Guid AcquisitionRunId => AcquisitionRun.RunId;
     public Guid AcquisitionSessionId => AcquisitionRun.SessionId;
@@ -41,6 +42,7 @@ public sealed class CraftingExecutionPlan
     private CraftingExecutionPlan(
         CraftingListDefinition planningSnapshot,
         bool useRetainerCraftableAvailability,
+        bool inventoryOnly,
         CraftingListPlan resolvedPlan)
     {
         _planningSnapshot = planningSnapshot;
@@ -50,18 +52,19 @@ public sealed class CraftingExecutionPlan
         SkipIfEnough = planningSnapshot.SkipIfEnough;
         SkipFinalIfEnough = planningSnapshot.SkipFinalIfEnough;
         RetainerRestock = planningSnapshot.RetainerRestock;
+        InventoryOnly = inventoryOnly;
         PurchasePolicy = ResolvedVendorPurchasePolicy.Resolve(GatherBuddy.Config.AutomaticVendorPurchases, planningSnapshot.VendorPurchases);
         ApplyResolvedPlan(resolvedPlan);
     }
 
-    public static CraftingExecutionPlan Create(CraftingListDefinition list)
+    public static CraftingExecutionPlan Create(CraftingListDefinition list, bool inventoryOnly = false)
     {
         var planningSnapshot = list.CreateRetainerPlanningSnapshot();
         var useRetainerCraftableAvailability = planningSnapshot.SkipIfEnough
             && planningSnapshot.RetainerRestock
             && AllaganTools.Enabled;
         var resolvedPlan = planningSnapshot.CreatePlan(useRetainerCraftableAvailability);
-        return new CraftingExecutionPlan(planningSnapshot, useRetainerCraftableAvailability, resolvedPlan);
+        return new CraftingExecutionPlan(planningSnapshot, useRetainerCraftableAvailability, inventoryOnly, resolvedPlan);
     }
 
     public bool MatchesList(int listId)

@@ -33,6 +33,9 @@ public partial class VulcanWindow
             SettingRows.Switch("Context menu entries",
                 "Show Vulcan entries (Open in Vulcan, Add to Crafting List, Add to Vendor Buy List) in the in-game right-click menu.",
                 GatherBuddy.Config.VulcanContextMenuEntries, v => GatherBuddy.Config.VulcanContextMenuEntries = v);
+            SettingRows.Switch("Crafting Log Craft All",
+                "Show Vulcan Craft All and Craft N controls in the regular in-game Crafting Log. Uses current inventory only; no gathering, purchases, or retainer restock.",
+                GatherBuddy.Config.ShowCraftingLogCraftControls, v => GatherBuddy.Config.ShowCraftingLogCraftControls = v);
             SettingRows.Switch("Show recipe browser item tooltips", "Show the game's item tooltip when hovering recipe results on the Recipes page.",
                 GatherBuddy.Config.ShowRecipeBrowserTooltips, v => GatherBuddy.Config.ShowRecipeBrowserTooltips = v);
             SettingRows.Hotkey("Hotkey to open recipes", "Opens Vulcan straight to the Recipes page.",

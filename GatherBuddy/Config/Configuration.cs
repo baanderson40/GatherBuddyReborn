@@ -82,6 +82,7 @@ public partial class Configuration : IPluginConfiguration
     public int VulcanExecutionDelayMs { get; set; } = 300;
     public Marketboard.MarketboardPreferences MarketboardPreferences { get; set; } = new();
     public bool VulcanContextMenuEntries { get; set; } = true;
+    public bool ShowCraftingLogCraftControls { get; set; } = true;
     public bool ShowRecipeBrowserTooltips { get; set; } = true;
     public ModifiableHotkey VulcanRecipesTabHotkey { get; set; } = new();
     public string CraftingLists { get; set; } = string.Empty;

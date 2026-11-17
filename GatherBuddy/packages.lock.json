@@ -112,6 +112,9 @@
       },
       "gatherbuddy.models": {
         "type": "Project"
+      },
+      "kamitoolkit": {
+        "type": "Project"
       }
     }
   }

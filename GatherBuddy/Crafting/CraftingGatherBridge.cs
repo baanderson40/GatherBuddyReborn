@@ -78,6 +78,8 @@ public static class CraftingGatherBridge
         && queue.CurrentState is not (CraftingQueueProcessor.QueueState.Idle or CraftingQueueProcessor.QueueState.Complete or CraftingQueueProcessor.QueueState.Cancelled)
         ? $"Vulcan:{_activeExecutionPlan?.AcquisitionRunId}" : null;
     public static bool IsAcquiringMaterials => _isQueueMode && _queueProcessor?.IsAcquiringMaterials == true;
+    public static bool HasActiveCraftingLogQueue => _isQueueMode && _queueProcessor != null
+        && _queueProcessor.CurrentState is not (CraftingQueueProcessor.QueueState.Idle or CraftingQueueProcessor.QueueState.Complete or CraftingQueueProcessor.QueueState.Cancelled);
     public static bool HasAcquisitionOwnership => IsAcquiringMaterials || (_activeExecutionPlan?.PurchasePolicy.Enabled == true
          && _queueProcessor?.CurrentState is CraftingQueueProcessor.QueueState.NavigatingToRetainerBell
             or CraftingQueueProcessor.QueueState.WithdrawingFromRetainer or CraftingQueueProcessor.QueueState.WaitingForRetainerTravel);
@@ -341,6 +343,30 @@ public static class CraftingGatherBridge
         _queueProcessor.StartQueue(executionPlan, listConsumables, GatherBuddy.RaphaelSolveCoordinator);
 
         GatherBuddy.CraftingStatusWindow?.SetQueueProcessor(_queueProcessor);
+    }
+
+    public static bool StartCraftingLogQueue(uint recipeId, int quantity)
+    {
+        if (quantity <= 0 || RecipeManager.GetRecipe(recipeId) is not { } recipe)
+            return false;
+
+        var list = new CraftingListDefinition
+        {
+            ID = -1,
+            Name = $"Crafting Log: {recipe.ItemResult.Value.Name.ExtractText()}",
+            SkipIfEnough = false,
+            SkipFinalIfEnough = false,
+            RetainerRestock = false,
+            VendorPurchases = new VendorPurchaseListSettings { Mode = VendorPurchaseOverrideMode.Disabled },
+        };
+        list.Recipes.Add(new CraftingListItem(recipeId, quantity)
+        {
+            IsOriginalRecipe = true,
+            CraftSettings = GatherBuddy.RecipeBrowserSettings.Get(recipeId)?.Clone(),
+        });
+
+        StartQueueCraftAndGather(CraftingExecutionPlan.Create(list, inventoryOnly: true));
+        return true;
     }
 
     public static void CreateGatherListForMissingIngredients(Dictionary<uint, int> missing)

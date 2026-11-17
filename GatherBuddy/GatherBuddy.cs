@@ -17,6 +17,7 @@ using GatherBuddy.Plugin;
 using GatherBuddy.SeFunctions;
 using GatherBuddy.Spearfishing;
 using GatherBuddy.Weather;
+using KamiToolKit;
 using RebornMaterial;
 using System;
 using System.Collections.Generic;
@@ -97,6 +98,9 @@ public partial class GatherBuddy : IDalamudPlugin
     internal readonly FishRecorder FishRecorder;
     internal VulcanWindow? _vulcanWindow;
     internal Gui.CraftingStatusWindow? _craftingStatusWindow;
+    internal Gui.CraftingLogCraftControls? _craftingLogCraftControls;
+    private bool _isDisposed;
+    private bool _kamiToolKitReady;
     internal Gui.CraftingMaterialsWindow? _craftingMaterialsWindow;
     internal Gui.CraftingTreeWindow? _craftingTreeWindow;
     internal Gui.VendorBuyListWindow? _vendorBuyListWindow;
@@ -112,6 +116,8 @@ public partial class GatherBuddy : IDalamudPlugin
             Dalamud.Initialize(pluginInterface);
             Icons.Init(Dalamud.Textures);
             Log = new Logger(InternalName);
+            var kamiToolKitInitialization = KamiToolKitLibrary.InitializeAsync(pluginInterface);
+            _ = InitializeCraftingLogControlsAfterKamiToolKit(kamiToolKitInitialization);
             Backup.CreateAutomaticBackup(Log, pluginInterface.ConfigDirectory, GatherBuddyBackupFiles());
             Config = Configuration.Load();
             RebornUI.MaterialUI.Initialize(pluginInterface, Config);
@@ -228,6 +234,29 @@ public partial class GatherBuddy : IDalamudPlugin
         }
     }
 
+    private async Task InitializeCraftingLogControlsAfterKamiToolKit(Task initialization)
+    {
+        try
+        {
+            await initialization;
+            await Dalamud.Framework.RunOnFrameworkThread(() =>
+            {
+                if (_isDisposed)
+                {
+                    KamiToolKitLibrary.Dispose();
+                    return;
+                }
+
+                _kamiToolKitReady = true;
+                _craftingLogCraftControls = new Gui.CraftingLogCraftControls();
+            });
+        }
+        catch (Exception ex)
+        {
+            Log.Warning($"Failed to initialize Crafting Log native controls: {ex.Message}");
+        }
+    }
+
     private void DrawUi()
     {
         RebornUI.MaterialUI.BeginFrame();
@@ -340,6 +369,7 @@ public partial class GatherBuddy : IDalamudPlugin
 
     void IDisposable.Dispose()
     {
+        _isDisposed = true;
         RetainerBellNavigator.StopAll();
         AutoRetainerIntegration?.Dispose();
         MarketboardTravel?.Dispose();
@@ -359,6 +389,13 @@ public partial class GatherBuddy : IDalamudPlugin
             Dalamud.PluginInterface.UiBuilder.OpenMainUi -= Interface.Toggle;
         }
         Crafting.CraftingGatherBridge.StopQueue();
+        _craftingLogCraftControls?.Dispose();
+        _craftingLogCraftControls = null;
+        if (_kamiToolKitReady)
+        {
+            KamiToolKitLibrary.Dispose();
+            _kamiToolKitReady = false;
+        }
         CraftingGameInterop.Dispose();
         TransientVendorPurchases?.Dispose();
         FishRecorder?.Dispose();

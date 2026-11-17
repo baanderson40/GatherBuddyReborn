@@ -109,9 +109,12 @@ public partial class CraftingQueueProcessor
                     var name = sheet != null && sheet.TryGetRow(p.Key, out var row) ? row.Name.ExtractText() : $"Item {p.Key}";
                     return (missing, text: $"{missing.Total} × {name} (required HQ={missing.RequiredHQ}, required NQ={missing.RequiredNQ})");
                 }).Where(p => p.missing.Total > 0).Select(p => p.text).ToArray();
+                var recovery = _executionPlan?.InventoryOnly == true
+                    ? "Restock manually, then recheck; this queue never gathers or purchases materials."
+                    : "Recheck materials or Retry acquisition; no automatic vendor retry.";
                 BlockAcquisition($"No ready recipes. {QueueItems.Count - _currentQueueIndex} queue entries retained. "
                     + (_missingIngredientFailures.Count > 0 ? "Ingredient assignment failed; recheck after correcting materials/settings. " : string.Empty)
-                    + "Recheck materials or Retry acquisition; no automatic vendor retry.");
+                    + recovery);
                 return false;
             }
             if (selected > 0)

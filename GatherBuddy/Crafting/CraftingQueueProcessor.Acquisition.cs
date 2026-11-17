@@ -14,6 +14,7 @@ public partial class CraftingQueueProcessor
     public string? ActivePurchaseItemName => _currentState == QueueState.PurchasingMaterials && _executionPlan != null
         ? GatherBuddy.VendorPurchaseManager?.GetActiveItemNameForSession(_executionPlan.AcquisitionSessionId) : null;
     public IReadOnlyList<string> AcquisitionShortages { get; private set; } = Array.Empty<string>();
+    public bool CanRetryMaterialAcquisition => _executionPlan?.InventoryOnly != true;
     public string AcquisitionPolicyDescription => _executionPlan?.PurchasePolicy.Enabled == true
         ? $"Purchase policy: {_executionPlan.PurchasePolicy.Origin}; gil cap={_executionPlan.PurchasePolicy.MaximumGilSpendPerRun?.ToString() ?? "unlimited"}; GC seal reserve={_executionPlan.PurchasePolicy.GrandCompanySealReserve}; reserves: {string.Join(", ", _executionPlan.PurchasePolicy.CurrencyReservesByItemId.Select(p => $"{p.Key}={p.Value}"))}"
         : string.Empty;
@@ -79,6 +80,17 @@ public partial class CraftingQueueProcessor
     {
         if (GatherBuddy.AutoRetainerIntegration?.Coordinator.YieldRequested == true) return;
         if (_currentState != QueueState.BlockedByMaterials) return;
+        if (_executionPlan?.InventoryOnly == true)
+        {
+            _missingIngredientFailures.Clear();
+            if (!SelectReadyCraft()) return;
+            _paused = false;
+            _pauseReason = string.Empty;
+            YesAlready.Lock();
+            _currentState = QueueState.WaitingForJobSwitch;
+            StateChanged?.Invoke(_currentState);
+            return;
+        }
         if (_acquisitionPort == null || !_acquisitionPort.CanContinue(out _))
         {
             AcquisitionStatus = "Stop other automation and close interactions before rechecking materials.";
@@ -97,6 +109,11 @@ public partial class CraftingQueueProcessor
     {
         if (GatherBuddy.AutoRetainerIntegration?.Coordinator.YieldRequested == true) return;
         if (_currentState != QueueState.BlockedByMaterials || _executionPlan == null) return;
+        if (_executionPlan.InventoryOnly)
+        {
+            AcquisitionStatus = "This Crafting Log queue is inventory-only. Recheck materials after restocking manually.";
+            return;
+        }
         if (CraftingGameInterop.CurrentState != CraftingGameInterop.CraftState.IdleNormal
             || _acquisitionPort == null || !_acquisitionPort.CanContinue(out _))
         {

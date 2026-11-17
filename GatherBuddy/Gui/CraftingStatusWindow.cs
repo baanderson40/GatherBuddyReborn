@@ -143,7 +143,8 @@ public class CraftingStatusWindow : M3Window
                 M3Severity.Warning, FontAwesomeIcon.ExclamationTriangle);
             if (M3Widgets.Button("##recheckMaterials", "Recheck materials (no purchases)", M3ButtonStyle.Tonal, FontAwesomeIcon.Sync))
                 _queueProcessor.RecheckAcquiredMaterials();
-            if (M3Widgets.Button("##retryAcquisition", "Retry acquisition", M3ButtonStyle.Outlined, FontAwesomeIcon.Redo,
+            if (_queueProcessor.CanRetryMaterialAcquisition
+             && M3Widgets.Button("##retryAcquisition", "Retry acquisition", M3ButtonStyle.Outlined, FontAwesomeIcon.Redo,
                     tooltip: "May spend gil/current-GC seals allowed by the captured policy, then gather remaining supported materials. Earlier purchase spending still counts toward the run cap."))
                 _queueProcessor.RetryMaterialAcquisition();
         }

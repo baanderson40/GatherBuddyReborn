@@ -56,10 +56,19 @@
     <PackageReference Include="NAudio.Wasapi" Version="3.3.0" />
   </ItemGroup>
 
-	<ItemGroup>
-	  <ProjectReference Include="..\GatherBuddy.GameData\GatherBuddy.GameData.csproj" />
-	  <ProjectReference Include="..\GatherBuddy.Models\GatherBuddy.Models.csproj" />
-	</ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\GatherBuddy.GameData\GatherBuddy.GameData.csproj" />
+    <ProjectReference Include="..\GatherBuddy.Models\GatherBuddy.Models.csproj" />
+    <ProjectReference Include="Dependencies\KamiToolKit\KamiToolKit.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="Dependencies\KamiToolKit\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="Dependencies\KamiToolKit\LICENSE" Link="KamiToolKit.LICENSE" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 
 	<ItemGroup>
 	  <Folder Include="AutoGather\Tasks\" />

@@ -164,7 +164,19 @@ public partial class CraftingQueueProcessor
         }
         else
         {
-            BeginMaterialAcquisition();
+            if (executionPlan.InventoryOnly)
+            {
+                _currentState = QueueState.WaitingForJobSwitch;
+                AcquisitionStatus = "Checking current inventory only; gathering and purchasing are disabled.";
+                if (QueueItems.Count == 0)
+                    BlockAcquisition("No craft entries were planned.", QueueState.AcquisitionFailed);
+                else
+                    SelectReadyCraft();
+            }
+            else
+            {
+                BeginMaterialAcquisition();
+            }
         }
         GatherBuddy.Log.Information($"[CraftingQueueProcessor] Starting queue with {QueueItems.Count} recipes");
         StateChanged?.Invoke(_currentState);
