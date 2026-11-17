@@ -2,6 +2,7 @@ using Dalamud.Game;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game.ClientState.Objects.Types;
+using Dalamud.Game.Text.SeStringHandling.Payloads;
 using Dalamud.Memory;
 using Dalamud.Utility;
 using FFXIVClientStructs.FFXIV.Client.Game;
@@ -675,7 +676,7 @@ public class VendorNavigator
     public VendorNpcLocation? CurrentTarget => _target;
 
     public static void PlaceMapMarker(VendorNpcLocation target)
-        => PlaceMapFlag(target);
+        => PlaceMapFlag(target, placeFlag: true, openMap: true);
 
     public void StartNavigation(VendorNpcLocation target, bool continueCurrentVendorInteraction = false, Guid? ownerSessionId = null)
     {
@@ -695,7 +696,7 @@ public class VendorNavigator
 
         GatherBuddy.Log.Information($"[VendorNavigator] Starting navigation to {target.NpcName} (territory {target.TerritoryId})");
 
-        PlaceMapFlag(target);
+        PlaceMapFlag(target, GatherBuddy.Config.UseFlag, GatherBuddy.Config.UseCoordinates);
 
         var shouldForceFreshHousingEntry = ShouldForceFreshHousingEntry(Dalamud.ClientState.TerritoryType, target.TerritoryId);
 
@@ -824,8 +825,13 @@ public class VendorNavigator
         _lastTeleportWaitDiagnosticsLogTime  = DateTime.MinValue;
     }
 
-    private static unsafe void PlaceMapFlag(VendorNpcLocation target)
+    private static unsafe void PlaceMapFlag(VendorNpcLocation target, bool placeFlag, bool openMap)
     {
+        if (!placeFlag && !openMap)
+        {
+            return;
+        }
+
         try
         {
             var agentMap = AgentMap.Instance();
@@ -858,10 +864,32 @@ public class VendorNavigator
 
             var mapRowId = map.Value.RowId;
 
+            if (placeFlag)
+            {
+                agentMap->FlagMarkerCount = 0;
+                agentMap->SetFlagMapMarker(target.TerritoryId, mapRowId, target.Position.X, target.Position.Z, 60561U);
+            }
 
-            agentMap->FlagMarkerCount = 0;
-            agentMap->SetFlagMapMarker(target.TerritoryId, mapRowId, target.Position.X, target.Position.Z, 60561U);
-            agentMap->OpenMap(mapRowId, target.TerritoryId, target.NpcName, MapType.FlagMarker);
+            if (!openMap)
+            {
+                return;
+            }
+
+            if (placeFlag)
+            {
+                agentMap->OpenMap(mapRowId, target.TerritoryId, target.NpcName, MapType.FlagMarker);
+                return;
+            }
+
+            if (map.Value.SizeFactor == 0)
+            {
+                return;
+            }
+
+            const double factor = 0.019999999552965164d;
+            var mapX = (float)(factor * map.Value.OffsetX + 2048.0d / map.Value.SizeFactor + factor * target.Position.X + 1.0d);
+            var mapY = (float)(factor * map.Value.OffsetY + 2048.0d / map.Value.SizeFactor + factor * target.Position.Z + 1.0d);
+            Dalamud.GameGui.OpenMapWithMapLink(new MapLinkPayload(target.TerritoryId, mapRowId, mapX, mapY));
         }
         catch (Exception ex)
         {
