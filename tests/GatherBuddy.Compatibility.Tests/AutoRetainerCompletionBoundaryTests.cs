@@ -29,9 +29,13 @@ public class AutoRetainerCompletionBoundaryTests
         Assert.DoesNotContain("RequestCompletion", Calls("CraftingQueueProcessor", "CompleteQueue"));
         var bridge = Calls("CraftingGatherBridge", "Update");
         Assert.Contains("HasPendingTasks", bridge);
+        Assert.Contains("TryStartCollectablesInterruption", bridge);
         Assert.Contains("get_SuccessfulCompletionTicket", bridge);
         Assert.Contains("RequestCompletion", bridge);
         Assert.True(Array.IndexOf(bridge, "RestoreDisabledGatherLists") < Array.IndexOf(bridge, "RequestCompletion"));
+        var collectables = Calls("CraftingGatherBridge", "TryStartCollectablesInterruption");
+        Assert.Contains("get_HasAcquisitionOwnership", collectables);
+        Assert.Contains("ShouldSkipCompletedQueue", collectables);
         var ready = Calls("AutoRetainerIntegration", "get_CompletionCleanupReady");
         foreach (var expected in new[] { "get_ActiveOwner", "get_YieldRequested", "get_Withdrawal", "get_HasOutstanding",
                      "get_IsBusy", "get_IsRunning", "TaskExitCraft", "IsSuppressedForHandoff" })

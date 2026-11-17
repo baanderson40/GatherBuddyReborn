@@ -31,6 +31,7 @@
     <Compile Include="../../GatherBuddy/Automation/TeleportReadiness.cs" Link="Production/TeleportReadiness.cs" />
     <Compile Include="../../GatherBuddy/Crafting/CraftReadiness.cs" Link="Production/CraftReadiness.cs" />
     <Compile Include="../../GatherBuddy/Crafting/CollectableCraftOutputCounter.cs" Link="Production/CollectableCraftOutputCounter.cs" />
+    <Compile Include="../../GatherBuddy/Crafting/CollectablesQueueInterruptionPolicy.cs" Link="Production/CollectablesQueueInterruptionPolicy.cs" />
     <Compile Include="../../GatherBuddy/Crafting/CraftingAcquisitionRun.cs" Link="Production/CraftingAcquisitionRun.cs" />
     <Compile Include="../../GatherBuddy/Crafting/InventoryRecovery.cs" Link="Production/InventoryRecovery.cs" />
     <Compile Include="../../GatherBuddy/Crafting/CraftPreparationGate.cs" Link="Production/CraftPreparationGate.cs" />
