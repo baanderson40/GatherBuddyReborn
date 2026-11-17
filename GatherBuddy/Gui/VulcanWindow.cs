@@ -342,6 +342,10 @@ public partial class VulcanWindow : M3ShellWindow, IDisposable
     protected override void BeforeDrawShell()
     {
         _artisanChip = BuildArtisanChip();
+        if (GatherBuddy.Config.ShowRecipeBrowserTooltips)
+        {
+            CaptureRecipesTooltipWindowBounds();
+        }
     }
 
     protected override float TopAppBarTrailingWidth

@@ -30,6 +30,8 @@ internal sealed unsafe class NativeItemTooltipBridge : IDisposable
     private Vector2 _tooltipAnchorMax = new(float.NaN);
     private Vector2 _tooltipNativeAnchorMin = new(float.NaN);
     private Vector2 _tooltipNativeAnchorMax = new(float.NaN);
+    private Vector2 _tooltipNativeWindowMin = new(float.NaN);
+    private Vector2 _tooltipNativeWindowMax = new(float.NaN);
     private bool _tooltipExpandRight;
     private DateTime _lastHostFailureLog = DateTime.MinValue;
     private DateTime _lastItemDetailRepositionFailureLog = DateTime.MinValue;
@@ -74,7 +76,7 @@ internal sealed unsafe class NativeItemTooltipBridge : IDisposable
         HideTooltip();
     }
 
-    public void RequestItemTooltip(uint itemId, Vector2 rectMin, Vector2 rectMax, bool expandRight)
+    public void RequestItemTooltip(uint itemId, Vector2 rectMin, Vector2 rectMax, bool expandRight, Vector2 windowMin, Vector2 windowMax)
     {
         if (!TryCheckNativeTooltipReadiness(out _))
         {
@@ -96,10 +98,12 @@ internal sealed unsafe class NativeItemTooltipBridge : IDisposable
         }
 
         var anchorBoundsChanged = !RectsEqual(_tooltipAnchorMin, rectMin) || !RectsEqual(_tooltipAnchorMax, rectMax);
+        var windowBoundsChanged = !RectsEqual(_tooltipNativeWindowMin, ToNativeUi(windowMin))
+            || !RectsEqual(_tooltipNativeWindowMax, ToNativeUi(windowMax));
         var anchorHostChanged = _anchorNode != anchorNode
             || _anchorHostAddonAddress != anchorHostAddonAddress
             || _tooltipParentAddonId != parentAddonId;
-        if (_tooltipVisible && _tooltipItemId == itemId && !anchorBoundsChanged && !anchorHostChanged && _tooltipExpandRight == expandRight)
+        if (_tooltipVisible && _tooltipItemId == itemId && !anchorBoundsChanged && !windowBoundsChanged && !anchorHostChanged && _tooltipExpandRight == expandRight)
         {
             return;
         }
@@ -112,6 +116,8 @@ internal sealed unsafe class NativeItemTooltipBridge : IDisposable
         _anchorNode = anchorNode;
         _anchorHostAddonAddress = anchorHostAddonAddress;
         UpdateAnchorBounds(rectMin, rectMax);
+        _tooltipNativeWindowMin = ToNativeUi(windowMin);
+        _tooltipNativeWindowMax = ToNativeUi(windowMax);
 
         var stage = AtkStage.Instance();
         if (stage == null)
@@ -237,6 +243,7 @@ internal sealed unsafe class NativeItemTooltipBridge : IDisposable
         }
 
         var nativePadding = ToNativeUi(new Vector2(4f, 4f));
+        var gap = ToNativeUi(new Vector2(8f, 8f)).X;
         if (nativePadding.X <= 0f)
         {
             nativePadding.X = 1f;
@@ -247,19 +254,53 @@ internal sealed unsafe class NativeItemTooltipBridge : IDisposable
             nativePadding.Y = 1f;
         }
 
-        var desiredX = _tooltipExpandRight
-            ? _tooltipNativeAnchorMin.X
-            : _tooltipNativeAnchorMax.X - tooltipWidth;
-        var desiredY = _tooltipNativeAnchorMin.Y;
+        var minX = nativePadding.X;
+        var minY = nativePadding.Y;
+        var maxX = MathF.Max(minX, nativeDisplaySize.X - tooltipWidth - nativePadding.X);
+        var maxY = MathF.Max(minY, nativeDisplaySize.Y - tooltipHeight - nativePadding.Y);
+        var vulcanMin = _tooltipNativeWindowMin;
+        var vulcanMax = _tooltipNativeWindowMax;
+        if (!IsValidRect(vulcanMin, vulcanMax))
+        {
+            vulcanMin = _tooltipNativeAnchorMin;
+            vulcanMax = _tooltipNativeAnchorMax;
+        }
 
-        var maxX = MathF.Max(nativePadding.X, nativeDisplaySize.X - tooltipWidth - nativePadding.X);
-        var maxY = MathF.Max(nativePadding.Y, nativeDisplaySize.Y - tooltipHeight - nativePadding.Y);
-        desiredX = Math.Clamp(desiredX, nativePadding.X, maxX);
-        desiredY = Math.Clamp(desiredY, nativePadding.Y, maxY);
+        var positions = new[]
+        {
+            new Vector2(vulcanMax.X + gap, _tooltipNativeAnchorMin.Y),
+            new Vector2(vulcanMin.X - tooltipWidth - gap, _tooltipNativeAnchorMin.Y),
+            new Vector2(_tooltipNativeAnchorMin.X, vulcanMin.Y - tooltipHeight - gap),
+            new Vector2(_tooltipNativeAnchorMin.X, vulcanMax.Y + gap),
+        };
+        var desired = positions[0];
+        var bestOverlap = float.PositiveInfinity;
+        foreach (var candidate in positions)
+        {
+            var clamped = new Vector2(Math.Clamp(candidate.X, minX, maxX), Math.Clamp(candidate.Y, minY, maxY));
+            var overlap = RectOverlapArea(clamped, new Vector2(tooltipWidth, tooltipHeight), vulcanMin, vulcanMax);
+            if (overlap < bestOverlap)
+            {
+                bestOverlap = overlap;
+                desired = clamped;
+                if (overlap <= 0f) break;
+            }
+        }
 
-        targetX = (short)Math.Clamp((int)MathF.Round(desiredX), short.MinValue, short.MaxValue);
-        targetY = (short)Math.Clamp((int)MathF.Round(desiredY), short.MinValue, short.MaxValue);
+        targetX = (short)Math.Clamp((int)MathF.Round(desired.X), short.MinValue, short.MaxValue);
+        targetY = (short)Math.Clamp((int)MathF.Round(desired.Y), short.MinValue, short.MaxValue);
         return true;
+    }
+
+    private static bool IsValidRect(Vector2 min, Vector2 max)
+        => float.IsFinite(min.X) && float.IsFinite(min.Y) && float.IsFinite(max.X) && float.IsFinite(max.Y)
+        && max.X > min.X && max.Y > min.Y;
+
+    private static float RectOverlapArea(Vector2 position, Vector2 size, Vector2 otherMin, Vector2 otherMax)
+    {
+        var width = MathF.Max(0f, MathF.Min(position.X + size.X, otherMax.X) - MathF.Max(position.X, otherMin.X));
+        var height = MathF.Max(0f, MathF.Min(position.Y + size.Y, otherMax.Y) - MathF.Max(position.Y, otherMin.Y));
+        return width * height;
     }
 
     private void MaybeLogItemDetailRepositionFailure(string message)
@@ -391,6 +432,8 @@ internal sealed unsafe class NativeItemTooltipBridge : IDisposable
         _tooltipAnchorMax = new Vector2(float.NaN);
         _tooltipNativeAnchorMin = new Vector2(float.NaN);
         _tooltipNativeAnchorMax = new Vector2(float.NaN);
+        _tooltipNativeWindowMin = new Vector2(float.NaN);
+        _tooltipNativeWindowMax = new Vector2(float.NaN);
         _tooltipExpandRight = false;
     }
 

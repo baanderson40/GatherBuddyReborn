@@ -421,11 +421,6 @@ public partial class VulcanWindow
     {
         {
 
-            if (GatherBuddy.Config.ShowRecipeBrowserTooltips)
-            {
-                CaptureRecipesTooltipWindowBounds();
-            }
-
             if (!_isInitialized)
             {
                 InitializeRecipeList();
