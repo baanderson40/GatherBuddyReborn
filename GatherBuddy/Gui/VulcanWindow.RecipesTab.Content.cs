@@ -17,6 +17,11 @@ public partial class VulcanWindow
 {
     private const string BulkAddRecipesDialogId = "##bulkAddRecipes";
     private static readonly M3PluginRequirement[] RecipeAllaganToolsPlugin = [new("InventoryTools", "Allagan Tools")];
+    private uint _craftableCacheRecipeId = uint.MaxValue;
+    private bool _craftableCacheUsesRetainers;
+    private RecipeCraftSettings? _craftableCacheSettings;
+    private DateTime _craftableCacheUpdatedAt;
+    private int _craftableCacheQuantity;
 
     private void DrawFilterPanel()
     {
@@ -531,20 +536,9 @@ public partial class VulcanWindow
         DrawRecipeActions(recipe, settings);
 
         var directIngredients = RecipeManager.GetIngredients(r);
-        var craftable = directIngredients.Count > 0 ? int.MaxValue : 0;
-        foreach (var (ingId, ingAmt) in directIngredients)
-        {
-            if (ingAmt > 0)
-            {
-                var (ingNq, ingHq) = GetInventoryCountSplit(ingId);
-                craftable = Math.Min(craftable, (ingNq + ingHq) / ingAmt);
-            }
-        }
-
-        if (craftable == int.MaxValue)
-        {
-            craftable = 0;
-        }
+        var useRetainers = _browserRetainerRestock && AllaganTools.Enabled;
+        var retainerInventoryAvailable = !useRetainers || RetainerItemQuery.IsReady;
+        var craftable = retainerInventoryAvailable ? GetCraftableQuantity(r, settings, useRetainers) : (int?)null;
 
         var lt = r.RecipeLevelTable.Value;
         var (resultNq, resultHq) = GetInventoryCountSplit(r.ItemResult.RowId);
@@ -553,7 +547,12 @@ public partial class VulcanWindow
             M3Widgets.RowValue("Difficulty", $"{(int)(lt.Difficulty * r.DifficultyFactor / 100)}");
             M3Widgets.RowValue("Durability", $"{(int)(lt.Durability * r.DurabilityFactor / 100)}");
             M3Widgets.RowValue("Max quality", $"{(int)(lt.Quality * r.QualityFactor / 100)}");
-            M3Widgets.RowValue("You can craft", craftable.ToString(), color: craftable > 0 ? M3.Scheme.Success : M3.Scheme.Error);
+            M3Widgets.RowValue("Craftable", craftable?.ToString() ?? "—",
+                color: craftable > 0 ? M3.Scheme.Success : craftable.HasValue ? M3.Scheme.Error : M3.Scheme.Warning);
+            if (!retainerInventoryAvailable)
+            {
+                M3Tooltip.Hovered("Retainer inventory is not ready; craftable total is unavailable while retainer restock is enabled.");
+            }
             M3Widgets.RowValue("In your bags", resultHq > 0 ? $"{resultNq} + {resultHq} HQ" : $"{resultNq}");
         }
 
@@ -627,6 +626,78 @@ public partial class VulcanWindow
 
     private uint _resolvedIngredientsRecipeId = uint.MaxValue;
     private readonly List<(uint ItemId, int Needed)> _resolvedIngredients = [];
+
+    private int GetCraftableQuantity(Recipe recipe, RecipeCraftSettings? settings, bool useRetainers)
+    {
+        var now = DateTime.UtcNow;
+        if (_craftableCacheRecipeId == recipe.RowId
+         && _craftableCacheUsesRetainers == useRetainers
+         && ReferenceEquals(_craftableCacheSettings, settings)
+         && now - _craftableCacheUpdatedAt < TimeSpan.FromSeconds(1))
+        {
+            return _craftableCacheQuantity;
+        }
+
+        var low = 0;
+        var high = 9999;
+        while (low < high)
+        {
+            var candidate = low + (high - low + 1) / 2;
+            if (CanCraftQuantityFromAvailableMaterials(recipe, candidate, settings, useRetainers))
+            {
+                low = candidate;
+            }
+            else
+            {
+                high = candidate - 1;
+            }
+        }
+
+        _craftableCacheRecipeId = recipe.RowId;
+        _craftableCacheUsesRetainers = useRetainers;
+        _craftableCacheSettings = settings;
+        _craftableCacheUpdatedAt = now;
+        _craftableCacheQuantity = low;
+        return low;
+    }
+
+    private static bool CanCraftQuantityFromAvailableMaterials(Recipe recipe, int quantity, RecipeCraftSettings? settings, bool useRetainers)
+    {
+        if (quantity <= 0)
+        {
+            return true;
+        }
+
+        var list = new CraftingListDefinition
+        {
+            SkipIfEnough = true,
+            SkipFinalIfEnough = false,
+            RetainerRestock = useRetainers,
+        };
+        list.Recipes.Add(new CraftingListItem(recipe.RowId, quantity)
+        {
+            IsOriginalRecipe = true,
+            CraftSettings = settings?.Clone(),
+        });
+
+        var plan = list.CreatePlan(useRetainers);
+        var retainerSnapshot = useRetainers
+            ? RetainerItemQuery.CreateSnapshot(plan.Materials.Keys)
+            : RetainerItemSnapshot.Empty;
+        foreach (var (itemId, _) in plan.Materials)
+        {
+            var demand = plan.IngredientDemands.GetValueOrDefault(itemId);
+            var (inventoryNq, inventoryHq) = GetInventoryCountSplit(itemId);
+            var retainerNq = useRetainers ? retainerSnapshot.GetCountNQ(itemId) : 0;
+            var retainerHq = useRetainers ? retainerSnapshot.GetCountHQ(itemId) : 0;
+            if (!CraftableMaterialAvailability.CanSatisfy(demand, inventoryNq, inventoryHq, retainerNq, retainerHq))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     private List<(uint ItemId, int Needed)> GetSortedResolvedIngredients(Recipe recipe)
     {
