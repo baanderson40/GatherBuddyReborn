@@ -10,6 +10,19 @@ public class AethernetSourceApproachTests
     private static readonly AethernetSourceRange Far = new(1, 5, 0);
 
     [Theory]
+    [InlineData(1185, false, true, false, true)]
+    [InlineData(1185, true, true, false, false)]
+    [InlineData(886, false, true, false, false)]
+    [InlineData(1185, false, false, false, false)]
+    [InlineData(1185, false, true, true, false)]
+    public void InteractionFallbackIsSolutionNineOnlyAndOneShot(uint territoryId, bool housing,
+        bool preparationFailed, bool alreadyAttempted, bool expected)
+    {
+        Assert.Equal(expected, AethernetSourceApproach.CanUseSolutionNineInteractionFallback(
+            territoryId, housing, preparationFailed, alreadyAttempted));
+    }
+
+    [Theory]
     [InlineData(0f, 3f, true, 0f)]
     [InlineData(1f, 4f, true, 0f)]
     [InlineData(8f, 11f, true, 0f)]

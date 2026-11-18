@@ -626,7 +626,9 @@ public class VendorNavigator
     private int _sourceApproachCandidateIndex;
     private int _sourceProjectionFailureCount;
     private DateTime _lastSourceProjectionAttemptTime;
-    private bool _sourceInitialInteractionAttempted;
+    private bool _solutionNineAethernetFallbackAvailable;
+    private bool _solutionNineAethernetFallbackAttempted;
+    private bool _localAethernetShortcutSuppressed;
     private int _sourceInteractionAttempts;
     private DateTime _lastSourceInteractionAttemptTime;
     private VendorNpcLocation? _target;
@@ -688,6 +690,7 @@ public class VendorNavigator
         ResetSourceApproach();
         _target            = target;
         _teleportAttempted = false;
+        _localAethernetShortcutSuppressed = false;
         _stateStartTime = DateTime.UtcNow;
         _forcedHousingEntryOriginTerritoryId = 0;
         _awaitingForcedHousingOriginExit = false;
@@ -795,6 +798,7 @@ public class VendorNavigator
         _pendingHousingShardTeleportName = null;
         _pendingHousingShardDistanceToVendor = 0f;
         _pendingAethernetParentTerritoryId = 0;
+        _localAethernetShortcutSuppressed = false;
         _navigationDestination = Vector3.Zero;
         _navigationDestinationTolerance = 0f;
         _hasNavigationDestination = false;
@@ -1149,23 +1153,6 @@ public class VendorNavigator
         if (!Lifestream.Enabled || Lifestream.IsBusy())
             return true;
 
-        if (!_sourceInitialInteractionAttempted)
-        {
-            if (!TryGetNearestAethernetSource(out var initialSource, out _, out _) || initialSource == null)
-                return true;
-            if (!CanIssueHousingEntryAction()) return true;
-            _sourceInitialInteractionAttempted = true;
-            _sourceInteractionAttempts++;
-            _lastSourceInteractionAttemptTime = DateTime.UtcNow;
-            if (Lifestream.AethernetTeleport(_pendingHousingShardTeleportName))
-            {
-                CompleteHousingShardTeleport(initialSource);
-                return true;
-            }
-            GatherBuddy.Log.Debug($"[VendorNavigator] Initial Lifestream interaction rejected for housing shard '{_pendingHousingShardTeleportName}' from current position; source='{initialSource.Name.TextValue}'. Will approach projected ground if needed.");
-            return true;
-        }
-
         if (!PrepareAethernetSource(true, out var sourceAetheryte) || sourceAetheryte == null)
             return true;
 
@@ -1175,6 +1162,7 @@ public class VendorNavigator
 
         if (Lifestream.AethernetTeleport(_pendingHousingShardTeleportName))
         {
+            _localAethernetShortcutSuppressed = true;
             CompleteHousingShardTeleport(sourceAetheryte);
             return true;
         }
@@ -1214,30 +1202,34 @@ public class VendorNavigator
         if (!Lifestream.Enabled || Lifestream.IsBusy())
             return true;
 
-        if (!_sourceInitialInteractionAttempted)
+        if (!PrepareAethernetSource(false, out _))
         {
-            if (!TryGetNearestAethernetSource(out var initialSource, out _, out _) || initialSource == null)
+            if (!_solutionNineAethernetFallbackAvailable || _solutionNineAethernetFallbackAttempted
+                || !AethernetSourceApproach.CanUseSolutionNineInteractionFallback(
+                    Dalamud.ClientState.TerritoryType, housing: false, approachPreparationFailed: true,
+                    alreadyAttempted: _solutionNineAethernetFallbackAttempted) || Lifestream.IsBusy()
+                || !CanIssueTeleportRequest()
+                || !TryGetNearestAethernetSource(out _, out _, out _))
                 return true;
-            if (!CanIssueTeleportRequest()) return true;
-            _sourceInitialInteractionAttempted = true;
+
+            _solutionNineAethernetFallbackAttempted = true;
+            _solutionNineAethernetFallbackAvailable = false;
             _sourceInteractionAttempts++;
             _lastSourceInteractionAttemptTime = DateTime.UtcNow;
+            GatherBuddy.Log.Warning($"[VendorNavigator] Trying one interaction-first fallback for Solution Nine aethernet '{_pendingAethernetName}' after projected approach failed");
             if (Lifestream.AethernetTeleport(_pendingAethernetName))
             {
+                _localAethernetShortcutSuppressed = true;
                 CompleteLocalAethernetTeleport();
-                return true;
             }
-            GatherBuddy.Log.Debug($"[VendorNavigator] Initial Lifestream interaction rejected for '{_pendingAethernetName}' from current position; source='{initialSource.Name.TextValue}'. Will approach projected ground if needed.");
             return true;
         }
-
-        if (!PrepareAethernetSource(false, out _))
-            return true;
         if (DateTime.UtcNow - _lastSourceInteractionAttemptTime < TimeSpan.FromSeconds(1)) return true;
         _lastSourceInteractionAttemptTime = DateTime.UtcNow;
         _sourceInteractionAttempts++;
         if (Lifestream.AethernetTeleport(_pendingAethernetName))
         {
+            _localAethernetShortcutSuppressed = true;
             CompleteLocalAethernetTeleport();
         }
         else if (_sourceInteractionAttempts >= 4)
@@ -1261,7 +1253,7 @@ public class VendorNavigator
 
     private bool TryPrepareCurrentTerritoryAethernetShortcut(Vector3 playerPosition, IGameObject? liveNpc)
     {
-        if (_target == null || !Lifestream.Enabled)
+        if (_target == null || !Lifestream.Enabled || _localAethernetShortcutSuppressed)
         {
             return false;
         }
@@ -2207,7 +2199,8 @@ public class VendorNavigator
         _sourceApproachCandidateIndex = 0;
         _sourceProjectionFailureCount = 0;
         _lastSourceProjectionAttemptTime = DateTime.MinValue;
-        _sourceInitialInteractionAttempted = false;
+        _solutionNineAethernetFallbackAvailable = false;
+        _solutionNineAethernetFallbackAttempted = false;
         _sourceInteractionAttempts = 0;
         _lastSourceInteractionAttemptTime = DateTime.MinValue;
         _lastSourceActionTime = _lastSourceLogTime = DateTime.MinValue;
@@ -2288,7 +2281,19 @@ public class VendorNavigator
                 GatherBuddy.Log.Warning($"[VendorNavigator] Aethernet approach candidate failed: source={sourceId}; candidate={_sourceApproachCandidateIndex + 1}/{_sourceApproachCandidates.Count}; failure={failure}");
                 _sourceApproachCandidateIndex++;
                 if (_sourceApproachCandidateIndex >= _sourceApproachCandidates.Count)
-                    FailAethernetSource($"No reachable projected ground candidate within interaction range ({failure})");
+                {
+                    if (AethernetSourceApproach.CanUseSolutionNineInteractionFallback(
+                        Dalamud.ClientState.TerritoryType, housing, approachPreparationFailed: true,
+                        alreadyAttempted: _solutionNineAethernetFallbackAttempted))
+                    {
+                        _solutionNineAethernetFallbackAvailable = true;
+                        GatherBuddy.Log.Warning($"[VendorNavigator] Solution Nine projected approach candidates failed; allowing one interaction-first fallback. failure={failure}");
+                    }
+                    else
+                    {
+                        FailAethernetSource($"No reachable projected ground candidate within interaction range ({failure})");
+                    }
+                }
             }
             return false;
         }
@@ -2318,7 +2323,19 @@ public class VendorNavigator
                 if (_navigationDiagnostics.TryLog((sourceId, "AethernetProjectionRejected"), projectionSummary, out var suppressed))
                     GatherBuddy.Log.Warning($"[VendorNavigator] Aethernet ground projection found no acceptable candidate; source={sourceId}; attempt={_sourceProjectionFailureCount}/8; {projectionSummary}{DiagnosticThrottle.Suffix(suppressed)}");
                 if (_sourceProjectionFailureCount >= 8)
-                    FailAethernetSource($"No projected ground candidate within interaction range after {_sourceProjectionFailureCount} retries; {projectionSummary}");
+                {
+                    if (AethernetSourceApproach.CanUseSolutionNineInteractionFallback(
+                        Dalamud.ClientState.TerritoryType, housing, approachPreparationFailed: true,
+                        alreadyAttempted: _solutionNineAethernetFallbackAttempted))
+                    {
+                        _solutionNineAethernetFallbackAvailable = true;
+                        GatherBuddy.Log.Warning($"[VendorNavigator] Solution Nine aethernet approach projection failed; allowing one interaction-first fallback. {projectionSummary}");
+                    }
+                    else
+                    {
+                        FailAethernetSource($"No projected ground candidate within interaction range after {_sourceProjectionFailureCount} retries; {projectionSummary}");
+                    }
+                }
                 return false;
             }
             _sourceProjectionFailureCount = 0;

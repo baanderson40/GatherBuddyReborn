@@ -20,6 +20,7 @@ public enum AethernetSourceAction { Approach, Stop, Wait, CorrectiveApproach, Re
 /// <summary>Game-thread-only, pure approach decisions. Native calls acknowledge submitted actions explicitly.</summary>
 public sealed class AethernetSourceApproach
 {
+    public const uint SolutionNineTerritoryId = 1185;
     public static readonly TimeSpan RecognitionGrace = TimeSpan.FromSeconds(2);
     public static readonly TimeSpan RecognitionTimeout = TimeSpan.FromSeconds(10);
     public static readonly TimeSpan ApproachTimeout = TimeSpan.FromSeconds(60);
@@ -29,6 +30,10 @@ public sealed class AethernetSourceApproach
     private bool _stopped;
     private bool _corrected;
     private bool _finished;
+
+    public static bool CanUseSolutionNineInteractionFallback(uint territoryId, bool housing,
+        bool approachPreparationFailed, bool alreadyAttempted)
+        => territoryId == SolutionNineTerritoryId && !housing && approachPreparationFailed && !alreadyAttempted;
 
     public void Reset()
     {
