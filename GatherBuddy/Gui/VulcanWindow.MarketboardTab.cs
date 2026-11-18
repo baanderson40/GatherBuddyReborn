@@ -101,16 +101,13 @@ public partial class VulcanWindow
 
         ImGui.Separator();
         var available = ImGui.GetContentRegionAvail();
-        var sideBySide = available.X >= VulcanUiScaling.Scaled(800f);
-        var listSize = sideBySide
-            ? new Vector2(VulcanUiScaling.Scaled(270f), Math.Max(1f, available.Y))
-            : new Vector2(0, Math.Max(1f, Math.Min(VulcanUiScaling.Scaled(200f), available.Y * 0.4f)));
+        var listSize = new Vector2(Math.Min(VulcanUiScaling.Scaled(270f), Math.Max(1f, available.X * 0.4f)), Math.Max(1f, available.Y));
         using var panels = VulcanUiStyle.PushTheme();
         using (var list = ImRaii.Child("##marketItems", listSize, true))
         {
             if (list) DrawMarketboardItems(service);
         }
-        if (sideBySide) ImGui.SameLine();
+        ImGui.SameLine();
         using (var detail = ImRaii.Child("##marketDetail", new Vector2(0, 0), true, ImGuiWindowFlags.HorizontalScrollbar))
         {
             if (detail) DrawMarketboardDetail(service, scope, (MarketQuality)quality);
@@ -212,27 +209,30 @@ public partial class VulcanWindow
             try { Process.Start(new ProcessStartInfo($"https://universalis.app/market/{_mbSelectedItemId}") { UseShellExecute = true }); }
             catch (Exception ex) { GatherBuddy.Log.Warning($"[Marketboard] Could not open Universalis: {ex.Message}"); }
         }
+        ImGui.SameLine();
         var statuses = service.Snapshot(_mbSelectedItemId, scope);
         var errors = statuses.Count(s => s.Error != null);
         var pending = statuses.Count(s => s.Pending);
         var available = statuses.Count(s => s.Data != null);
-        if (errors > 0 && ImGui.Button("Retry failed requests")) service.Request(_mbSelectedItemId, scope, force: true, failedOnly: true);
-        if (pending > 0) ImGui.TextWrapped($"Fetching {pending} of {statuses.Count} scope requests. Cached listings remain visible.");
-        if (scope.Id == MarketScope.CrossDcId && (pending > 0 || errors > 0 || available < statuses.Count))
-            ImGui.TextColored(ImGuiColors.DalamudOrange, $"Partial NA comparison · {available}/{statuses.Count} DCs have data");
+        var info = new System.Text.StringBuilder();
+        info.AppendLine("Returned listings only, not exhaustive inventory.");
+        info.Append("Universalis data may lag in-game availability.");
+        if (pending > 0)
+            info.AppendLine().Append($"Fetching {pending} of {statuses.Count} scope requests. Cached listings remain visible.");
+        if (scope.Id == MarketScope.CrossDcId)
+            info.AppendLine().Append($"Partial NA comparison status: {available}/{statuses.Count} DCs have data.");
         foreach (var status in statuses)
         {
             var state = status.Pending ? "refreshing" : status.Error != null ? $"failed: {status.Error}"
                 : status.Data == null ? "not fetched" : status.Data.Listings.Count == 0 ? "no listings returned" : "available";
             if (status.Stale) state += " · stale cached data";
-            ImGui.TextWrapped($"{status.Target.Name}: {state}");
+            info.AppendLine().Append($"{status.Target.Name}: {state}");
             if (status.FetchedAt != null)
-            {
-                ImGui.TextWrapped($"Fetched: {MarketAge(status.FetchedAt)} · Latest source upload: {MarketAge(status.Data?.SourceUpdatedAt)}");
-            }
+                info.Append($"\nFetched: {MarketAge(status.FetchedAt)} · Latest source upload: {MarketAge(status.Data?.SourceUpdatedAt)}");
         }
+        M3Widgets.HelpMarker(info.ToString());
+        if (errors > 0 && ImGui.Button("Retry failed requests")) service.Request(_mbSelectedItemId, scope, force: true, failedOnly: true);
         ImGui.Separator();
-        ImGui.TextWrapped("Returned listings only, not exhaustive inventory. Universalis data may lag in-game availability.");
         var all = statuses.Where(s => s.Data != null).SelectMany(s => s.Data!.Listings);
         var listings = MarketSearch.Listings(all, quality);
         if (listings.Count == 0)
@@ -276,7 +276,21 @@ public partial class VulcanWindow
             ImGui.SetCursorPosY(ImGui.GetCursorPosY() + cellTextOffset);
             if (ImGui.Selectable($"{(listing.IsHq ? "HQ" : "NQ")}##listingRow", false, ImGuiSelectableFlags.SpanAllColumns))
                 ImGui.OpenPopup("##listingTravel");
-            if (ImGui.BeginPopupContextItem("##listingTravel"))
+            if (ImGui.IsItemHovered() && ImGui.IsMouseReleased(ImGuiMouseButton.Right))
+                ImGui.OpenPopup("##listingTravel");
+            if (ImGui.IsPopupOpen("##listingTravel"))
+            {
+                var viewport = ImGui.GetMainViewport();
+                var popupMax = Vector2.Min(VulcanUiScaling.Scaled(420f, 360f), viewport.WorkSize);
+                var mouse = ImGui.GetMousePos();
+                var min = viewport.WorkPos;
+                var max = viewport.WorkPos + viewport.WorkSize - popupMax;
+                var popupPosition = new Vector2(Math.Clamp(mouse.X, min.X, Math.Max(min.X, max.X)),
+                    Math.Clamp(mouse.Y, min.Y, Math.Max(min.Y, max.Y)));
+                ImGui.SetNextWindowPos(popupPosition, ImGuiCond.Appearing);
+                ImGui.SetNextWindowSizeConstraints(Vector2.Zero, popupMax);
+            }
+            if (ImGui.BeginPopup("##listingTravel"))
             {
                 if (ImGui.IsWindowAppearing())
                 {

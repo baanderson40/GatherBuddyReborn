@@ -108,6 +108,17 @@ public partial class VulcanWindow
     private static float GetVendorQuantityInputWidth()
         => System.Math.Max(VulcanUiScaling.Scaled(80f), ImGui.CalcTextSize("99999").X + ImGui.GetStyle().FramePadding.X * 2f + VulcanUiScaling.Scaled(12f));
 
+    private float GetVendorItemColumnWidth(float iconSize)
+    {
+        var widestName = ImGui.CalcTextSize("Item").X;
+        foreach (var row in _vendorDisplay)
+            widestName = System.Math.Max(widestName, ImGui.CalcTextSize(row.Entry.ItemName).X);
+
+        var padding = ImGui.GetStyle().CellPadding.X;
+        var desired = iconSize + M3.Space1 + widestName + padding;
+        return System.Math.Min(VulcanUiScaling.Scaled(360f), desired);
+    }
+
     private static void SetVendorNpcPref(VendorShopEntry entry, VendorNpc vendor)
         => VendorPreferenceHelper.SetPreferredNpc(entry, vendor);
 
@@ -219,7 +230,7 @@ public partial class VulcanWindow
     {
         InvalidateVendorDisplayForCacheRevisions();
         var avail = ImGui.GetContentRegionAvail();
-        using (var left = M3Panel.Begin("##vendorLeft", new Vector2(VulcanUiScaling.Scaled(240f), avail.Y), true, VulcanUiStyle.PanelBackground))
+        using (var left = M3Panel.Begin("##vendorLeft", new Vector2(VulcanUiScaling.Scaled(84f), avail.Y), true, VulcanUiStyle.PanelBackground))
         {
             if (left)
             {
@@ -563,17 +574,39 @@ public partial class VulcanWindow
     private static float VendorFilterButtonSize
         => VulcanUiScaling.Scaled(34f);
 
-    private static bool DrawVendorFilterButton(ref M3Flow flow, string id, string label, ushort iconId, bool selected, string tooltip)
+    private static void DrawCenteredVendorSectionLabel(string label)
     {
-        if (iconId != 0)
-        {
-            flow.Next(VendorFilterButtonSize);
-            return M3Widgets.GameIconButton($"##{id}", iconId, VendorFilterButtonSize, tooltip: tooltip, selected: selected);
-        }
+        var text = label.ToUpperInvariant();
+        var cursor = ImGui.GetCursorScreenPos();
+        var width = ImGui.GetContentRegionAvail().X;
+        Vector2 textSize;
+        using (ImRaii.PushFont(M3.LabelSmall))
+            textSize = ImGui.CalcTextSize(text);
 
-        flow.Next(M3Widgets.ChipWidth(label));
-        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + MathF.Max(0f, (VendorFilterButtonSize - M3Widgets.ChipHeight) * 0.5f));
-        return M3Widgets.Chip($"##{id}", label, selected, tooltip: tooltip);
+        var textStartX = cursor.X + (width - textSize.X) * 0.5f;
+        var lineY = cursor.Y + textSize.Y * 0.5f;
+        var gap = M3.Space1;
+        var lineColor = M3.U32(M3.Scheme.OutlineVariant, 0.65f);
+        var drawList = ImGui.GetWindowDrawList();
+        drawList.AddLine(new Vector2(cursor.X, lineY), new Vector2(MathF.Max(cursor.X, textStartX - gap), lineY), lineColor);
+        drawList.AddLine(new Vector2(MathF.Min(cursor.X + width, textStartX + textSize.X + gap), lineY),
+            new Vector2(cursor.X + width, lineY), lineColor);
+
+        ImGui.SetCursorPosX(ImGui.GetCursorPosX() + MathF.Max(0f, (width - textSize.X) * 0.5f));
+        using (ImRaii.PushFont(M3.LabelSmall))
+            ImGui.TextColored(M3.Scheme.Primary, text);
+    }
+
+    private static bool DrawVendorFilterButton(string id, ushort iconId, bool selected, string tooltip)
+    {
+        var size = VendorFilterButtonSize;
+        ImGui.SetCursorPosX(ImGui.GetCursorPosX() + MathF.Max(0f, (ImGui.GetContentRegionAvail().X - size) * 0.5f));
+        if (iconId != 0)
+            return M3Widgets.GameIconButton($"##{id}", iconId, size, tooltip: tooltip, selected: selected);
+
+        return M3Widgets.IconButton($"##{id}", FontAwesomeIcon.EllipsisH, tooltip,
+            selected ? M3ButtonStyle.Tonal : M3ButtonStyle.Text,
+            tint: selected ? M3.Scheme.Primary : null, diameter: size);
     }
 
     private void DrawVendorTopLevelCurrencyFilters()
@@ -589,7 +622,6 @@ public partial class VulcanWindow
             topLevelFilters.Add((VendorShopType.SpecialCurrency, specialGroup, specialLabel, specialCurrencyItemId));
         }
 
-        var flow = new M3Flow(M3.Space1);
         foreach (var (shopType, group, label, currencyItemId) in topLevelFilters)
         {
             var count = GetVendorTopLevelFilterCount(shopType, group);
@@ -598,7 +630,7 @@ public partial class VulcanWindow
                 continue;
             }
 
-            if (DrawVendorFilterButton(ref flow, $"vendorTopLevel_{shopType}_{group}", label,
+            if (DrawVendorFilterButton($"vendorTopLevel_{shopType}_{group}",
                     currencyItemId != 0 ? GetVendorCurrencyIconId(currencyItemId) : (ushort)0,
                     IsVendorTopLevelFilterSelected(shopType, group), $"{label}\n{count:N0} items"))
             {
@@ -610,12 +642,11 @@ public partial class VulcanWindow
     private void DrawVendorGilFilterButtons()
     {
         var gilCounts = GetGilCounts();
-        var flow = new M3Flow(M3.Space1);
         foreach (var (filter, label) in GilFilters)
         {
             gilCounts.TryGetValue(filter, out var count);
             var isSelected = _vendorGilFilter == filter;
-            if (DrawVendorFilterButton(ref flow, $"vendorGil_{filter}", label, GetVendorGilFilterIconId(filter), isSelected, $"{label}\n{count:N0} items")
+            if (DrawVendorFilterButton($"vendorGil_{filter}", GetVendorGilFilterIconId(filter), isSelected, $"{label}\n{count:N0} items")
              && !isSelected)
             {
                 _vendorGilFilter = filter;
@@ -655,9 +686,8 @@ public partial class VulcanWindow
             return;
         }
 
-        var flow = new M3Flow(M3.Space1);
         var isAllSelected = _vendorSelectedCurrencyItemId == null;
-        if (DrawVendorFilterButton(ref flow, "vendorCurrency_all", "All", 0, isAllSelected, "All currencies") && !isAllSelected)
+        if (DrawVendorFilterButton("vendorCurrency_all", 0, isAllSelected, "All currencies") && !isAllSelected)
         {
             _vendorSelectedCurrencyItemId = null;
             _vendorFilterDirty = true;
@@ -665,7 +695,7 @@ public partial class VulcanWindow
 
         foreach (var (currencyItemId, label, count) in currencyFilters)
         {
-            if (DrawVendorFilterButton(ref flow, $"vendorCurrency_{currencyItemId}", label, GetVendorCurrencyIconId(currencyItemId),
+            if (DrawVendorFilterButton($"vendorCurrency_{currencyItemId}", GetVendorCurrencyIconId(currencyItemId),
                     _vendorSelectedCurrencyItemId == currencyItemId, $"{label}\n{count:N0} items")
              && _vendorSelectedCurrencyItemId != currencyItemId)
             {
@@ -677,17 +707,17 @@ public partial class VulcanWindow
 
     private void DrawVendorSidebar()
     {
-        M3Widgets.SectionLabel("Currency");
+        DrawCenteredVendorSectionLabel("Currency");
         DrawVendorTopLevelCurrencyFilters();
 
         if (_vendorCategory == VendorShopType.GilShop)
         {
-            M3Widgets.SectionLabel("Source");
+            DrawCenteredVendorSectionLabel("Source");
             DrawVendorGilFilterButtons();
         }
         else if (GetSpecificCurrencyFilters().Count > 1)
         {
-            M3Widgets.SectionLabel("Specific currency");
+            DrawCenteredVendorSectionLabel("Currency");
             DrawVendorSpecificCurrencyButtons();
         }
     }
@@ -970,17 +1000,18 @@ public partial class VulcanWindow
         string[] headers = showAutomationControls
             ? ["Item", "Cost", "Quantity", "Vendor", "Location", "##flag", "##list", "##go"]
             : ["Item", "Cost", "Vendor", "Location", "##flag", "##go"];
+        var iconSize = VulcanUiScaling.Scaled(20f);
         using var style = M3Table.PushStyle();
         using var table = ImRaii.Table("##vendorTable", headers.Length,
-            ImGuiTableFlags.BordersOuterH | ImGuiTableFlags.ScrollY | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.PadOuterX,
+            ImGuiTableFlags.BordersOuterH | ImGuiTableFlags.ScrollX | ImGuiTableFlags.ScrollY | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.PadOuterX,
             new Vector2(-1, -1));
         if (!table)
         {
             return;
         }
 
-        ImGui.TableSetupScrollFreeze(0, 1);
-        ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableSetupScrollFreeze(1, 1);
+        ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthFixed, GetVendorItemColumnWidth(iconSize));
         ImGui.TableSetupColumn("Cost", ImGuiTableColumnFlags.WidthFixed, VulcanUiScaling.Scaled(110f));
         if (showAutomationControls)
         {
@@ -1006,7 +1037,6 @@ public partial class VulcanWindow
             }
         }
 
-        var iconSize = VulcanUiScaling.Scaled(20f);
         var limit = overflow ? 500 : _vendorDisplay.Count;
         var clipper = ImGui.ImGuiListClipper();
         clipper.Begin(limit);
@@ -1042,6 +1072,7 @@ public partial class VulcanWindow
         ImGui.SameLine(0, M3.Space1);
         ImGui.SetCursorScreenPos(new Vector2(ImGui.GetCursorScreenPos().X, rowStart.Y + (iconSize - ImGui.GetTextLineHeight()) * 0.5f));
         ImGui.TextUnformatted(entry.ItemName);
+        M3Tooltip.Hovered(entry.ItemName);
 
         ImGui.TableNextColumn();
         DrawVendorCostCell(row, iconSize);
