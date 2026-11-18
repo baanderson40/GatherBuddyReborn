@@ -6,6 +6,8 @@ using GatherBuddy.Plugin;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
+using Item = Lumina.Excel.Sheets.Item;
 
 namespace GatherBuddy.AutoGather.Lists;
 
@@ -234,8 +236,9 @@ public partial class AutoGatherListsManager
 
             if (missingBaits.Count > 0)
             {
-                var baitIds = string.Join(", ", missingBaits);
-                Communicator.PrintError($"[Auto-Gather] Cannot enable list '{list.Name}': Missing required bait IDs (and no Versatile Lure): {baitIds}");
+                var baitIds = string.Join(", ", missingBaits.OrderBy(id => id));
+                var baitNames = string.Join(", ", missingBaits.OrderBy(id => id).Select(GetBaitItemName));
+                Communicator.PrintError($"[Auto-Gather] Cannot enable list '{list.Name}': Missing required bait (and no Versatile Lure): {baitNames}");
                 GatherBuddy.Log.Error($"[Auto-Gather] List '{list.Name}' not enabled: Missing bait IDs {baitIds} and no Versatile Lure");
                 return false;
             }
@@ -287,7 +290,7 @@ public partial class AutoGatherListsManager
 
             if (GetInventoryItemCount(baitId) == 0 && GetInventoryItemCount(VersatileLureId) == 0)
             {
-                Communicator.PrintError($"[Auto-Gather] Cannot add/enable {fish.Name[GatherBuddy.Language]}: Missing bait ID {baitId} and no Versatile Lure");
+                Communicator.PrintError($"[Auto-Gather] Cannot add/enable {fish.Name[GatherBuddy.Language]}: Missing bait {GetBaitItemName(baitId)} and no Versatile Lure");
                 GatherBuddy.Log.Error($"[Auto-Gather] Fish {fish.ItemId} not enabled: Missing bait ID {baitId} and no Versatile Lure");
                 return false;
             }
@@ -299,6 +302,19 @@ public partial class AutoGatherListsManager
             GatherBuddy.Log.Error($"[Auto-Gather] Error validating single fish bait: {ex.Message}");
             return true;
         }
+    }
+
+    private static string GetBaitItemName(uint itemId)
+    {
+        var itemSheet = Dalamud.GameData.GetExcelSheet<Item>();
+        if (itemSheet?.TryGetRow(itemId, out var item) == true)
+        {
+            var name = item.Name.ExtractText();
+            if (!string.IsNullOrWhiteSpace(name))
+                return name;
+        }
+
+        return $"Item #{itemId}";
     }
 
     private static bool ValidateGatherablePerception(AutoGatherList list)
