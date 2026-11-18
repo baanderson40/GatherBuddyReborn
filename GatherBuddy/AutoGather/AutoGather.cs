@@ -468,6 +468,7 @@ namespace GatherBuddy.AutoGather
                     _homeWorldWarning = false;
                     _diademQueuingInProgress = false;
                     FarNodesSeenSoFar.Clear();
+                    _timedNodeSearchState.Reset();
                     VisitedNodes.Clear();
                     _lastAetherTarget = DateTime.MinValue;
                     _diademPathIndex = -1;
@@ -2312,6 +2313,13 @@ namespace GatherBuddy.AutoGather
             }
 
             var isSpearfishing = next.Fish?.IsSpearFish == true;
+            var isTimedNode = !isSpearfishing
+                && next.Node?.NodeType is NodeType.Unspoiled or NodeType.Legendary or NodeType.Clouded;
+            if (isTimedNode && next.Node != null)
+            {
+                _timedNodeSearchState.SetWindow(Dalamud.ClientState.TerritoryType, next.Node.Id,
+                    next.Time.Start.Time, next.Time.End.Time);
+            }
             var visibleNodes = new List<IGameObject>();
             if (isSpearfishing && next.FishingSpot is { } spearfishingSpot)
             {
@@ -2341,7 +2349,6 @@ namespace GatherBuddy.AutoGather
 
             if (!isSpearfishing)
             {
-                var isTimedNode = next.Gatherable?.NodeType is NodeType.Unspoiled or NodeType.Legendary or NodeType.Clouded;
                 if (ActivateGatheringBuffs(isTimedNode))
                 {
                     return;
@@ -2397,12 +2404,6 @@ namespace GatherBuddy.AutoGather
 
             if (CurrentDestination != default && IsPathing)
             {
-                var currentNode = visibleNodes.Find(o => o.Position == CurrentDestination);
-                if (currentNode != null && !currentNode.IsTargetable)
-                {
-                    GatherBuddy.Log.Verbose($"Far node is not targetable, distance {currentNode.Position.DistanceToPlayer()}.");
-                }
-
                 //It takes some time (roundtrip to the server) before a node becomes targetable after it becomes visible,
                 //so we need to delay excluding it. But instead of measuring time, we use distance, since character is traveling at a constant speed.
                 //Value 50 was determined empirically.
@@ -2410,18 +2411,15 @@ namespace GatherBuddy.AutoGather
                 {
                     if (node.Position.DistanceToPlayer() < NodeVisibilityDistance)
                     {
-                        FarNodesSeenSoFar.Add(node.Position);
+                        if (isTimedNode)
+                            _timedNodeSearchState.ExcludedPositions.Add(node.Position);
+                        else
+                            FarNodesSeenSoFar.Add(node.Position);
                     }
                 }
 
-                if (CurrentDestination.DistanceToPlayer() < NodeVisibilityDistance)
-                {
-                    GatherBuddy.Log.Verbose("Far node is not targetable, choosing another");
-                }
-                else
-                {
+                if (CurrentDestination.DistanceToPlayer() >= NodeVisibilityDistance)
                     return;
-                }
             }
 
             (uint? Id, Vector3 Position) selectedFarNode;
@@ -2431,6 +2429,9 @@ namespace GatherBuddy.AutoGather
             // Wait an additional 8 seconds because it takes a few seconds for the previous flag to disappear.
             var gracePeriod = next.Time == TimeInterval.Always ? 0 : next.Time.Start - GatherBuddy.Time.ServerTime.AddSeconds(-8);
             var mapMarker = mapMarkerAvailable && gracePeriod <= 0 ? TimedNodePosition : null;
+            var excludedPositions = isTimedNode
+                ? _timedNodeSearchState.ExcludedPositions
+                : FarNodesSeenSoFar;
 
             if (mapMarkerAvailable && ShouldUseFlag)
             {
@@ -2440,7 +2441,15 @@ namespace GatherBuddy.AutoGather
                     return;
                 }
 
-                selectedFarNode = FindClosestPosition(allPositions, mapMarker.Value, null);
+                selectedFarNode = FindClosestPosition(allPositions, mapMarker.Value, excludedPositions);
+
+                if (isTimedNode && selectedFarNode.Position == default && allPositions.Count > 0
+                    && allPositions.TrueForAll(position => _timedNodeSearchState.ExcludedPositions.Contains(position.Position)))
+                {
+                    if (WaitForTimedNodeRescan())
+                        return;
+                    selectedFarNode = FindClosestPosition(allPositions, mapMarker.Value, excludedPositions);
+                }
 
                 if (selectedFarNode.Position == default || Vector2.DistanceSquared(mapMarker.Value, selectedFarNode.Position.ToVector2()) > 10 * 10)
                 {
@@ -2451,19 +2460,46 @@ namespace GatherBuddy.AutoGather
             else
             {
                 //Select the closest node
-                selectedFarNode = FindClosestPosition(allPositions, mapMarker ?? Player.Position.ToVector2(), FarNodesSeenSoFar);
+                selectedFarNode = FindClosestPosition(allPositions, mapMarker ?? Player.Position.ToVector2(), excludedPositions);
 
                 if (selectedFarNode.Position == default)
                 {
-                    FarNodesSeenSoFar.Clear();
-                    GatherBuddy.Log.Verbose($"Selected node was null and far node filters have been cleared");
-                    return;
+                    if (isTimedNode)
+                    {
+                        if (WaitForTimedNodeRescan())
+                            return;
+                        selectedFarNode = FindClosestPosition(allPositions, mapMarker ?? Player.Position.ToVector2(), excludedPositions);
+                        if (selectedFarNode.Position == default)
+                            return;
+                    }
+                    else
+                    {
+                        FarNodesSeenSoFar.Clear();
+                        GatherBuddy.Log.Verbose("Selected node was null and far node filters have been cleared");
+                        return;
+                    }
                 }
             }
 
             var jump = Diadem.IsInside && TryWindmireJump(ref selectedFarNode.Position);
 
             Navigate(selectedFarNode.Position, ShouldFly(selectedFarNode.Position), direct: jump, nodeId: jump ? null : selectedFarNode.Id);
+        }
+
+        private bool WaitForTimedNodeRescan()
+        {
+            var wasWaiting = _timedNodeSearchState.IsWaitingForRescan;
+            if (_timedNodeSearchState.WaitOrBeginRescan(DateTime.UtcNow))
+            {
+                StopNavigation();
+                AutoStatus = $"No active timed node found; rechecking in {(int)Math.Ceiling(TimedNodeSearchState.RescanInterval.TotalSeconds)}s";
+                if (!wasWaiting)
+                    GatherBuddy.Log.Information("[AutoGather] Timed-node positions exhausted; stopping movement and waiting before rescan");
+                return true;
+            }
+
+            GatherBuddy.Log.Information("[AutoGather] Timed-node rescan started after no active node was found");
+            return false;
         }
 
         private uint LastVisitedNode

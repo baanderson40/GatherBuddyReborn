@@ -198,6 +198,7 @@ namespace GatherBuddy.AutoGather
             => _activeItemList.DebugVisitedTimedLocations;
 
         public readonly HashSet<Vector3> FarNodesSeenSoFar = [with(8)];
+        private readonly TimedNodeSearchState _timedNodeSearchState = new();
         public readonly List<uint> VisitedNodes = [with(4)];
         // Distance at which a node is expected to become visible, and it is given up on if it does not.
         public const float NodeVisibilityDistance = 50f;
