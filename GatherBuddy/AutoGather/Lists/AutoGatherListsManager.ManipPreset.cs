@@ -101,10 +101,7 @@ public partial class AutoGatherListsManager
         {
             _fileSystem.Move(path, folder);
             Save();
-            if (path is FileSystem<AutoGatherList>.Folder)
-            {
-                ListOrderChanged?.Invoke();
-            }
+            NotifyListOrderChanged();
 
             return true;
         }
@@ -784,6 +781,12 @@ public partial class AutoGatherListsManager
 
     public event Action? ListOrderChanged;
 
+    private void NotifyListOrderChanged()
+    {
+        SetActiveItems();
+        ListOrderChanged?.Invoke();
+    }
+
     public void MoveList(FileSystem<AutoGatherList>.Leaf movedList, FileSystem<AutoGatherList>.Leaf insertAt, bool movedFromUpperPart)
     {
         if (movedList.Parent != insertAt.Parent)
@@ -807,7 +810,7 @@ public partial class AutoGatherListsManager
         }
         movedList.Value.Order = insertIdx;
         Save();
-        ListOrderChanged?.Invoke();
+        NotifyListOrderChanged();
     }
 
     public void MoveListUp(FileSystem<AutoGatherList>.Leaf list)
@@ -832,7 +835,7 @@ public partial class AutoGatherListsManager
         {
             (list.Value.Order, neighbor.Value.Order) = (neighbor.Value.Order, list.Value.Order);
             Save();
-            ListOrderChanged?.Invoke();
+            NotifyListOrderChanged();
         }
     }
 
