@@ -343,7 +343,7 @@ public partial class Interface
         }
 
         ImGui.SameLine(0, M3.Space2);
-        if (Ui.CommitField("##listDesc", "Description", list.Description, out var newDesc, 2 * SetInputWidth, 128))
+        if (Ui.CommitField("##listDesc", "Description", list.Description, out var newDesc, Math.Max(1f, ImGui.GetContentRegionAvail().X), 128))
         {
             _plugin.AutoGatherListsManager.ChangeDescription(list, newDesc);
         }
@@ -354,18 +354,20 @@ public partial class Interface
             _plugin.AutoGatherListsManager.ToggleList(list);
         }
 
+        var optionsCenterY = (ImGui.GetItemRectMin().Y + ImGui.GetItemRectMax().Y) * 0.5f;
         M3Tooltip.Hovered("Gather the enabled items of this list.");
         ImGui.SameLine(0, M3.Space2);
-        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + (M3Widgets.SwitchSize().Y - ImGui.GetTextLineHeight()) * 0.5f);
+        ImGui.SetCursorScreenPos(new Vector2(ImGui.GetCursorScreenPos().X, optionsCenterY - ImGui.GetTextLineHeight() * 0.5f));
         M3Text.Draw(enabled ? "Enabled" : "Disabled", M3TextStyle.Muted);
         ImGui.SameLine(0, M3.Space3 * 2);
-        ImGui.SetCursorPosY(ImGui.GetCursorPosY() - (M3Widgets.SwitchSize().Y - ImGui.GetTextLineHeight()) * 0.5f);
+        ImGui.SetCursorScreenPos(new Vector2(ImGui.GetCursorScreenPos().X, optionsCenterY - ImGui.GetFrameHeight() * 0.5f));
         DrawAutoGatherListOption("Fallback##list",
             "Items from fallback lists won't be auto-gathered on their own.\n"
           + "But if a node doesn't contain any items from regular lists, or you gathered enough of them,\n"
           + "items from fallback lists are gathered instead if that node has them.",
             list.Fallback, v => _plugin.AutoGatherListsManager.SetFallback(list, v));
         ImGui.SameLine(0, M3.Space3);
+        ImGui.SetCursorScreenPos(new Vector2(ImGui.GetCursorScreenPos().X, optionsCenterY - ImGui.GetFrameHeight() * 0.5f));
         DrawAutoGatherListOption("Remove completed##list",
             "Remove enabled items from this list once your inventory reaches their quantity.",
             list.RemoveCompletedItems, v => _plugin.AutoGatherListsManager.SetRemoveCompletedItems(list, v));
@@ -378,11 +380,13 @@ public partial class Interface
 
         ImGui.Dummy(new Vector2(0, M3.Space1));
         var itemFilter = _autoGatherListsCache.ItemFilter;
+        var searchRowTop = ImGui.GetCursorScreenPos().Y;
         if (M3Widgets.SearchField("##autoGatherItemFilter", "Search items", ref itemFilter, 220f * M3.Scale))
         {
             _autoGatherListsCache.ItemFilter = itemFilter;
         }
 
+        var searchCenterY = searchRowTop + M3TextField.Height * 0.5f;
         M3Tooltip.Hovered("Filter items by name. Reordering is off while a search is active.");
 
         var filterKeywords = _autoGatherListsCache.ItemFilter.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -398,13 +402,10 @@ public partial class Interface
         }
 
         var visibleItems = visibleItemIndices.ConvertAll(index => list.Items[index]);
-        var rowTop = ImGui.GetItemRectMin().Y;
-        var rowHeight = ImGui.GetItemRectSize().Y;
-
         void SameRow(float height)
         {
             ImGui.SameLine(0, M3.Space1);
-            ImGui.SetCursorScreenPos(new Vector2(ImGui.GetCursorScreenPos().X, rowTop + (rowHeight - height) * 0.5f));
+            ImGui.SetCursorScreenPos(new Vector2(ImGui.GetCursorScreenPos().X, searchCenterY - height * 0.5f));
         }
 
         SameRow(M3Widgets.IconButtonSize);
@@ -527,7 +528,7 @@ public partial class Interface
                     M3Tooltip.Hovered(list.UsesRetainerInventory ? "In your inventory and retainers" : "In your inventory");
 
                     ImGui.TableNextColumn();
-                    if (M3Widgets.NumberField("##quantity", ref quantity, 120f * M3.Scale, 1, 1, int.MaxValue))
+                    if (M3Widgets.NumberField("##quantity", ref quantity, 160f * M3.Scale, 1, 1, int.MaxValue))
                     {
                         _plugin.AutoGatherListsManager.ChangeQuantity(list, item, (uint)Math.Max(1, quantity));
                     }
