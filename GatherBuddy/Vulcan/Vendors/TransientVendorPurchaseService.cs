@@ -52,6 +52,23 @@ public sealed class TransientVendorPurchaseService : ITransientVendorPort, IDisp
         return start;
     }
 
+    public TransientVendorStartResult StartForIpc(Guid session, ResolvedVendorPurchasePolicy policy,
+        IEnumerable<VendorPurchaseAllocation> allocations, IDictionary<uint, uint> inventoryTargets)
+    {
+        if (Execution.IsBusy) return TransientVendorStartResult.Busy;
+        if (_craftingSession.HasValue || CraftingGatherBridge.GetActiveExecutionPlan() != null)
+            return TransientVendorStartResult.Unavailable;
+        return Execution.Start(session, policy, allocations, inventoryTargets);
+    }
+
+    public bool CancelForIpc(Guid session)
+    {
+        if (Execution.SessionId != session || !Execution.IsBusy || _craftingSession.HasValue)
+            return false;
+        Execution.Cancel();
+        return true;
+    }
+
     public void Update()
     {
         if (_disposed) return;

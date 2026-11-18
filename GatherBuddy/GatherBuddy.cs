@@ -292,6 +292,7 @@ public partial class GatherBuddy : IDalamudPlugin
     private unsafe void Update(IFramework framework)
     {
         Config.SaveIfDirty();
+        Ipc?.UpdateVendorPurchases();
         AdaptiveLiveDiagnostics.Tick();
         AdaptiveShadowDiagnostics.Tick();
         // Read-only travel receipts must see busy/logout even while inventory/teleport data is unavailable.

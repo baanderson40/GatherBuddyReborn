@@ -323,15 +323,15 @@ public static class CraftingGatherBridge
         CreateGatherListForMissingIngredients(missing);
     }
 
-    public static void StartQueueCraftAndGather(CraftingExecutionPlan executionPlan, CraftingListConsumableSettings? listConsumables = null, int? ephemeralListId = null)
+    public static bool StartQueueCraftAndGather(CraftingExecutionPlan executionPlan, CraftingListConsumableSettings? listConsumables = null, int? ephemeralListId = null)
     {
-        if (GatherBuddy.AutoRetainerIntegration?.CanStartAutomation() == false) return;
+        if (GatherBuddy.AutoRetainerIntegration?.CanStartAutomation() == false) return false;
         if (GatherBuddy.VendorPurchaseManager.AutomationLease.Owner.HasValue || _activeExecutionPlan != null
             || GatherBuddy.VendorPurchaseManager.IsRunning || GatherBuddy.VendorBuyListManager.IsBusy
             || GatherBuddy.VendorNavigator.IsActive || GatherBuddy.AutoGather.Enabled || GatherBuddy.CollectableManager.IsRunning)
         {
             Communicator.PrintError("[GatherBuddyReborn] Stop existing crafting, gathering, shopping, or collectable automation before starting Gather + Craft.");
-            return;
+            return false;
         }
         _isQueueMode = true;
         _singleHomeTravel?.Cancel();
@@ -349,6 +349,7 @@ public static class CraftingGatherBridge
         _queueProcessor.StartQueue(executionPlan, listConsumables, GatherBuddy.RaphaelSolveCoordinator);
 
         GatherBuddy.CraftingStatusWindow?.SetQueueProcessor(_queueProcessor);
+        return true;
     }
 
     public static bool StartCraftingLogQueue(uint recipeId, int quantity)
