@@ -535,6 +535,9 @@ public partial class Interface
                         && GatherBuddy.Config.AutoGatherConfig.CheckRetainers;
                     var invTotal = _plugin.AutoGatherListsManager.GetListTotalCount(list, item);
                     var quantity = list.Quantities.TryGetValue(item, out var q) ? (int)q : 1;
+                    var haveCursor = ImGui.GetCursorScreenPos();
+                    var haveTextY = haveCursor.Y + (M3Widgets.NumberFieldHeight - ImGui.GetTextLineHeight()) * 0.5f;
+                    ImGui.SetCursorScreenPos(new Vector2(haveCursor.X, haveTextY));
                     Ui.RightAligned(invTotal.ToString("N0"));
                     M3Tooltip.Hovered(usesRetainerInventory ? "In your inventory and retainers" : "In your inventory");
 
