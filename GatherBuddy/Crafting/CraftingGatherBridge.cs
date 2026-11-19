@@ -5,6 +5,7 @@ using GatherBuddy.AutoGather.Collectables;
 using GatherBuddy.AutoGather.Lists;
 using GatherBuddy.Automation;
 using GatherBuddy.Helpers;
+using GatherBuddy.Interfaces;
 using GatherBuddy.Plugin;
 using GatherBuddy.Vulcan.Vendors;
 using Lumina.Excel.Sheets;
@@ -154,33 +155,7 @@ public static class CraftingGatherBridge
 
         try
         {
-            var gatherList = new AutoGatherList()
-            {
-                Name = listName,
-                Enabled = false
-            };
-
-            foreach (var (itemId, quantity) in materials)
-            {
-                var gatherQuantity = GetCraftingGatherTargetQuantity(itemId, quantity, out var gatherItemId);
-                if (gatherQuantity <= 0)
-                {
-                    continue;
-                }
-
-                if (GatherBuddy.GameData.Gatherables.TryGetValue(gatherItemId, out var gatherable))
-                {
-                    gatherList.Add(gatherable, (uint)gatherQuantity);
-                }
-                else if (GatherBuddy.GameData.Fishes.TryGetValue(gatherItemId, out var fish))
-                {
-                    gatherList.Add(fish, (uint)gatherQuantity);
-                }
-                else
-                {
-                    GatherBuddy.Log.Debug($"[CraftingGatherBridge] Item {gatherItemId} not found in gatherables or fish, skipping");
-                }
-            }
+            var gatherList = BuildPersistentGatherList(listName, materials);
 
             if (gatherList.Items.Count > 0)
             {
@@ -197,6 +172,95 @@ public static class CraftingGatherBridge
         {
             GatherBuddy.Log.Error($"[CraftingGatherBridge] Failed to create gather list '{listName}': {ex.Message}");
         }
+    }
+
+    public static int ReplacePersistentGatherList(string listName, Dictionary<uint, int> materials,
+        bool ignoreRetainerInventory)
+    {
+        if (_plugin == null)
+        {
+            GatherBuddy.Log.Warning("[CraftingGatherBridge] Cannot replace gather list: plugin not initialized");
+            return 0;
+        }
+
+        try
+        {
+            var manager = _plugin.AutoGatherListsManager;
+            var existing = manager.Lists.FirstOrDefault(list => list.Name == listName);
+            var generated = BuildPersistentGatherList(listName, materials, ignoreRetainerInventory);
+
+            if (generated.Items.Count == 0)
+            {
+                if (existing != null)
+                    manager.DeleteList(existing);
+                GatherBuddy.Log.Information($"[CraftingGatherBridge] No gatherable shortages remain for '{listName}'.");
+                return 0;
+            }
+
+            if (existing == null)
+            {
+                manager.AddList(generated);
+            }
+            else
+            {
+                for (var i = existing.Items.Count - 1; i >= 0; i--)
+                    existing.RemoveAt(i);
+
+                foreach (var item in generated.Items)
+                    existing.Add(item, generated.Quantities[item]);
+
+                existing.IgnoreRetainerInventory = ignoreRetainerInventory;
+                manager.Save();
+                if (existing.Enabled)
+                    manager.SetActiveItems();
+            }
+
+            GatherBuddy.Log.Information($"[CraftingGatherBridge] Updated missing-material gather list '{listName}' with {generated.Items.Count} items.");
+            return generated.Items.Count;
+        }
+        catch (Exception ex)
+        {
+            GatherBuddy.Log.Error($"[CraftingGatherBridge] Failed to replace gather list '{listName}': {ex.Message}");
+            return 0;
+        }
+    }
+
+    private static AutoGatherList BuildPersistentGatherList(string listName, Dictionary<uint, int> materials,
+        bool ignoreRetainerInventory = false)
+    {
+        var gatherList = new AutoGatherList
+        {
+            Name = listName,
+            Enabled = false,
+            IgnoreRetainerInventory = ignoreRetainerInventory,
+        };
+
+        foreach (var (itemId, quantity) in materials)
+        {
+            var gatherQuantity = GetCraftingGatherTargetQuantity(itemId, quantity, out var gatherItemId);
+            if (gatherQuantity <= 0)
+                continue;
+
+            IGatherable? gatherable = null;
+            if (GatherBuddy.GameData.Gatherables.TryGetValue(gatherItemId, out var foundGatherable))
+                gatherable = foundGatherable;
+            else if (GatherBuddy.GameData.Fishes.TryGetValue(gatherItemId, out var fish))
+                gatherable = fish;
+
+            if (gatherable == null)
+            {
+                GatherBuddy.Log.Debug($"[CraftingGatherBridge] Item {gatherItemId} not found in gatherables or fish, skipping");
+                continue;
+            }
+
+            if (!gatherList.Add(gatherable, (uint)gatherQuantity))
+            {
+                var currentQuantity = gatherList.Quantities[gatherable];
+                gatherList.SetQuantity(gatherable, (uint)Math.Min(uint.MaxValue, (long)currentQuantity + gatherQuantity));
+            }
+        }
+
+        return gatherList;
     }
 
     private static int GetCraftingGatherTargetQuantity(uint itemId, int quantity, out uint gatherItemId)

@@ -730,13 +730,26 @@ public class CraftingListEditor
 
         var gap = M3.Space1;
         var third = MathF.Floor((width - gap * 2f) / 3f);
-        if (ToolButton("##queue_gather_list", "Gather list", FontAwesomeIcon.Leaf, third, M3ButtonStyle.Outlined,
-                "Make a gather list from this list's materials"))
+        var gatherListClicked = ToolButton("##queue_gather_list", "Gather list", FontAwesomeIcon.Leaf, third, M3ButtonStyle.Outlined,
+            "Left-click: make a list for all materials.\nRight-click: make a list for missing gatherable materials only; honors Retainer Restock and uses a player-inventory snapshot.");
+        var gatherListRightClicked = ImGui.IsItemClicked(ImGuiMouseButton.Right);
+        if (gatherListClicked)
         {
             var materials = new Dictionary<uint, int>(GetCachedMaterials());
             var gatherListName = $"{_list.Name}...Auto-Generated";
             CraftingGatherBridge.CreatePersistentGatherList(gatherListName, materials);
             M3Snackbar.Show($"Made the gather list '{gatherListName}'.");
+        }
+        else if (gatherListRightClicked)
+        {
+            var materials = GetMissingGatherTargets();
+            var gatherListName = $"{_list.Name}...Missing-Auto-Generated";
+            var itemCount = CraftingGatherBridge.ReplacePersistentGatherList(gatherListName, materials,
+                ignoreRetainerInventory: true);
+            if (itemCount == 0)
+                M3Snackbar.Show("No missing gatherable materials.", severity: M3Severity.Neutral);
+            else
+                M3Snackbar.Show($"Updated missing gather list '{gatherListName}' with {itemCount} items.");
         }
 
         ImGui.SameLine(0, gap);
@@ -2487,6 +2500,36 @@ public class CraftingListEditor
         ProcessPendingInventoryChanges();
         var materialCache = EnsureMaterialCache(ComputeListHash());
         return materialCache.DisplayMaterials;
+    }
+
+    internal Dictionary<uint, int> GetMissingGatherTargets()
+    {
+        ProcessPendingInventoryChanges();
+        var materials = GetDisplayMaterials();
+        var countRetainersTowardNeed = RetainerRestockEnabled && AllaganTools.Enabled;
+        var retainerSnapshot = countRetainersTowardNeed
+            ? GetRetainerSnapshot(materials.Keys)
+            : RetainerItemSnapshot.Empty;
+        var targets = new Dictionary<uint, int>();
+
+        foreach (var (itemId, needed) in materials)
+        {
+            if (needed <= 0)
+                continue;
+
+            var retNQ = countRetainersTowardNeed ? retainerSnapshot.GetCountNQ(itemId) : 0;
+            var retHQ = countRetainersTowardNeed ? retainerSnapshot.GetCountHQ(itemId) : 0;
+            var available = GetDisplayMaterialAvailableCount(itemId, retNQ, retHQ, countRetainersTowardNeed);
+            var missing = Math.Max(0, needed - available);
+            if (missing == 0)
+                continue;
+
+            // Persistent Auto-Gather quantities are player-inventory targets. Retainer
+            // stock already reduced the shortage above, so don't count it a second time.
+            targets[itemId] = (int)Math.Min(int.MaxValue, (long)GetInventoryCount(itemId) + missing);
+        }
+
+        return targets;
     }
 
     internal Dictionary<uint, int> GetDisplayPrecraftMaterials()
