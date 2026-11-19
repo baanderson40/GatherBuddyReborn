@@ -49,7 +49,7 @@ public class AutoRetainerCompletionBoundaryTests
         Assert.Contains("SetActiveQueueCompletionPreference", preference);
         Assert.Contains("Cancel", preference);
         Assert.Contains("SetCompletionPreference", Calls("CraftingGatherBridge", "SetActiveQueueCompletionPreference"));
-        var status = Calls("CraftingStatusWindow", "Draw");
+        var status = Calls("CraftingStatusWindow", "DrawContents");
         Assert.Contains("RowSwitch", status);
         Assert.Contains("SetEnabled", status);
         Assert.Contains("Save", status);

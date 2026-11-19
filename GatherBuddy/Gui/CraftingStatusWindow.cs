@@ -1,5 +1,6 @@
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
+using Dalamud.Interface.Windowing;
 using Dalamud.Interface.Utility.Raii;
 using GatherBuddy.Crafting;
 using RebornMaterial;
@@ -11,8 +12,16 @@ using GatherBuddy.Automation;
 
 namespace GatherBuddy.Gui;
 
-public class CraftingStatusWindow : M3Window
+public class CraftingStatusWindow : M3PanelWindow
 {
+    private const string WindowId = "Crafting Status###GatherBuddyCraftingStatus";
+    private static readonly Vector2 DefaultSize = new(360f, 260f);
+    private static readonly WindowSizeConstraints DefaultConstraints = new()
+    {
+        MinimumSize = new Vector2(300f, 160f),
+        MaximumSize = new Vector2(420f, float.MaxValue),
+    };
+
     private CraftingQueueProcessor? _queueProcessor;
     private bool? _pendingCollapseState = null;
     private bool _requestFocus = false;
@@ -23,12 +32,12 @@ public class CraftingStatusWindow : M3Window
     private int _cachedEstimateActionDelayMs = -1;
 
     public CraftingStatusWindow()
-        : base("Crafting Status###GatherBuddyCraftingStatus", ImGuiWindowFlags.AlwaysAutoResize)
+        : base(WindowId, "Crafting Status", DefaultSize, DefaultConstraints)
     {
         IsOpen = false;
         ShowCloseButton = true;
         RespectCloseHotkey = true;
-        SizeCondition = ImGuiCond.Appearing;
+        BlocksGameInput = false;
     }
 
     public void SetQueueProcessor(CraftingQueueProcessor? processor)
@@ -61,20 +70,16 @@ public class CraftingStatusWindow : M3Window
         _requestFocus = true;
     }
 
-    public override bool DrawConditions()
-    {
-        return _queueProcessor != null && IsOpen;
-    }
+    protected override (string Text, Vector4? Color) Status
+        => (string.Empty, null);
 
-    protected override void PreDrawThemed()
+    protected override void PreDrawFold()
     {
-        if (!IsOpen)
-        {
-            return;
-        }
-
-        ImGui.SetNextWindowSizeConstraints(VulcanUiScaling.Scaled(300f, 0f),
-            new Vector2(VulcanUiScaling.Scaled(420f), float.MaxValue));
+        var title = IsMinimized && _queueProcessor != null
+            ? GetStatusHeader(_queueProcessor, _queueProcessor.CurrentState, _queueProcessor.Paused,
+                GatherBuddy.AutoRetainerIntegration?.Coordinator is { YieldRequested: true } coordinator ? coordinator : null)
+            : "Crafting Status";
+        WindowName = $"{title}###GatherBuddyCraftingStatus";
 
         if (_pendingCollapseState.HasValue)
         {
@@ -89,7 +94,10 @@ public class CraftingStatusWindow : M3Window
         }
     }
 
-    public override void Draw()
+    protected override M3WindowAction[] WindowActions
+        => [];
+
+    protected override void DrawContents()
     {
         if (_queueProcessor == null)
         {
@@ -105,23 +113,14 @@ public class CraftingStatusWindow : M3Window
         var totalCount = _queueProcessor.QueueCount;
         var coordinator = GatherBuddy.AutoRetainerIntegration?.Coordinator;
         var handoff = coordinator?.YieldRequested == true ? coordinator : null;
-        string? recipeName = null;
-        if (currentItem != null
-         && Dalamud.GameData.GetExcelSheet<Lumina.Excel.Sheets.Recipe>()?.TryGetRow(currentItem.RecipeId, out var recipe) == true)
-            recipeName = recipe.ItemResult.Value.Name.ExtractText();
-        var gatherItemName = currentState == CraftingQueueProcessor.QueueState.WaitingForGather
-            && ReferenceEquals(_queueProcessor, CraftingGatherBridge.AutoRetainerQueue)
-            && GatherBuddy.AutoGather.CurrentRequestedTarget is { } target
-                ? target.Name[GatherBuddy.Language] : null;
+        var header = GetStatusHeader(_queueProcessor, currentState, paused, handoff, out var recipeName);
 
         var width = 300f * M3.Scale;
-        using var wrap = ImRaii.TextWrapPos(ImGui.GetCursorPosX() + width);
-        var header = CraftingStatusPresentation.GetHeader(currentState, paused, handoff?.State, recipeName,
-            _queueProcessor.ActivePurchaseItemName, gatherItemName);
         var (_, stateTone, stateIcon) = DescribeState(currentState, paused);
         M3Widgets.Pill("##craft_state", header, stateTone, stateIcon);
         if (handoff != null && ImGui.IsItemHovered())
             M3Tooltip.Hovered(handoff.Status);
+
         var progress = _queueProcessor.Progress;
         using (M3Card.Begin("##craftProgress", "Craft progress", FontAwesomeIcon.Tasks, M3.AccentFor(0)))
         {
@@ -235,6 +234,28 @@ public class CraftingStatusWindow : M3Window
 
         if (M3Widgets.Button("##craft_open_vulcan", "Open Vulcan", M3ButtonStyle.Text, FontAwesomeIcon.Hammer))
             GatherBuddy.VulcanWindow?.RestoreWindow();
+    }
+
+    private static string GetStatusHeader(CraftingQueueProcessor processor, CraftingQueueProcessor.QueueState state,
+        bool paused, AutoRetainerCoordinator? handoff)
+        => GetStatusHeader(processor, state, paused, handoff, out _);
+
+    private static string GetStatusHeader(CraftingQueueProcessor processor, CraftingQueueProcessor.QueueState state,
+        bool paused, AutoRetainerCoordinator? handoff, out string? recipeName)
+    {
+        var currentItem = processor.CurrentRecipeItem;
+        recipeName = null;
+        if (currentItem != null
+         && Dalamud.GameData.GetExcelSheet<Lumina.Excel.Sheets.Recipe>()?.TryGetRow(currentItem.RecipeId, out var recipe) == true)
+            recipeName = recipe.ItemResult.Value.Name.ExtractText();
+
+        var gatherItemName = state == CraftingQueueProcessor.QueueState.WaitingForGather
+            && ReferenceEquals(processor, CraftingGatherBridge.AutoRetainerQueue)
+            && GatherBuddy.AutoGather.CurrentRequestedTarget is { } target
+                ? target.Name[GatherBuddy.Language] : null;
+
+        return CraftingStatusPresentation.GetHeader(state, paused, handoff?.State, recipeName,
+            processor.ActivePurchaseItemName, gatherItemName);
     }
 
     private static (string Label, Vector4 Tone, FontAwesomeIcon Icon) DescribeState(CraftingQueueProcessor.QueueState state, bool paused)
