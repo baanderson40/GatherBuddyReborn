@@ -9,8 +9,11 @@ namespace GatherBuddy.AutoGather;
 
 public partial class AutoGather
 {
+    private const uint FisherClassJobId = 18;
+
     internal Guid AutomationRunId { get; private set; } = Guid.NewGuid();
     private bool _arAutoHookStopped;
+    private long _nextAutoRetainerQuitFishingAttemptAt;
     private AutoRetainerCompletionTicket? _completionTicket;
     private bool _completionHadGatherWork;
     internal bool DeferAutoRetainerForTimedNode
@@ -40,11 +43,15 @@ public partial class AutoGather
             AutoHook.SetPluginState?.Invoke(false);
             _arAutoHookStopped = true;
         }
-        if (IsFishing)
+        var isFisher = Dalamud.Objects.LocalPlayer?.ClassJob.RowId == FisherClassJobId;
+        var fisherRodOut = isFisher && Dalamud.Conditions[ConditionFlag.Gathering];
+        if (IsFishing || fisherRodOut)
         {
-            QueueQuitFishingTasks();
+            TryQuitFishingForAutoRetainer();
+            reason = "Waiting for fishing rod to be put away";
             return false;
         }
+        _nextAutoRetainerQuitFishingAttemptAt = 0;
         if (IsGathering)
         {
             if (Dalamud.Conditions[ConditionFlag.ExecutingGatheringAction]) return false;
@@ -58,6 +65,20 @@ public partial class AutoGather
         return true;
     }
 
+    private void TryQuitFishingForAutoRetainer()
+    {
+        var now = Environment.TickCount64;
+        if (now < _nextAutoRetainerQuitFishingAttemptAt)
+            return;
+
+        // AutoRetainerCoordinator blocks TaskManager while yielding, so a queued Quit
+        // action cannot run here. Issue it directly and retry until the game clears
+        // ConditionFlag.Fishing.
+        _nextAutoRetainerQuitFishingAttemptAt = now + 1000;
+        UseAction(Actions.Quit);
+        GatherBuddy.Log.Debug("[AutoGather] Requested Quit Fishing for AutoRetainer handoff.");
+    }
+
     internal void SetAutoRetainerStatus(string status)
     {
         if (!Waiting) _plugin.Ipc.AutoGatherWaiting();
@@ -68,6 +89,7 @@ public partial class AutoGather
     internal void ReleaseFromAutoRetainer()
     {
         _arAutoHookStopped = false;
+        _nextAutoRetainerQuitFishingAttemptAt = 0;
         _autoHookSetupComplete = false;
         _currentGatherTarget = null;
         _currentRequestedTarget = null;
