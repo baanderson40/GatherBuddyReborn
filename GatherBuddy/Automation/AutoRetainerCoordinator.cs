@@ -40,6 +40,7 @@ public sealed class AutoRetainerCoordinator
     private TimeSpan? _readySince;
     private bool _completed, _returnRequested, _resume = true, _yielded, _external;
     private bool _startedPass, _stopRequested, _cancelActivePass;
+    private bool _manualStopObserved;
     private string? _lastWork;
     private AutoRetainerProcessingMode _lastMode;
     private int _repeatedWork;
@@ -166,6 +167,13 @@ public sealed class AutoRetainerCoordinator
                     if (now >= _deadline) throw new TimeoutException($"Owned AutoRetainer cleanup blocked: {cleanupReason}");
                     return;
                 }
+                if (_manualStopObserved)
+                {
+                    // AR was stopped by the user. Drain its owned interaction state,
+                    // but do not return characters or resume parked automation.
+                    Finish(now);
+                    return;
+                }
                 _deadline = now + TimeSpan.FromMinutes(5);
                 SetState(AutoRetainerHandoffState.Returning, $"Stopping AutoRetainer: returning to {_original!.NameWithWorld}");
             }
@@ -210,8 +218,14 @@ public sealed class AutoRetainerCoordinator
                     _deadline = now + TimeSpan.FromMinutes(60);
                     SetState(AutoRetainerHandoffState.RunningPass, "Processing AutoRetainer single pass");
                 }
+                else if (State == AutoRetainerHandoffState.StartingPass && !_port.MultiModeEnabled && now >= _deadline)
+                {
+                    BeginManualStop(now, "AutoRetainer did not remain active; waiting for cleanup before releasing paused work");
+                }
                 else if (State == AutoRetainerHandoffState.RunningPass && !_port.MultiModeEnabled)
-                    throw new InvalidOperationException("AutoRetainer stopped without single-pass completion; inspect AR then recover");
+                {
+                    BeginManualStop(now, "AutoRetainer stopped manually; waiting for cleanup before releasing paused work");
+                }
             }
             if (State == AutoRetainerHandoffState.WaitingForIdle && !_port.MultiModeEnabled && !_port.Busy)
             {
@@ -291,6 +305,7 @@ public sealed class AutoRetainerCoordinator
         _owner = null;
         _original = null;
         _startedPass = _stopRequested = _cancelActivePass = false;
+        _manualStopObserved = false;
         if (stopped)
         {
             _observedOwner = null;
@@ -302,6 +317,18 @@ public sealed class AutoRetainerCoordinator
         SetState(AutoRetainerHandoffState.Monitoring, stopped
             ? "AutoRetainer stopped; stopped queue will not resume"
             : "AutoRetainer handoff settled (30 second debounce)");
+    }
+
+    private void BeginManualStop(TimeSpan now, string status)
+    {
+        // AR is already off. Do not send another stop IPC, return characters, or
+        // resume automation; only wait for submitted work and UI cleanup to settle.
+        _resume = false;
+        _stopRequested = true;
+        _manualStopObserved = true;
+        _cancelActivePass = false;
+        _deadline = now + TimeSpan.FromMinutes(3);
+        SetState(AutoRetainerHandoffState.Cancelling, status);
     }
 
     private void SetState(AutoRetainerHandoffState state, string status)

@@ -299,7 +299,14 @@ public sealed partial class AutoRetainerIntegration : IAutoRetainerCoordinationP
                 home.Cancel();
                 resume = false;
             }
-            else if (!home.ResumeFromAutoRetainer(_parkedHomeHandoff)) resume = false;
+            else if (resume)
+            {
+                if (!home.ResumeFromAutoRetainer(_parkedHomeHandoff)) resume = false;
+            }
+            else
+            {
+                home.Cancel();
+            }
             _parkedHomeTravel = null;
             _parkedHomeOwner = null;
             _parkedHomeHandoff = Guid.Empty;

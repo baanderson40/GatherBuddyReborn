@@ -220,20 +220,72 @@ public class AutoRetainerCoordinatorTests
     }
 
     [Fact]
-    public void InterruptedPassRequiresExplicitRecoveryOnOriginalCharacter()
+    public void ManualStopOnOriginalCharacterAutomaticallyReleasesWithoutResuming()
     {
         var port = new Port();
         var coordinator = new AutoRetainerCoordinator(port);
         coordinator.Tick(TimeSpan.Zero);
         port.MultiModeEnabled = false;
-        port.Character = new(99, "Other@World");
         coordinator.Tick(TimeSpan.FromSeconds(1));
-        Assert.Equal(AutoRetainerHandoffState.Failed, coordinator.State);
-        Assert.True(coordinator.BlocksAutomation);
-        Assert.False(coordinator.Recover(TimeSpan.FromSeconds(2)));
-        port.Character = new(42, "Original@World");
-        Assert.True(coordinator.Recover(TimeSpan.FromSeconds(3)));
+        coordinator.Tick(TimeSpan.FromSeconds(2));
+        Assert.Equal(1, port.Releases);
         Assert.False(port.Resumed);
+        Assert.False(coordinator.YieldRequested);
+        Assert.False(coordinator.BlocksAutomation);
+        Assert.Equal(0, port.Returns);
+    }
+
+    [Fact]
+    public void ManualStopOnAlternateCharacterReleasesWithoutReturningOrResuming()
+    {
+        var port = new Port();
+        var coordinator = new AutoRetainerCoordinator(port);
+        coordinator.Tick(TimeSpan.Zero);
+        port.Character = new(99, "Other@World");
+        port.MultiModeEnabled = false;
+        coordinator.Tick(TimeSpan.FromSeconds(1));
+        coordinator.Tick(TimeSpan.FromSeconds(2));
+        Assert.Equal(1, port.Releases);
+        Assert.False(port.Resumed);
+        Assert.False(coordinator.YieldRequested);
+        Assert.False(coordinator.BlocksAutomation);
+        Assert.Equal(0, port.Returns);
+    }
+
+    [Fact]
+    public void ManualStopWaitsForOwnedArWorkToSettleBeforeReleasing()
+    {
+        var port = new Port();
+        var coordinator = new AutoRetainerCoordinator(port);
+        coordinator.Tick(TimeSpan.Zero);
+        port.Busy = true;
+        port.MultiModeEnabled = false;
+        coordinator.Tick(TimeSpan.FromSeconds(1));
+        Assert.Equal(AutoRetainerHandoffState.Cancelling, coordinator.State);
+        Assert.Equal(0, port.Releases);
+
+        port.Busy = false;
+        coordinator.Tick(TimeSpan.FromSeconds(2));
+        Assert.Equal(1, port.Releases);
+        Assert.False(port.Resumed);
+        Assert.False(coordinator.YieldRequested);
+    }
+
+    [Fact]
+    public void ManualStopBeforeFirstActivePollReleasesAfterStartGracePeriod()
+    {
+        var port = new Port();
+        port.DuringStart = () => port.MultiModeEnabled = false;
+        var coordinator = new AutoRetainerCoordinator(port);
+        coordinator.Tick(TimeSpan.Zero);
+        Assert.Equal(AutoRetainerHandoffState.StartingPass, coordinator.State);
+        Assert.Equal(0, port.Releases);
+
+        coordinator.Tick(TimeSpan.FromSeconds(15));
+        coordinator.Tick(TimeSpan.FromSeconds(16));
+        Assert.Equal(1, port.Releases);
+        Assert.False(port.Resumed);
+        Assert.False(coordinator.YieldRequested);
     }
 
     [Fact]
@@ -671,9 +723,10 @@ public class AutoRetainerCoordinatorTests
         var port = new Port();
         var coordinator = new AutoRetainerCoordinator(port);
         coordinator.Tick(TimeSpan.Zero);
-        port.MultiModeEnabled = false;
+        port.Available = false;
         coordinator.Tick(TimeSpan.FromSeconds(1));
         Assert.Equal(AutoRetainerHandoffState.Failed, coordinator.State);
+        port.Available = true;
         coordinator.StopOwner("Vulcan:run1", TimeSpan.FromSeconds(2));
         coordinator.Tick(TimeSpan.FromSeconds(2));
         coordinator.Tick(TimeSpan.FromSeconds(3));
