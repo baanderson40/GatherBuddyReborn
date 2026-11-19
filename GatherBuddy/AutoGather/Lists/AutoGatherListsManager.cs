@@ -1,5 +1,6 @@
 using GatherBuddy.Interfaces;
 using GatherBuddy.Plugin;
+using GatherBuddy.AutoGather.Extensions;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
@@ -36,7 +37,7 @@ public partial class AutoGatherListsManager : IDisposable
     private readonly FileSystem<AutoGatherList> _fileSystem;
     private readonly List<(IGatherable Item, uint Quantity)> _activeItems = [];
     private readonly List<(IGatherable Item, uint Quantity)> _fallbackItems = [];
-    private readonly HashSet<IGatherable> _localInventoryActiveItems = [];
+    private readonly Dictionary<(IGatherable Item, bool Fallback), GatherInventoryDemand> _inventoryDemands = [];
     public static ManualOrderSortMode SortMode { get; } = new();
 
     public FileSystem<AutoGatherList> FileSystem
@@ -51,8 +52,27 @@ public partial class AutoGatherListsManager : IDisposable
     public ReadOnlyCollection<(IGatherable Item, uint Quantity)> FallbackItems
         => _fallbackItems.AsReadOnly();
 
-    internal bool UsesRetainerInventory(IGatherable item)
-        => !_localInventoryActiveItems.Contains(item);
+    internal int GetRemainingDemand(IGatherable item, bool fallback = false)
+    {
+        return GetInventoryDemandProgress(item, fallback)?.Remaining ?? 0;
+    }
+
+    internal bool NeedsGathering(IGatherable item, bool fallback = false)
+        => GetRemainingDemand(item, fallback) > 0;
+
+    internal GatherInventoryDemandProgress? GetInventoryDemandProgress(IGatherable item, bool fallback = false)
+    {
+        if (!_inventoryDemands.TryGetValue((item, fallback), out var demand))
+            return null;
+
+        var retainerAvailable = GatherableExtensions.CanReadRetainerInventory;
+        var playerInventory = item.GetInventoryCount();
+        var retainerInventory = retainerAvailable ? item.GetRetainerInventoryCount() : 0;
+        return demand.GetProgress(playerInventory, retainerInventory, retainerAvailable);
+    }
+
+    internal int GetListTotalCount(AutoGatherList list, IGatherable item)
+        => item.GetTotalCount(list.UsesRetainerInventory && !list.IgnoreRetainerInventory);
 
     public AutoGatherListsManager()
     {
@@ -136,9 +156,9 @@ public partial class AutoGatherListsManager : IDisposable
 
         _activeItems.Clear();
         _fallbackItems.Clear();
-        _localInventoryActiveItems.Clear();
+        _inventoryDemands.Clear();
 
-        var totals = new Dictionary<(IGatherable Item, bool Fallback), (long Quantity, bool UsesRetainerInventory)>();
+        var totals = new Dictionary<(IGatherable Item, bool Fallback), (long Quantity, GatherInventoryDemand Demand)>();
         foreach (var path in _fileSystem.Root.GetAllDescendants(SortMode))
         {
             if (path is not FileSystem<AutoGatherList>.Leaf { Value: { Enabled: true } list })
@@ -154,27 +174,32 @@ public partial class AutoGatherListsManager : IDisposable
                     continue;
                 }
 
+                var useRetainerInventory = list.UsesRetainerInventory && !list.IgnoreRetainerInventory;
                 ref var total = ref CollectionsMarshal.GetValueRefOrAddDefault(totals, (listItem, list.Fallback), out var exists);
-                total = exists
-                    ? (total.Quantity + listQuantity, total.UsesRetainerInventory && list.UsesRetainerInventory)
-                    : (listQuantity, list.UsesRetainerInventory);
+                if (exists)
+                {
+                    total.Quantity = Math.Min(uint.MaxValue, total.Quantity + listQuantity);
+                    total.Demand.Add(listQuantity, useRetainerInventory);
+                }
+                else
+                {
+                    var demand = new GatherInventoryDemand();
+                    demand.Add(listQuantity, useRetainerInventory);
+                    total = (listQuantity, demand);
+                }
             }
         }
 
-        foreach (var ((item, fallback), (totalQuantity, usesRetainerInventory)) in totals)
+        foreach (var ((item, fallback), (totalQuantity, demand)) in totals)
         {
             var quantity = (uint)Math.Min(totalQuantity, uint.MaxValue);
+            _inventoryDemands[(item, fallback)] = demand;
             if (fallback)
             {
                 _fallbackItems.Add((item, quantity));
             }
             else
             {
-                if (!usesRetainerInventory)
-                {
-                    _localInventoryActiveItems.Add(item);
-                }
-
                 _activeItems.Add((item, quantity));
             }
         }

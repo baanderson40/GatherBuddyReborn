@@ -151,8 +151,7 @@ namespace GatherBuddy.AutoGather
                 // Since it's possible that we are not gathering the top item in the list,
                 // we need to remember what we are going to gather inside MasterpieceAddon
                 CurrentCollectableRotation = new CollectableRotation(MatchConfigPreset(slot.Item), slot.Item,
-                    _activeItemList.FirstOrDefault(x => x.Item == slot.Item).Quantity,
-                    _plugin.AutoGatherListsManager.UsesRetainerInventory(slot.Item));
+                    () => _plugin.AutoGatherListsManager.GetRemainingDemand(slot.Item));
             }
 
             EnqueueActionWithDelay(slot.Gather);
@@ -203,7 +202,7 @@ namespace GatherBuddy.AutoGather
                 }
             }
 
-            if (target != null && target.Item.GetTotalCount(_plugin.AutoGatherListsManager.UsesRetainerInventory(gatherTarget.Item)) < gatherTarget.Quantity)
+            if (target != null && _plugin.AutoGatherListsManager.NeedsGathering(gatherTarget.Item))
             {
                 //The target item is found in the node, would not overcap and we need to gather more of it
                 return (!target.IsCollectable, target);
@@ -221,7 +220,7 @@ namespace GatherBuddy.AutoGather
                 //Check for overcap
                 .Where(x => CheckItemOvercap(x.Slot))
                 //And we need more of them
-                .Where(x => x.Slot.Item.GetTotalCount() < x.Quantity)
+                .Where(x => _plugin.AutoGatherListsManager.NeedsGathering(x.Slot.Item, fallback: true))
                 .Select(x => x.Slot);
 
             var fallbackSkills = GatherBuddy.Config.AutoGatherConfig.UseSkillsForFallbackItems;

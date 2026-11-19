@@ -44,27 +44,40 @@ public static class GatherableExtensions
     public static int GetTotalCount(this IGatherable gatherable)
         => gatherable.GetTotalCount(true);
 
-    public static int GetTotalCount(this IGatherable gatherable, bool useRetainerInventory)
+    public static bool CanReadRetainerInventory
     {
-        var localCount = gatherable.GetInventoryCount();
-        if (!useRetainerInventory || !GatherBuddy.Config.AutoGatherConfig.CheckRetainers || !AllaganTools.Enabled)
+        get
         {
-            return localCount;
+            if (!GatherBuddy.Config.AutoGatherConfig.CheckRetainers || !AllaganTools.Enabled)
+                return false;
+
+            try { return AllaganTools.IsInitialized(); }
+            catch { return false; }
         }
+    }
+
+    public static int GetRetainerInventoryCount(this IGatherable gatherable)
+    {
+        if (!CanReadRetainerInventory)
+            return 0;
 
         try
         {
-            if (!AllaganTools.IsInitialized())
-            {
-                return localCount;
-            }
-
-            var retainerCount = AllaganTools.ItemCountOwned(gatherable.ItemId, true, _retainerInventoryTypes);
-            return (int)Math.Min((long)localCount + retainerCount, int.MaxValue);
+            var count = AllaganTools.ItemCountOwned(gatherable.ItemId, true, _retainerInventoryTypes);
+            return (int)Math.Min(count, (uint)int.MaxValue);
         }
         catch
         {
-            return localCount;
+            return 0;
         }
+    }
+
+    public static int GetTotalCount(this IGatherable gatherable, bool useRetainerInventory)
+    {
+        var localCount = gatherable.GetInventoryCount();
+        if (!useRetainerInventory)
+            return localCount;
+
+        return (int)Math.Min((long)localCount + gatherable.GetRetainerInventoryCount(), int.MaxValue);
     }
 }

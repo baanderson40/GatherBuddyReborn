@@ -34,6 +34,7 @@ public class AutoGatherList
     public bool Enabled { get; set; } = false;
     public bool Fallback { get; set; } = false;
     public bool RemoveCompletedItems { get; set; } = false;
+    public bool IgnoreRetainerInventory { get; set; } = false;
     internal bool UsesRetainerInventory { get; set; } = true;
 
     private List<IGatherable> items = [];
@@ -55,6 +56,7 @@ public class AutoGatherList
             Enabled = false,
             Fallback = Fallback,
             RemoveCompletedItems = RemoveCompletedItems,
+            IgnoreRetainerInventory = IgnoreRetainerInventory,
             UsesRetainerInventory = UsesRetainerInventory
         };
 
@@ -180,7 +182,7 @@ public class AutoGatherList
 
     public struct Config(AutoGatherList list)
     {
-        public const byte CurrentVersion = 6;
+        public const byte CurrentVersion = 7;
 
         public uint[] ItemIds = [.. list.Items.Select(i => i.ItemId)];
         public Dictionary<uint, uint> Quantities = list.Quantities.ToDictionary(v => v.Key.ItemId, v => v.Value);
@@ -193,6 +195,7 @@ public class AutoGatherList
         public bool Enabled = list.Enabled;
         public bool Fallback = list.Fallback;
         public bool RemoveCompletedItems = list.RemoveCompletedItems;
+        public bool IgnoreRetainerInventory = list.IgnoreRetainerInventory;
 
         internal readonly string ToBase64()
         {
@@ -208,7 +211,7 @@ public class AutoGatherList
             try
             {
                 var bytes = Functions.DecompressedBase64(data);
-                if (bytes.Length == 0 || bytes[0] != CurrentVersion && bytes[0] != 5 && bytes[0] != 4)
+                if (bytes.Length == 0 || bytes[0] != CurrentVersion && bytes[0] != 6 && bytes[0] != 5 && bytes[0] != 4)
                 {
                     return false;
                 }
@@ -255,6 +258,7 @@ public class AutoGatherList
             Enabled = cfg.Enabled,
             Fallback = cfg.Fallback,
             RemoveCompletedItems = cfg.RemoveCompletedItems,
+            IgnoreRetainerInventory = cfg.IgnoreRetainerInventory,
             items = [with(cfg.ItemIds.Length)],
             quantities = [with(cfg.ItemIds.Length)],
             preferredLocations = [with(cfg.PrefferedLocations.Count)],

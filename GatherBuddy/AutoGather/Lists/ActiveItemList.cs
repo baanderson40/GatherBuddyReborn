@@ -181,8 +181,8 @@ namespace GatherBuddy.AutoGather.Lists
 
         private bool NeedsGathering((IGatherable item, uint quantity) value)
         {
-            var (item, quantity) = value;
-            return item.GetTotalCount(_listsManager.UsesRetainerInventory(item)) < quantity && CheckOvercap(item);
+            var (item, _) = value;
+            return _listsManager.NeedsGathering(item) && CheckOvercap(item);
         }
 
         private bool NeedsGathering(GatherTarget target)

@@ -532,6 +532,17 @@ public partial class AutoGatherListsManager
         }
     }
 
+    public void SetIgnoreRetainerInventory(AutoGatherList list, bool value)
+    {
+        if (list.IgnoreRetainerInventory == value)
+            return;
+
+        list.IgnoreRetainerInventory = value;
+        Save();
+        if (list.Enabled)
+            SetActiveItems(list.RemoveCompletedItems && !list.Fallback);
+    }
+
     public bool RemoveCompletedItemFromLists(IGatherable item)
     {
         var removedAny = false;
@@ -547,7 +558,7 @@ public partial class AutoGatherListsManager
                 continue;
             }
 
-            var totalCount = item.GetTotalCount(list.UsesRetainerInventory);
+            var totalCount = GetListTotalCount(list, item);
             if (!list.Quantities.TryGetValue(item, out var quantity) || totalCount < quantity)
             {
                 continue;
@@ -610,7 +621,7 @@ public partial class AutoGatherListsManager
                     continue;
                 }
 
-                var totalCount = item.GetTotalCount(list.UsesRetainerInventory);
+                var totalCount = GetListTotalCount(list, item);
                 if (totalCount < quantity)
                 {
                     continue;

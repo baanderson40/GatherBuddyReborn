@@ -371,6 +371,14 @@ public partial class Interface
         DrawAutoGatherListOption("Remove completed##list",
             "Remove enabled items from this list once your inventory reaches their quantity.",
             list.RemoveCompletedItems, v => _plugin.AutoGatherListsManager.SetRemoveCompletedItems(list, v));
+        if (GatherBuddy.Config.AutoGatherConfig.CheckRetainers)
+        {
+            ImGui.SameLine(0, M3.Space3);
+            ImGui.SetCursorScreenPos(new Vector2(ImGui.GetCursorScreenPos().X, optionsCenterY - ImGui.GetFrameHeight() * 0.5f));
+            DrawAutoGatherListOption("Ignore retainer inventory##list",
+                "Use player inventory only for this list. Shared items keep each list's inventory policy independently.",
+                list.IgnoreRetainerInventory, v => _plugin.AutoGatherListsManager.SetIgnoreRetainerInventory(list, v));
+        }
 
         if (!ReferenceEquals(_autoGatherListsCache.ItemFilterList, list))
         {
@@ -522,10 +530,13 @@ public partial class Interface
                     }
 
                     ImGui.TableNextColumn();
-                    var invTotal = item.GetTotalCount(list.UsesRetainerInventory);
+                    var usesRetainerInventory = list.UsesRetainerInventory
+                        && !list.IgnoreRetainerInventory
+                        && GatherBuddy.Config.AutoGatherConfig.CheckRetainers;
+                    var invTotal = _plugin.AutoGatherListsManager.GetListTotalCount(list, item);
                     var quantity = list.Quantities.TryGetValue(item, out var q) ? (int)q : 1;
                     Ui.RightAligned(invTotal.ToString("N0"));
-                    M3Tooltip.Hovered(list.UsesRetainerInventory ? "In your inventory and retainers" : "In your inventory");
+                    M3Tooltip.Hovered(usesRetainerInventory ? "In your inventory and retainers" : "In your inventory");
 
                     ImGui.TableNextColumn();
                     if (M3Widgets.NumberField("##quantity", ref quantity, 160f * M3.Scale, 1, 1, int.MaxValue))

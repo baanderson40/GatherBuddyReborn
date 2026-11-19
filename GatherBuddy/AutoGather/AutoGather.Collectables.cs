@@ -44,13 +44,12 @@ namespace GatherBuddy.AutoGather
             return true;
         }
 
-        private partial class CollectableRotation(ConfigPreset config, Gatherable item, uint quantity, bool useRetainerInventory)
+        private partial class CollectableRotation(ConfigPreset config, Gatherable item, Func<int> getItemsLeft)
         {
             private readonly bool shouldUseFullRotation = Player.Object?.CurrentGp >= config.CollectableActionsMinGP;
             private readonly ConfigPreset config = config;
             private readonly Gatherable item = item;
-            private readonly uint quantity = quantity;
-            private readonly bool useRetainerInventory = useRetainerInventory;
+            private readonly Func<int> getItemsLeft = getItemsLeft;
 
             [GeneratedRegex(@"\d+")]
             private static partial Regex NumberRegex();
@@ -58,7 +57,7 @@ namespace GatherBuddy.AutoGather
             public Actions.BaseAction GetNextAction(GatheringMasterpieceReader masterpieceReader)
             {
                 var player = Player.Object ?? throw new InvalidOperationException("Player object is null");
-                var itemsLeft = (int)(quantity - item.GetTotalCount(useRetainerInventory));
+                var itemsLeft = getItemsLeft();
 
                 if (itemsLeft <= 0 && GatherBuddy.Config.AutoGatherConfig.AbandonNodes)
                 {

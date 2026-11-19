@@ -200,9 +200,12 @@ public class GatherWindow : Window
             return;
         }
 
-        var inventoryCount = item.GetTotalCount(_plugin.AutoGatherListsManager.UsesRetainerInventory(item));
+        var demandProgress = _plugin.AutoGatherListsManager.GetInventoryDemandProgress(item);
+        var inventoryCount = demandProgress?.PlayerInventory ?? item.GetTotalCount(true);
+        var isQuantitySatisfied = demandProgress?.IsSatisfied
+            ?? (quantity > 0 && inventoryCount >= quantity);
 
-        if (quantity > 0 && inventoryCount >= quantity && GatherBuddy.Config.HideGatherWindowCompletedItems)
+        if (isQuantitySatisfied && GatherBuddy.Config.HideGatherWindowCompletedItems)
         {
             return;
         }
@@ -226,13 +229,15 @@ public class GatherWindow : Window
             var colorId = time == TimeInterval.Always ? ColorId.GatherWindowText :
                 time.Start > GatherBuddy.Time.ServerTime ? ColorId.GatherWindowUpcoming : ColorId.GatherWindowAvailable;
 
-            if (quantity > 0 && inventoryCount >= quantity)
+            if (isQuantitySatisfied)
             {
                 colorId = ColorId.DisabledText;
             }
 
             using var color = ImRaii.PushColor(ImGuiCol.Text, colorId.Value());
-            var quantityText = quantity > 0 ? $" ({inventoryCount}/{quantity})" : "";
+            var quantityText = demandProgress is { } progress
+                ? FormatDemandProgress(progress)
+                : quantity > 0 ? $" ({inventoryCount:N0}/{quantity:N0})" : string.Empty;
             if (ImGui.Selectable($"{item.Name[GatherBuddy.Language]}{quantityText}", false))
             {
                 if (_plugin.Executor.LastItem != item)
@@ -328,6 +333,19 @@ public class GatherWindow : Window
         }
 
         DrawTime(loc, time, hasPredatorIssue);
+    }
+
+    private static string FormatDemandProgress(GatherInventoryDemandProgress progress)
+    {
+        if (progress.NeedsPlayerOnlyInventory && progress.NeedsRetainerInventory)
+            return $" (Player {progress.PlayerInventory:N0}/{progress.PlayerOnlyTarget:N0}; Retainer {progress.TotalInventory:N0}/{progress.RetainerAwareTarget:N0})";
+        if (progress.NeedsPlayerOnlyInventory)
+            return $" ({progress.PlayerInventory:N0}/{progress.PlayerOnlyTarget:N0})";
+        if (progress.NeedsRetainerInventory)
+            return $" (Retainer {progress.TotalInventory:N0}/{progress.RetainerAwareTarget:N0})";
+        if (progress.HasPlayerOnlyTarget || progress.HasRetainerAwareTarget)
+            return " (Complete)";
+        return string.Empty;
     }
 
     private void DeleteItem()

@@ -81,7 +81,7 @@ namespace GatherBuddy.AutoGather
                     var targetQuantity = _currentAutoHookTarget.Value.Quantity;
                     var currentCount = arg1.GetInventoryCount();
 
-                    if (currentCount >= targetQuantity)
+                    if (!_plugin.AutoGatherListsManager.NeedsGathering(arg1))
                     {
                         GatherBuddy.Log.Information($"[AutoGather] Target fish count reached ({currentCount}/{targetQuantity}), stopping fishing immediately");
                         AutoHook.SetPluginState?.Invoke(false);
