@@ -4,6 +4,7 @@ using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using GatherBuddy.AutoGather.Helpers;
 using GatherBuddy.Classes;
 using GatherBuddy.Interfaces;
+using GatherBuddy.Marketboard;
 using System;
 using System.Collections.Generic;
 
@@ -16,6 +17,7 @@ public class ContextMenu : IDisposable
     private IGatherable? _lastGatherable;
     private uint? _lastRecipeId;
     private uint? _lastVendorBuyListItemId;
+    private uint? _lastMarketboardItemId;
     private readonly GatherBuddy _plugin;
 
     private readonly MenuItem _menuItem;
@@ -23,6 +25,7 @@ public class ContextMenu : IDisposable
     private readonly MenuItem _menuItemCrafting;
     private readonly MenuItem _menuItemVulcanRecipe;
     private readonly MenuItem _menuItemVendorBuyList;
+    private readonly MenuItem _menuItemMarketboard;
 
     public ContextMenu(GatherBuddy plugin, IContextMenu menu, Executor executor)
     {
@@ -82,6 +85,17 @@ public class ContextMenu : IDisposable
             Name = "Add to Vendor Buy List",
             OnClicked = OnClickVendorBuyList,
             IsSubmenu = true,
+            PrefixColor = 42,
+        };
+
+        _menuItemMarketboard = new MenuItem
+        {
+            IsEnabled = true,
+            IsReturn = false,
+            PrefixChar = 'V',
+            Name = "Search Market Board",
+            OnClicked = OnClickMarketboard,
+            IsSubmenu = false,
             PrefixColor = 42,
         };
 
@@ -280,6 +294,33 @@ public class ContextMenu : IDisposable
         args.OpenSubmenu(menuItems);
     }
 
+    private void OnClickMarketboard(IMenuItemClickedArgs args)
+    {
+        if (!_lastMarketboardItemId.HasValue)
+        {
+            GatherBuddy.Log.Debug("[ContextMenu] Marketboard context menu clicked without a cached item id.");
+            return;
+        }
+
+        var itemId = _lastMarketboardItemId.Value;
+        if (!TryGetMarketableItem(itemId, out var itemName, out var iconId))
+        {
+            GatherBuddy.Log.Debug($"[ContextMenu] Item {itemId} is no longer marketable; skipping Marketboard search.");
+            return;
+        }
+
+        var service = GatherBuddy.MarketboardService;
+        var vulcanWindow = GatherBuddy.VulcanWindow;
+        if (service == null || vulcanWindow == null)
+        {
+            GatherBuddy.Log.Warning($"[ContextMenu] Cannot search item {itemId}: Vulcan Marketboard is unavailable.");
+            return;
+        }
+
+        service.QueueLookup(itemId, itemName, iconId);
+        vulcanWindow.OpenToMarketboardItem(itemId);
+    }
+
     private static void OpenCreateCraftingListPopup(uint recipeId)
     {
         var vulcanWindow = GatherBuddy.VulcanWindow;
@@ -325,6 +366,7 @@ public class ContextMenu : IDisposable
     {
         _lastRecipeId = null;
         _lastVendorBuyListItemId = null;
+        _lastMarketboardItemId = null;
 
         var contextItemId = GetContextItemId(args);
         _lastGatherable = contextItemId.HasValue ? ResolveGatherable(contextItemId.Value) : null;
@@ -336,6 +378,15 @@ public class ContextMenu : IDisposable
         if (contextItemId.HasValue && Vulcan.Vendors.VendorBuyListManager.CanAddSupportedItem(contextItemId.Value))
         {
             _lastVendorBuyListItemId = contextItemId.Value;
+        }
+
+        if (GatherBuddy.Config.VulcanContextMenuEntries
+         && contextItemId.HasValue
+         && GatherBuddy.MarketboardService != null
+         && GatherBuddy.VulcanWindow != null
+         && TryGetMarketableItem(contextItemId.Value, out _, out _))
+        {
+            _lastMarketboardItemId = contextItemId.Value;
         }
 
         if (_lastGatherable != null)
@@ -360,6 +411,26 @@ public class ContextMenu : IDisposable
             _menuItemVendorBuyList.IsEnabled = true;
             args.AddMenuItem(_menuItemVendorBuyList);
         }
+        if (_lastMarketboardItemId.HasValue)
+        {
+            args.AddMenuItem(_menuItemMarketboard);
+        }
+    }
+
+    private static bool TryGetMarketableItem(uint itemId, out string name, out uint iconId)
+    {
+        name = string.Empty;
+        iconId = 0;
+        var itemSheet = Dalamud.GameData.GetExcelSheet<Lumina.Excel.Sheets.Item>();
+        if (itemSheet?.TryGetRow(itemId, out var item) != true
+         || !MarketSearch.IsMarketable(item.IsUntradable, item.ItemSearchCategory.RowId))
+        {
+            return false;
+        }
+
+        name = item.Name.ExtractText();
+        iconId = item.Icon;
+        return !string.IsNullOrWhiteSpace(name);
     }
 
     private unsafe uint? GetRecipeIdFromContext(IMenuOpenedArgs args)

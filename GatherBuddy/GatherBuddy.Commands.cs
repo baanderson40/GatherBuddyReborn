@@ -115,6 +115,12 @@ public partial class GatherBuddy
             ShowInHelp = true,
         };
 
+        _commands["/vmb"] = new CommandInfo(OnVulcanMarketboard)
+        {
+            HelpMessage = "Alias for /vulcanmb.",
+            ShowInHelp = false,
+        };
+
         _commands["/vcollect"] = new CommandInfo(OnCollectablesWindow)
         {
             HelpMessage = "Open the Collectables turn-in and purchase window.",

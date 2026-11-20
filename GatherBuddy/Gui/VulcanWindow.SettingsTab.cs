@@ -31,7 +31,7 @@ public partial class VulcanWindow
             SettingRows.Slider("Action delay", "Delay in milliseconds between crafting actions. 0 is instant, 1000 the most.",
                 GatherBuddy.Config.VulcanExecutionDelayMs, 0, 1000, v => GatherBuddy.Config.VulcanExecutionDelayMs = v);
             SettingRows.Switch("Context menu entries",
-                "Show Vulcan entries (Open in Vulcan, Add to Crafting List, Add to Vendor Buy List) in the in-game right-click menu.",
+                "Show Vulcan entries (Open in Vulcan, Add to Crafting List, Add to Vendor Buy List, Search Market Board) in the in-game right-click menu.",
                 GatherBuddy.Config.VulcanContextMenuEntries, v => GatherBuddy.Config.VulcanContextMenuEntries = v);
             SettingRows.Switch("Crafting Log Craft All",
                 "Show Vulcan Craft All and Craft N controls in the regular in-game Crafting Log. Uses current inventory only; no gathering, purchases, or retainer restock.",
