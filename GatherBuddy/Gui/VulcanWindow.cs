@@ -37,9 +37,12 @@ public partial class VulcanWindow : M3ShellWindow, IDisposable
 
     private static readonly M3WindowAction[] VulcanWindowActions =
     [
+        new("##vulcan_open_gbr", FontAwesomeIcon.Seedling, "Open GatherBuddy Reborn"),
         new("##vulcan_open_collectables", FontAwesomeIcon.BoxOpen, "Open the collectables turn-in and purchase window"),
         new("##vulcan_open_craft_status", FontAwesomeIcon.Tasks, "Reopen the Craft Status window for the active crafting queue"),
     ];
+
+    private readonly Interface _mainWindow;
 
     // Shared state
     private CraftingListDefinition? _editingList = null;
@@ -79,9 +82,10 @@ public partial class VulcanWindow : M3ShellWindow, IDisposable
 
     private readonly record struct ArtisanChip(string Label, FontAwesomeIcon Icon, bool Selected, bool Enabled, string Tooltip, bool Loaded);
 
-    public VulcanWindow()
+    public VulcanWindow(Interface mainWindow)
         : base(WindowId, "vulcan", "Vulcan", "Vulcan", DefaultSize, DefaultConstraints)
     {
+        _mainWindow = mainWindow;
         BuildPages();
         CraftingGameInterop.CraftFinished += OnCraftFinished;
     }
@@ -274,6 +278,9 @@ public partial class VulcanWindow : M3ShellWindow, IDisposable
         switch (index)
         {
             case 0:
+                _mainWindow.OpenAndRestore();
+                break;
+            case 1:
                 if (GatherBuddy.CollectablesWindow == null)
                 {
                     GatherBuddy.Log.Debug("[VulcanWindow] Collectables action clicked, but the collectables window was unavailable.");
@@ -286,7 +293,7 @@ public partial class VulcanWindow : M3ShellWindow, IDisposable
                 }
 
                 break;
-            case 1:
+            case 2:
                 if (GatherBuddy.CraftingStatusWindow?.HasActiveQueue == true)
                 {
                     GatherBuddy.CraftingStatusWindow.OpenOrRestore();

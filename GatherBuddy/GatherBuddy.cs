@@ -185,7 +185,7 @@ public partial class GatherBuddy : IDalamudPlugin
             CraftingGatherBridge.BindCollectableManager(CollectableManager);
             WindowSystem = new WindowSystem(Name);
             Interface = new Interface(this);
-            _vulcanWindow = new VulcanWindow();
+            _vulcanWindow = new VulcanWindow(Interface);
             VulcanWindow = _vulcanWindow;
             _craftingStatusWindow = new Gui.CraftingStatusWindow();
             CraftingStatusWindow = _craftingStatusWindow;
