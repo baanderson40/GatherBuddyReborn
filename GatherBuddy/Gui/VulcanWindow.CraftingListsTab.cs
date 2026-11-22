@@ -108,7 +108,7 @@ public partial class VulcanWindow
 
         var recipeCount = list.Recipes.Count;
         var location = string.IsNullOrEmpty(list.FolderPath) ? "Crafting list" : CraftingListManager.FormatFolderPath(list.FolderPath);
-        var subtitle = $"{location} · {recipeCount} {(recipeCount == 1 ? "recipe" : "recipes")}";
+        var subtitle = $"{location} · {recipeCount} {(recipeCount == 1 ? "recipe" : "recipes")} · ID: {list.ID}";
         var blockHeight = titleHeight + ImGui.GetTextLineHeight();
 
         ImGui.SameLine(0, M3.Space2);
@@ -384,6 +384,12 @@ public partial class VulcanWindow
             CopyTeamCraftLink(list);
         }
 
+        if (M3Menu.Item("##list_copy_id", "Copy List ID", FontAwesomeIcon.Clipboard))
+        {
+            ImGui.SetClipboardText(list.ID.ToString());
+            M3Snackbar.Show($"Copied list ID {list.ID} for {list.Name}.", severity: M3Severity.Success);
+        }
+
         M3Menu.Divider();
         if (M3Menu.Item("##list_delete", "Delete...", FontAwesomeIcon.Trash))
         {
@@ -509,7 +515,7 @@ public partial class VulcanWindow
         }
 
         var recipeCount = list.Recipes.Count;
-        var details = $"{recipeCount} {(recipeCount == 1 ? "recipe" : "recipes")} · Created {list.CreatedAt.ToLocalTime():yyyy-MM-dd}";
+        var details = $"{recipeCount} {(recipeCount == 1 ? "recipe" : "recipes")} · Created {list.CreatedAt.ToLocalTime():yyyy-MM-dd} · ID: {list.ID}";
         if (!string.IsNullOrEmpty(list.FolderPath))
         {
             details = $"{CraftingListManager.FormatFolderPath(list.FolderPath)} · {details}";

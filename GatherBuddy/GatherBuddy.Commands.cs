@@ -93,7 +93,7 @@ public partial class GatherBuddy
 
         _commands["/vulcan"] = new CommandInfo(OnVulcan)
         {
-            HelpMessage = "Open the Vulcan crafting interface. Use with a list ID/name to jump to that list, or 'craft <recipeId|name> [qty]' to start the full gather+craft pipeline immediately.",
+            HelpMessage = "Open the Vulcan crafting interface. Use a list ID/name to open it, 'craft-list <list ID|exact name>' to start a saved list, or 'craft <recipeId|name> [qty]' to start one recipe.",
             ShowInHelp = true,
         };
 
@@ -322,6 +322,11 @@ public partial class GatherBuddy
             OnVulcanCraft(parts);
             return;
         }
+        if (parts[0].Equals("craft-list", StringComparison.OrdinalIgnoreCase))
+        {
+            OnVulcanCraftList(trimmed[parts[0].Length..].Trim());
+            return;
+        }
 
         _vulcanWindow?.OpenToList(trimmed);
     }
@@ -413,6 +418,60 @@ public partial class GatherBuddy
         GatherBuddy.Log.Information($"[Commands] /vulcan craft: {itemName} x{quantity} (recipe {recipe.Value.RowId})");
         Communicator.Print($"Starting: {itemName} x{quantity}");
         Gui.VulcanWindow.StartCraftingList(tempList);
+    }
+
+    private void OnVulcanCraftList(string argument)
+    {
+        if (argument.Length == 0)
+        {
+            Communicator.Print("/vulcan craft-list <list ID | exact list name>");
+            return;
+        }
+
+        CraftingListDefinition? list = null;
+        if (int.TryParse(argument, out var listId))
+        {
+            list = CraftingListManager.GetListByID(listId);
+            if (list == null)
+            {
+                Communicator.Print($"No crafting list found with ID {listId}.");
+                return;
+            }
+        }
+        else
+        {
+            var matches = new List<CraftingListDefinition>();
+            foreach (var candidate in CraftingListManager.Lists)
+            {
+                if (candidate.Name.Equals(argument, StringComparison.OrdinalIgnoreCase))
+                    matches.Add(candidate);
+            }
+
+            if (matches.Count == 0)
+            {
+                Communicator.Print($"No crafting list found with the exact name '{argument}'.");
+                return;
+            }
+
+            if (matches.Count > 1)
+            {
+                Communicator.Print($"Multiple crafting lists match '{argument}'. Use a list ID:");
+                foreach (var match in matches)
+                    Communicator.Print($"  {match.Name} - ID: {match.ID}");
+                return;
+            }
+
+            list = matches[0];
+        }
+
+        if (list.Recipes.Count == 0)
+        {
+            Communicator.Print($"Crafting list '{list.Name}' (ID: {list.ID}) is empty.");
+            return;
+        }
+
+        if (Gui.VulcanWindow.StartCraftingList(list))
+            Communicator.Print($"Started crafting list '{list.Name}' (ID: {list.ID}).");
     }
 
     private static void OnGatherDebug(string command, string arguments)
