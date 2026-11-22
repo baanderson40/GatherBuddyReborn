@@ -39,6 +39,8 @@ public sealed partial class AutoRetainerIntegration : IAutoRetainerCoordinationP
     public AutoRetainerProcessingMode Mode => GatherBuddy.Config.AutoGatherConfig.AutoRetainerMode;
     public string? ActiveOwner => CraftingGatherBridge.AutoRetainerOwner
         ?? (GatherBuddy.AutoGather.Enabled ? $"AutoGather:{GatherBuddy.AutoGather.AutomationRunId}" : null);
+    public bool OwnerPaused => CraftingGatherBridge.AutoRetainerOwner != null
+        && CraftingGatherBridge.AutoRetainerQueue?.Paused == true;
     public bool CanRequestHandoff => GatherBuddy.MarketboardTravel?.Coordinator.BlocksAutomation != true
         && !RetainerBellNavigator.CleanupPending
         && CraftingGatherBridge.AutoRetainerQueue?.Paused != true
@@ -95,6 +97,8 @@ public sealed partial class AutoRetainerIntegration : IAutoRetainerCoordinationP
 
     public bool CanStartAutomation()
     {
+        if (!Coordinator.PausedOwnerCanResume)
+        { Communicator.PrintError($"This Vulcan queue belongs to its original character. {Coordinator.Status}"); return false; }
         if (Completion.Pending || Completion.State == AutoRetainerCompletionState.Submitted)
         { Communicator.PrintError("Completion AutoRetainer handoff pending. Turn off Enable AutoRetainer Multi-mode when finished to cancel it before starting new work."); return false; }
         if (!Marketboard.MarketboardTravelIntegration.CanStartAutomation()) return false;

@@ -13,6 +13,7 @@ public interface IAutoRetainerCoordinationPort
     bool Enabled { get; }
     AutoRetainerProcessingMode Mode { get; }
     string? ActiveOwner { get; }
+    bool OwnerPaused { get; }
     bool CanRequestHandoff { get; }
     bool DeferForTimedNode { get; }
     AutoRetainerCharacter? Character { get; }
@@ -58,6 +59,17 @@ public sealed class AutoRetainerCoordinator
     public bool OwnsPass => State is AutoRetainerHandoffState.StartingPass or AutoRetainerHandoffState.RunningPass;
     public string? Owner => _owner;
     public bool IsStopping => _stopRequested && YieldRequested && State != AutoRetainerHandoffState.Failed;
+    public bool PausedOwnerCanResume
+    {
+        get
+        {
+            if (!_port.OwnerPaused) return true;
+            return _ownerCharacter is { ContentId: not 0 } owner
+                && _port.Character is { } current
+                && current.ContentId == owner.ContentId
+                && _port.CharacterReady;
+        }
+    }
 
     public void OnPassFinished()
     {
@@ -96,7 +108,7 @@ public sealed class AutoRetainerCoordinator
             if (State == AutoRetainerHandoffState.Monitoring)
             {
                 var activeOwner = _port.ActiveOwner;
-                if (!_port.Enabled || activeOwner == null)
+                if (activeOwner == null)
                 {
                     _observedOwner = null;
                     _ownerCharacter = null;
@@ -110,6 +122,18 @@ public sealed class AutoRetainerCoordinator
                     _repeatedWork = 0;
                 }
                 _ownerCharacter ??= _port.Character;
+                if (_port.OwnerPaused)
+                {
+                    if (_ownerCharacter != null && _port.Character is { } pausedCharacter
+                        && pausedCharacter.ContentId != _ownerCharacter.ContentId)
+                        Status = $"Paused Vulcan queue belongs to {_ownerCharacter.NameWithWorld}; return there before resuming";
+                    else if (!PausedOwnerCanResume)
+                        Status = "Waiting for the original character and inventory to be ready before resuming";
+                    else
+                        Status = "Vulcan queue paused; resume manually when ready";
+                    return;
+                }
+                if (!_port.Enabled) return;
                 if (_ownerCharacter != null && _port.Character is { } currentCharacter && currentCharacter.ContentId != _ownerCharacter.ContentId)
                 {
                     _original = _ownerCharacter;

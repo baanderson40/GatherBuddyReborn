@@ -11,6 +11,7 @@ public class AutoRetainerCoordinatorTests
         public bool Enabled { get; set; } = true;
         public AutoRetainerProcessingMode Mode { get; set; }
         public string? ActiveOwner { get; set; } = "Vulcan:run1";
+        public bool OwnerPaused { get; set; }
         public bool CanRequestHandoff { get; set; } = true;
         private bool _deferForTimedNode;
         public int TimedNodeReads;
@@ -286,6 +287,37 @@ public class AutoRetainerCoordinatorTests
         Assert.Equal(1, port.Releases);
         Assert.False(port.Resumed);
         Assert.False(coordinator.YieldRequested);
+    }
+
+    [Fact]
+    public void PausedOwnerCharacterSwitchDoesNotFailAndRequiresOriginalReadyCharacterToResume()
+    {
+        var port = new Port { OwnerPaused = true, CanRequestHandoff = false };
+        var coordinator = new AutoRetainerCoordinator(port);
+        coordinator.Tick(TimeSpan.Zero);
+        Assert.Equal(AutoRetainerHandoffState.Monitoring, coordinator.State);
+        Assert.False(coordinator.BlocksAutomation);
+        Assert.True(coordinator.PausedOwnerCanResume);
+        Assert.Equal(0, port.Starts);
+
+        port.Character = new(99, "Other@World");
+        coordinator.Tick(TimeSpan.FromSeconds(1));
+        Assert.Equal(AutoRetainerHandoffState.Monitoring, coordinator.State);
+        Assert.False(coordinator.BlocksAutomation);
+        Assert.False(coordinator.PausedOwnerCanResume);
+        Assert.Contains("Original@World", coordinator.Status);
+        Assert.Equal(0, port.Starts);
+
+        port.Character = new(42, "Original@World");
+        port.CharacterReady = false;
+        coordinator.Tick(TimeSpan.FromSeconds(2));
+        Assert.False(coordinator.PausedOwnerCanResume);
+
+        port.CharacterReady = true;
+        coordinator.Tick(TimeSpan.FromSeconds(3));
+        Assert.True(coordinator.PausedOwnerCanResume);
+        Assert.Equal(AutoRetainerHandoffState.Monitoring, coordinator.State);
+        Assert.Equal(0, port.Starts);
     }
 
     [Fact]
