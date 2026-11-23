@@ -1487,6 +1487,7 @@ public partial class CraftingQueueProcessor
 
     private void TransitionFromRetainerWithdrawComplete()
     {
+        GatherBuddy.CraftingMaterialsWindow?.OnRetainerWithdrawalComplete();
         RebuildQueueAndMaterialsFromCurrentInventory();
         BeginMaterialAcquisition();
     }

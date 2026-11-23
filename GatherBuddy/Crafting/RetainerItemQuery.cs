@@ -90,6 +90,31 @@ internal sealed class RetainerItemSnapshot
         IsComplete = isComplete;
     }
 
+    private RetainerItemSnapshot(Dictionary<uint, (int NQ, int HQ)> counts, bool isComplete)
+    {
+        _counts = counts;
+        IsComplete = isComplete;
+    }
+
+    public RetainerItemSnapshot RefreshItems(IEnumerable<uint> itemIds)
+    {
+        var counts = new Dictionary<uint, (int NQ, int HQ)>(_counts);
+        if (!RetainerItemQuery.IsReady)
+        {
+            return new RetainerItemSnapshot(counts, false);
+        }
+
+        var isComplete = IsComplete;
+        foreach (var itemId in itemIds.Where(id => id > 0).Distinct())
+        {
+            var (itemCounts, itemComplete) = QuerySplitCounts(itemId);
+            counts[itemId] = itemCounts;
+            isComplete &= itemComplete;
+        }
+
+        return new RetainerItemSnapshot(counts, isComplete);
+    }
+
     public int GetCountNQ(uint itemId)
         => _counts.GetValueOrDefault(itemId).NQ;
 

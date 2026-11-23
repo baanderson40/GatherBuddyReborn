@@ -142,6 +142,12 @@ public class CraftingMaterialsWindow : M3PanelWindow
         _editor = editor;
     }
 
+    internal void OnRetainerWithdrawalComplete()
+    {
+        _editor?.InvalidateRetainerSnapshot();
+        InvalidateMaterialView();
+    }
+
     protected override M3WindowAction[] WindowActions
         => MaterialsWindowActions;
 

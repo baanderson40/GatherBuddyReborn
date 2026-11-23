@@ -71,6 +71,7 @@ public class CraftingListEditor
     private RetainerItemSnapshot _cachedRetainerSnapshot = RetainerItemSnapshot.Empty;
     private uint[] _cachedRetainerSnapshotItemIds = [];
     private DateTime _cachedRetainerSnapshotAt = DateTime.MinValue;
+    private readonly HashSet<uint> _invalidatedRetainerSnapshotItemIds = [];
     private readonly HashSet<uint> _watchedInventoryItemIds = [];
     private readonly HashSet<uint> _watchedOriginalResultItemIds = [];
     private readonly HashSet<uint> _watchedPrecraftResultItemIds = [];
@@ -353,11 +354,13 @@ public class CraftingListEditor
     {
         EnsureWatchedInventoryItems();
         var changedItemIds = new HashSet<uint>();
+        var changedRetainerItemIds = new HashSet<uint>();
         var planningList = GetPlanningList();
 
         var graphAffected = false;
         foreach (var inventoryEvent in events)
         {
+            var retainerTransfer = IsRetainerTransferEvent(inventoryEvent);
             foreach (var itemId in GetAffectedTrackedInventoryItemIds(inventoryEvent))
             {
                 if (itemId == 0 || !_watchedInventoryItemIds.Contains(itemId))
@@ -366,6 +369,10 @@ public class CraftingListEditor
                 }
 
                 changedItemIds.Add(itemId);
+                if (retainerTransfer)
+                {
+                    changedRetainerItemIds.Add(itemId);
+                }
 
                 if (planningList.SkipIfEnough && _watchedPrecraftResultItemIds.Contains(itemId)
                  || planningList.SkipIfEnough && planningList.SkipFinalIfEnough && _watchedOriginalResultItemIds.Contains(itemId))
@@ -386,6 +393,7 @@ public class CraftingListEditor
             _inventoryRefreshTimes.Remove(itemId);
         }
 
+        InvalidateRetainerSnapshot(changedRetainerItemIds);
         Interlocked.Increment(ref _materialCacheVersion);
 
         if (!graphAffected)
@@ -400,6 +408,14 @@ public class CraftingListEditor
             _lastGraphAffectingInventoryChange = DateTime.Now;
         }
     }
+
+    private static bool IsRetainerTransferEvent(InventoryEventArgs inventoryEvent)
+        => inventoryEvent is InventoryComplexEventArgs complexEvent
+            && (IsRetainerInventory(complexEvent.SourceInventory) && IsTrackedInventoryContainer(complexEvent.TargetInventory)
+                || IsTrackedInventoryContainer(complexEvent.SourceInventory) && IsRetainerInventory(complexEvent.TargetInventory));
+
+    private static bool IsRetainerInventory(GameInventoryType inventoryType)
+        => inventoryType.ToString().StartsWith("Retainer", StringComparison.Ordinal);
 
     private static IEnumerable<uint> GetAffectedTrackedInventoryItemIds(InventoryEventArgs inventoryEvent)
     {
@@ -2638,7 +2654,19 @@ public class CraftingListEditor
         _cachedRetainerSnapshot = RetainerItemSnapshot.Empty;
         _cachedRetainerSnapshotItemIds = [];
         _cachedRetainerSnapshotAt = DateTime.MinValue;
+        _invalidatedRetainerSnapshotItemIds.Clear();
         Interlocked.Increment(ref _materialCacheVersion);
+    }
+
+    private void InvalidateRetainerSnapshot(IEnumerable<uint> itemIds)
+    {
+        foreach (var itemId in itemIds)
+        {
+            if (Array.BinarySearch(_cachedRetainerSnapshotItemIds, itemId) >= 0)
+            {
+                _invalidatedRetainerSnapshotItemIds.Add(itemId);
+            }
+        }
     }
 
     internal RetainerItemSnapshot GetRetainerSnapshot(IEnumerable<uint> itemIds, bool forceRefresh = false)
@@ -2670,6 +2698,18 @@ public class CraftingListEditor
         {
             if (_cachedRetainerSnapshot.IsComplete)
             {
+                if (_invalidatedRetainerSnapshotItemIds.Count == 0)
+                {
+                    return _cachedRetainerSnapshot;
+                }
+
+                _cachedRetainerSnapshot = _cachedRetainerSnapshot.RefreshItems(_invalidatedRetainerSnapshotItemIds);
+                _cachedRetainerSnapshotAt = DateTime.Now;
+                if (_cachedRetainerSnapshot.IsComplete)
+                {
+                    _invalidatedRetainerSnapshotItemIds.Clear();
+                }
+
                 return _cachedRetainerSnapshot;
             }
 
@@ -2682,6 +2722,7 @@ public class CraftingListEditor
         _cachedRetainerSnapshot = RetainerItemQuery.CreateSnapshot(snapshotItemIds);
         _cachedRetainerSnapshotItemIds = snapshotItemIds;
         _cachedRetainerSnapshotAt = DateTime.Now;
+        _invalidatedRetainerSnapshotItemIds.Clear();
         return _cachedRetainerSnapshot;
     }
 
