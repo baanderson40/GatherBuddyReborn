@@ -256,6 +256,7 @@ public partial class VulcanWindow
     {
         M3Widgets.SearchField("##macroSearch", "Search macros", ref _macroSearch, ImGui.GetContentRegionAvail().X - M3Widgets.IconButtonSize - M3.Space1);
         ImGui.SameLine(0, M3.Space1);
+        Ui.CenterInRow(ImGui.GetItemRectSize().Y, M3Widgets.IconButtonSize);
         if (M3Widgets.IconButton("##newImport", FontAwesomeIcon.Plus, "Import a macro", M3ButtonStyle.Tonal))
         {
             _selectedMacroId = null;
@@ -378,7 +379,6 @@ public partial class VulcanWindow
                 {
                     var actionId = macro.Actions[i];
                     var iconId = GetSkillIconId(actionId);
-                    var rowStart = ImGui.GetCursorScreenPos();
                     if (iconId > 0)
                     {
                         M3Widgets.GameIcon(iconId, actionIconSize);
@@ -389,10 +389,9 @@ public partial class VulcanWindow
                     }
 
                     ImGui.SameLine(0, M3.Space2);
-                    ImGui.SetCursorScreenPos(new Vector2(ImGui.GetCursorScreenPos().X, rowStart.Y + (actionIconSize - ImGui.GetTextLineHeight()) * 0.5f));
-                    M3Text.Draw($"{i + 1}.", M3TextStyle.Faint);
+                    Ui.RowText($"{i + 1}.", actionIconSize, M3TextStyle.Faint);
                     ImGui.SameLine(0, M3.Space1);
-                    ImGui.TextUnformatted(((VulcanSkill)actionId).ToString());
+                    Ui.RowText(((VulcanSkill)actionId).ToString(), actionIconSize);
                 }
             }
         }

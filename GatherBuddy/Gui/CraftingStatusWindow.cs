@@ -3,6 +3,7 @@ using Dalamud.Interface;
 using Dalamud.Interface.Windowing;
 using Dalamud.Interface.Utility.Raii;
 using GatherBuddy.Crafting;
+using GatherBuddy.RebornUI;
 using RebornMaterial;
 using System;
 using System.Collections.Generic;
