@@ -80,7 +80,8 @@ public class CraftingMaterialsWindow : M3PanelWindow
         IReadOnlyList<CurrencyOption> CurrencyOptions,
 
         MobDropItemInfo DropInfo,
-        MaterialPurchaseCandidate? PurchaseCandidate = null);
+        MaterialPurchaseCandidate? PurchaseCandidate = null,
+        uint AutoPurchaseCurrencyItemId = 0);
 
     private sealed record MaterialPanel(
         string Id,
@@ -475,7 +476,10 @@ public class CraftingMaterialsWindow : M3PanelWindow
                 var candidate = MaterialPurchasePresentation.Classify(entry.ItemId, demand,
                     !entry.IsPrecraft && acquisitionItems.ContainsKey(entry.ItemId), context.Policy, offerSnapshot.Status,
                     offersByItem[entry.ItemId], currentSeals);
-                entry = entry with { PurchaseCandidate = candidate };
+                var autoPurchaseCurrency = candidate.IsCandidate
+                    ? ResolveAutoPurchaseCurrency(entry.CurrencyOptions, offersByItem[entry.ItemId], context.Policy, currentSeals)
+                    : 0;
+                entry = entry with { PurchaseCandidate = candidate, AutoPurchaseCurrencyItemId = autoPurchaseCurrency };
                 if (entry.EffectiveAvailable < entry.Needed)
                 {
                     _cachedTotalMissing++;
@@ -734,6 +738,12 @@ public class CraftingMaterialsWindow : M3PanelWindow
             return selected;
         }
 
+        if (entry.AutoPurchaseCurrencyItemId != 0
+         && IndexOfCurrencyOption(entry.CurrencyOptions, entry.AutoPurchaseCurrencyItemId) >= 0)
+        {
+            return entry.AutoPurchaseCurrencyItemId;
+        }
+
         if (preferBicolor)
         {
             for (var i = 0; i < entry.CurrencyOptions.Count; i++)
@@ -753,6 +763,45 @@ public class CraftingMaterialsWindow : M3PanelWindow
             }
         }
         return entry.CurrencyOptions[0].CurrencyItemId;
+    }
+
+    private static uint ResolveAutoPurchaseCurrency(IReadOnlyList<CurrencyOption> options,
+        IEnumerable<AcquisitionVendorOffer> offers, ResolvedVendorPurchasePolicy policy, uint currentSeals)
+    {
+        var eligibleCurrencyIds = new HashSet<uint>();
+        foreach (var offer in offers)
+        {
+            if (!MaterialAcquisitionPlanner.IsValid(offer) || offer.Access == VendorOfferAccess.Inaccessible
+             || offer.Costs.Count != 1)
+            {
+                // Currency totals can represent a single-currency offer only.
+                continue;
+            }
+
+            var cost = offer.Costs[0];
+            if (!policy.Allows(cost.CurrencyGroup, cost.CurrencyItemId)
+             || cost.CurrencyGroup == VendorCurrencyGroup.GrandCompanySeals
+                 && !GrandCompanySealPolicy.IsCurrentCurrency(cost.CurrencyItemId, currentSeals)
+             || policy.GetMaximumSpendPerRun(cost.CurrencyItemId) == 0)
+            {
+                continue;
+            }
+
+            eligibleCurrencyIds.Add(cost.CurrencyItemId);
+        }
+
+        foreach (var group in policy.CurrencyPriority)
+        {
+            foreach (var option in options)
+            {
+                if (option.Group == group && eligibleCurrencyIds.Contains(option.CurrencyItemId))
+                {
+                    return option.CurrencyItemId;
+                }
+            }
+        }
+
+        return 0;
     }
 
     private static void SortEntries(List<MaterialEntry> entries)
