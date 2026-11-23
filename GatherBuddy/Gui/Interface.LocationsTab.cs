@@ -149,7 +149,10 @@ public partial class Interface
         private sealed class ItemColumn : ColumnString<ILocation>
         {
             public ItemColumn()
-                => Flags |= ImGuiTableColumnFlags.WidthStretch;
+            {
+                Flags &= ~ImGuiTableColumnFlags.WidthStretch;
+                Flags |= ImGuiTableColumnFlags.WidthFixed;
+            }
 
             public override string ToName(ILocation location)
             {
@@ -163,10 +166,13 @@ public partial class Interface
             }
 
             public override float Width
-                => 0;
+                => 420f * ImGuiHelpers.GlobalScale;
 
             public override void DrawColumn(ILocation item, int _)
-                => Ui.RowText(ToName(item), M3Widgets.ComboHeight);
+            {
+                Ui.RowText(ToName(item), M3Widgets.ComboHeight);
+                M3Tooltip.Hovered(ToName(item));
+            }
         }
 
         private sealed class AetheryteColumn : ColumnString<ILocation>
