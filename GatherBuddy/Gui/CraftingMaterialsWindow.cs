@@ -41,6 +41,7 @@ public class CraftingMaterialsWindow : M3PanelWindow
     private static readonly Vector4 HueDrop = new(1.00f, 0.45f, 0.45f, 1f);
     private static readonly Vector4 HueShop = new(0.80f, 0.55f, 1.00f, 1f);
     private static readonly Vector4 HueVendor = new(1.00f, 0.85f, 0.20f, 1f);
+    private static readonly Vector4 HueOther = new(0.65f, 0.75f, 0.85f, 1f);
     private static readonly Vector4 HueCraft = new(0.35f, 0.90f, 0.90f, 1f);
     private static readonly Vector4 HueMapMarker = new(0.45f, 0.80f, 1.00f, 1f);
     private static readonly Vector4 HueTeleport = new(0.60f, 0.95f, 0.60f, 1f);
@@ -468,6 +469,7 @@ public class CraftingMaterialsWindow : M3PanelWindow
             var dropList = new List<MaterialEntry>();
             var shopList = new List<MaterialEntry>();
             var vendorList = new List<MaterialEntry>();
+            var otherList = new List<MaterialEntry>();
             List<MaterialEntry>? craftList = _matsShowPrecrafts ? [] : null;
 
             void AddEntry(MaterialEntry entry)
@@ -512,8 +514,10 @@ public class CraftingMaterialsWindow : M3PanelWindow
                         craftList.Add(entry);
                         break;
                     case MaterialSource.GilVendor:
-                    case MaterialSource.Other:
                         vendorList.Add(entry);
+                        break;
+                    case MaterialSource.Other:
+                        otherList.Add(entry);
                         break;
                 }
             }
@@ -541,6 +545,7 @@ public class CraftingMaterialsWindow : M3PanelWindow
             SortEntries(dropList);
             SortEntries(shopList);
             SortEntries(vendorList);
+            SortEntries(otherList);
             if (craftList != null)
             {
                 SortEntries(craftList);
@@ -570,6 +575,12 @@ public class CraftingMaterialsWindow : M3PanelWindow
             {
                 _cachedPanels.Add(new MaterialPanel("##vendor", "Vendor", FontAwesomeIcon.Store, HueVendor, vendorList, CountMissing(vendorList),
                     nonCraftRetainerMode, BuildVendorBuyListTargets(vendorList), ShowCurrencyTotals: true));
+            }
+
+            if (otherList.Count > 0)
+            {
+                _cachedPanels.Add(new MaterialPanel("##other", "Other Sources", FontAwesomeIcon.QuestionCircle, HueOther, otherList, CountMissing(otherList),
+                    nonCraftRetainerMode, null));
             }
 
             if (craftList is { Count: > 0 })
