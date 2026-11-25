@@ -1,6 +1,7 @@
 using System.Reflection;
+using CSCore;
+using CSCore.Codecs.WAV;
 using GatherBuddy.AutoGather.Helpers;
-using NAudio.Wave;
 using Xunit;
 
 namespace GatherBuddy.Compatibility.Tests;
@@ -28,15 +29,15 @@ public sealed class SoundWarningTests
         }
         stream.Position = 0;
         using var reader = new WaveFileReader(stream);
-        var samples = (ISampleProvider)typeof(SoundHelper)
+        var samples = (ISampleSource)typeof(SoundHelper)
             .GetMethod("CreateSamples", BindingFlags.Static | BindingFlags.NonPublic)!
             .Invoke(null, [reader, volume])!;
         Assert.Equal(1, samples.WaveFormat.Channels);
-        Span<float> output = stackalloc float[2];
-        Assert.Equal(2, samples.Read(output));
+        var output = new float[2];
+        Assert.Equal(2, samples.Read(output, 0, output.Length));
         Assert.Equal(expected, output[0], 5);
         Assert.Equal(-expected, output[1], 5);
-        Assert.Equal(0, samples.Read(output));
+        Assert.Equal(0, samples.Read(output, 0, output.Length));
     }
 
     [Fact]

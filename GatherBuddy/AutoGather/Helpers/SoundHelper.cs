@@ -1,111 +1,73 @@
+using CSCore;
+using CSCore.Codecs.WAV;
+using CSCore.SoundOut;
 using System;
 using System.IO;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
-using GatherBuddy.Utility;
-using NAudio.CoreAudioApi;
-using NAudio.Wave;
-using NAudio.Wave.SampleProviders;
+using CSCore.Streams;
 
 namespace GatherBuddy.AutoGather.Helpers;
 
 public sealed class SoundHelper : IDisposable
 {
     private const string SoundResource = "GatherBuddy.CustomInfo.honk-sound.wav";
-    private readonly object _lock = new();
-    private readonly CancellationTokenSource _lifetime = new();
-    private readonly DiagnosticThrottle<string> _diagnostics = new(TimeSpan.FromSeconds(30), 8);
-    private bool _disposed;
+    private int _disposed;
 
     public void StartHonkSoundTask(int repeatCount)
     {
-        lock (_lock)
-        {
-            if (_disposed || repeatCount <= 0) return;
-            StartPlayback(repeatCount, _lifetime.Token);
-        }
+        if (repeatCount <= 0 || Volatile.Read(ref _disposed) != 0) return;
+        _ = Task.Run(() => PlayHonkSound(repeatCount));
     }
 
-    private void StartPlayback(int repeatCount, CancellationToken token)
-    {
-        var volume = System.Math.Clamp(GatherBuddy.Config.AutoGatherConfig.SoundPlaybackVolume, 0, 100) / 100f;
-        // All failures are observed inside the task; never block the framework thread.
-        _ = Task.Run(() => PlayHonkSoundAsync(repeatCount, volume, token));
-    }
-
-    private async Task PlayHonkSoundAsync(int repeatCount, float volume, CancellationToken token)
+    private static void PlayHonkSound(int repeatCount)
     {
         try
         {
-            using var resource = Assembly.GetExecutingAssembly().GetManifestResourceStream(SoundResource)
-                ?? throw new FileNotFoundException($"Embedded resource {SoundResource} not found.");
-            using var buffer = new MemoryStream();
-            await resource.CopyToAsync(buffer, token).ConfigureAwait(false);
-            var soundData = buffer.ToArray();
+            var assembly = Assembly.GetExecutingAssembly();
+            using var resourceStream = assembly.GetManifestResourceStream(SoundResource);
+            if (resourceStream == null)
+            {
+                throw new FileNotFoundException($"Embedded resource {SoundResource} not found.");
+            }
+
+            using var ms = new MemoryStream();
+            resourceStream.CopyTo(ms);
+            var soundData = ms.ToArray(); // Keep a copy of the sound's bytes
 
             for (var i = 0; i < repeatCount; i++)
             {
-                token.ThrowIfCancellationRequested();
-                using var enumerator = new MMDeviceEnumerator();
-                if (!enumerator.TryGetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia, out var device))
+                using var audioStream = new MemoryStream(soundData); // Fresh each time
+                using var reader = new WaveFileReader(audioStream);
+                using var soundSource = CreateSamples(reader, GatherBuddy.Config.AutoGatherConfig.SoundPlaybackVolume / 100f);
+                using var soundOut = new WasapiOut();
+                soundOut.Initialize(soundSource.ToWaveSource());
+
+                soundOut.Play();
+                while (soundOut.PlaybackState == PlaybackState.Playing)
                 {
-                    if (_diagnostics.TryLog("endpoint", "missing", out var suppressed))
-                        GatherBuddy.Log.Warning("Honk skipped: no default audio output device." + DiagnosticThrottle.Suffix(suppressed));
-                    return; // Retry endpoint discovery on the next request, not every frame.
+                    Task.Delay(10).Wait();
                 }
-                using (device)
-                using (var stream = new MemoryStream(soundData, false))
-                using (var reader = new WaveFileReader(stream))
-                using (var output = new WasapiPlayerBuilder().WithDevice(device).WithSharedMode().WithEventSync().WithLatency(100).Build())
-                {
-                    var samples = CreateSamples(reader, volume);
-                    var stopped = new TaskCompletionSource<Exception?>(TaskCreationOptions.RunContinuationsAsynchronously);
-                    output.PlaybackStopped += (_, args) =>
-                    {
-                        stopped.TrySetResult(args.Exception);
-                    };
-                    output.Init(samples.ToWaveProvider());
-                    token.ThrowIfCancellationRequested();
-                    output.Play();
-                    try
-                    {
-                        var error = await stopped.Task.WaitAsync(reader.TotalTime + TimeSpan.FromSeconds(5), token).ConfigureAwait(false);
-                        if (error != null) throw new IOException("Honk playback failed.", error);
-                        _diagnostics.Forget("endpoint");
-                    }
-                    finally
-                    {
-                        output.Stop();
-                    }
-                }
-                await Task.Delay(200, token).ConfigureAwait(false);
+
+                Task.Delay(200).Wait();
             }
         }
-        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            if (!token.IsCancellationRequested && _diagnostics.TryLog("playback", $"{ex.GetType().FullName}:{ex.HResult}", out var suppressed))
-                GatherBuddy.Log.Error($"Error during honk: {ex}" + DiagnosticThrottle.Suffix(suppressed));
+            GatherBuddy.Log.Error($"Error during honk: {ex}");
         }
     }
 
-    private static ISampleProvider CreateSamples(WaveFileReader reader, float volume)
+    private static ISampleSource CreateSamples(WaveFileReader reader, float volume)
     {
-        var samples = reader.ToSampleProvider();
-        if (samples.WaveFormat.Channels == 2) samples = samples.ToMono();
-        // Scale this stream only; never change Windows master/session volume.
-        return new VolumeSampleProvider(samples) { Volume = System.Math.Clamp(volume, 0, 1) };
+        var samples = reader.ToSampleSource().ToMono();
+        return new VolumeSource(samples) { Volume = Math.Clamp(volume, 0f, 1f) };
     }
+
+    private static void PlaySound(Stream stream)
+    { }
 
     public void Dispose()
-    {
-        lock (_lock)
-        {
-            if (_disposed) return;
-            _disposed = true;
-            _lifetime.Cancel();
-            _lifetime.Dispose();
-        }
-    }
+        => Interlocked.Exchange(ref _disposed, 1);
 }
