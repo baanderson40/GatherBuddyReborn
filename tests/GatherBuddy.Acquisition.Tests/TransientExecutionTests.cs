@@ -156,6 +156,64 @@ public class TransientExecutionTests
     }
 
     [Fact]
+    public void PausedZeroSubmissionReceiptCleansUpAndResumesAgainstFreshInventory()
+    {
+        var port = new FakePort();
+        var execution = Start(port, [Allocation(quantity: 5)], target: 5);
+        execution.Tick(Now);
+        execution.Pause();
+
+        Settle(execution, port, quantity: 0, spend: 0, interrupted: true, submitted: 0);
+
+        Assert.Equal(TransientVendorState.Paused, execution.State);
+        Assert.Null(execution.LastResult);
+        Assert.False(port.Released);
+
+        port.Inventory[100] = 3;
+        execution.Resume();
+        execution.Tick(Now.AddSeconds(1));
+
+        Assert.Equal(2u, port.Requests[^1].Quantity);
+        Assert.Equal(TransientVendorState.Purchasing, execution.State);
+    }
+
+    [Fact]
+    public void PausedZeroSubmissionKeepsPreviouslyConfirmedSpendAgainstRunCap()
+    {
+        var port = new FakePort();
+        var first = Allocation(quantity: 5, item: 100, cost: 10);
+        var second = Allocation(quantity: 5, item: 200, cost: 10);
+        var execution = Start(port, [first, second], target: 5, cap: 60);
+        execution.Tick(Now);
+        Settle(execution, port, quantity: 5, spend: 50, submitted: 5);
+
+        execution.Tick(Now.AddSeconds(1));
+        Assert.Equal(10ul, port.Requests[^1].Budget.MaximumSpend);
+        execution.Pause();
+        Settle(execution, port, quantity: 0, spend: 0, interrupted: true, submitted: 0);
+
+        Assert.Equal(TransientVendorState.Paused, execution.State);
+        execution.Resume();
+        execution.Tick(Now.AddSeconds(2));
+
+        Assert.Equal(10ul, port.Requests[^1].Budget.MaximumSpend);
+        Assert.Equal(200u, port.Requests[^1].Allocation.ItemId);
+    }
+
+    [Fact]
+    public void InterruptedZeroSubmissionWithoutPauseRemainsUncertain()
+    {
+        var port = new FakePort();
+        var execution = Start(port, [Allocation(quantity: 1)], target: 1);
+        execution.Tick(Now);
+
+        Settle(execution, port, quantity: 0, spend: 0, interrupted: true, submitted: 0);
+
+        Assert.Equal(MaterialAcquisitionCompletion.Failed, execution.LastResult!.Completion);
+        Assert.False(execution.LastResult.AccountingCertain);
+    }
+
+    [Fact]
     public void AcquiredOutputWithoutSubmittedQuantityRemainsUncertain()
     {
         var port = new FakePort();

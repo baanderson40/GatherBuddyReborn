@@ -151,8 +151,9 @@ public sealed class TransientVendorExecution
                     ? new Dictionary<uint, ulong> { [allocation.CurrencyItemId] = receipt.ConfirmedSpend.Value } : null);
                 var submitted = receipt.SubmittedOutputQuantity ?? _activeRequested;
                 var zeroSubmissionCertain = submitted == 0 && receipt.AcquiredQuantity == 0
-                    && !receipt.Fatal && !receipt.Interrupted
-                    && (receipt.ConfirmedSpend ?? 0) == 0
+                    && !receipt.Fatal
+                    && (!receipt.Interrupted || ((_pause || _cancel) && receipt.SubmittedOutputQuantity == 0))
+                    && (!receipt.Interrupted || receipt.ConfirmedSpend == 0)
                     && (actualCosts == null || actualCosts.Values.All(amount => amount == 0));
                 var receiptCertain = zeroSubmissionCertain || (submitted > 0 && submitted <= _activeRequested
                     && submitted % allocation.OutputQuantityPerTransaction == 0
@@ -162,8 +163,10 @@ public sealed class TransientVendorExecution
                     && allocation.Costs.All(c => actualCosts.GetValueOrDefault(c.CurrencyItemId) == checked(c.Amount * transactions)));
                 if (!receiptCertain)
                 {
-                    var receiptIssue = submitted == 0 ? "acquired output without verified submission quantity"
+                    var receiptIssue = submitted == 0 && receipt.AcquiredQuantity > 0 ? "acquired output without verified submission quantity"
                         : submitted > _activeRequested ? "submitted output exceeds active request"
+                        : receipt.Interrupted && !_pause && !_cancel ? "interrupted receipt without an active pause or cancellation"
+                        : submitted == 0 ? "zero submission lacks verified zero spend and output"
                         : submitted % allocation.OutputQuantityPerTransaction != 0 ? "submitted output is not a whole transaction"
                         : receipt.AcquiredQuantity > submitted ? "acquired output exceeds submitted output"
                         : receipt.AcquiredQuantity % allocation.OutputQuantityPerTransaction != 0 ? "acquired output is not a whole transaction"
@@ -186,7 +189,8 @@ public sealed class TransientVendorExecution
                 }
                 _fatal |= receipt.Fatal || _uncertain;
                 _allocationMessage = receipt.Message;
-                _skipAllocation = (zeroSubmissionCertain || receipt.AcquiredQuantity < submitted) && !receipt.Interrupted;
+                _skipAllocation = !_pause && !_cancel
+                    && (zeroSubmissionCertain || receipt.AcquiredQuantity < submitted) && !receipt.Interrupted;
                 if (_skipAllocation && receipt.AcquiredQuantity == 0 && !_fatal && !_cancel && !receipt.Interrupted && !receipt.PreventVendorFallback)
                     TryNextAuthorizedVendor();
                 Record("Receipt", $"allocation={allocation.AllocationId}; acquired={receipt.AcquiredQuantity}; confirmedSpend={receipt.ConfirmedSpend?.ToString() ?? "unknown"}; certain={!_uncertain}; message={receipt.Message}");
