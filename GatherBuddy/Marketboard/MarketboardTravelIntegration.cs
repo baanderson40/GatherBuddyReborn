@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Linq;
 using Dalamud.Game.ClientState.Conditions;
+using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using GatherBuddy.Crafting;
 using GatherBuddy.Automation;
@@ -120,6 +121,36 @@ public sealed class MarketboardTravelIntegration : IMarketTravelPort, IDisposabl
     }
     public bool ChangeWorld(uint worldId) => Dalamud.PluginInterface.GetIpcSubscriber<uint, bool>("Lifestream.ChangeWorldById").InvokeFunc(worldId);
     public void GoToMarketboard() => Dalamud.PluginInterface.GetIpcSubscriber<string, object>("Lifestream.ExecuteCommand").InvokeAction("mb");
+
+    public unsafe bool TrySearchItem(MarketTravelDestination destination, out string reason)
+    {
+        reason = string.Empty;
+        if (!GenericHelpers.TryGetAddonByName<AddonItemSearch>("ItemSearch", out var addon) || addon == null
+            || !addon->IsVisible || addon->SearchTextInput == null)
+        {
+            reason = "Marketboard search input is unavailable.";
+            return false;
+        }
+
+        var item = Dalamud.GameData.GetExcelSheet<Item>()?.GetRowOrDefault(destination.ItemId);
+        if (item == null)
+        {
+            reason = $"Item {destination.ItemId} could not be resolved.";
+            return false;
+        }
+
+        var itemName = item.Value.Name.ExtractText();
+        if (string.IsNullOrWhiteSpace(itemName))
+        {
+            reason = $"Item {destination.ItemId} has no localized name.";
+            return false;
+        }
+
+        addon->SearchTextInput->SetText(itemName);
+        addon->RunSearch();
+        return true;
+    }
+
     public bool Start(MarketTravelDestination destination, out string reason) => Coordinator.Start(destination, _clock.Elapsed, out reason);
     public void StopFollowup() => Coordinator.StopFollowup(_clock.Elapsed);
     public bool Recover() => Coordinator.Recover(_clock.Elapsed);

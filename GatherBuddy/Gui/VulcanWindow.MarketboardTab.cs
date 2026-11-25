@@ -320,8 +320,6 @@ public partial class VulcanWindow
                 if (!allowed) ImGui.TextWrapped(reason);
                 if (ImGui.MenuItem("Copy world name")) ImGui.SetClipboardText(_mbTravelMenuWorld);
                 ImGui.Separator();
-                ImGui.TextDisabled("Starts immediately · Ul’dah marketboard");
-                ImGui.TextDisabled("May cost teleport gil · no purchase or return");
                 var currentDc = Dalamud.Objects.LocalPlayer?.CurrentWorld.ValueNullable?.DataCenter.ValueNullable?.Name.ExtractText();
                 if (_mbTravelMenuDestination is { } target && currentDc != target.DataCenter)
                     ImGui.TextDisabled("Cross-DC: logout/login and queues may apply");

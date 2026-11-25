@@ -20,9 +20,11 @@ public class MarketboardTravelTests
                 ? "AutoRetainer processing" : null);
             set => _conflictReason = value;
         }
-        public bool Available = true, Eligible = true, Accepted = true, ThrowChange, ThrowMarket;
-        public int Changes, Markets;
+        public bool Available = true, Eligible = true, Accepted = true, ThrowChange, ThrowMarket, SearchAccepted = true;
+        public int Changes, Markets, Searches;
         public uint RequestedWorld;
+        public MarketTravelDestination? SearchedDestination;
+        public string SearchFailure = "Search unavailable";
         public List<string> Logs = new();
         public List<(string Message, bool Error)> Notices = new();
         public void VerifyAvailable() { if (!Available) throw new InvalidOperationException("IPC missing"); }
@@ -38,6 +40,13 @@ public class MarketboardTravelTests
         {
             Markets++;
             if (ThrowMarket) throw new InvalidOperationException("Shortcut IPC failed");
+        }
+        public bool TrySearchItem(MarketTravelDestination destination, out string reason)
+        {
+            Searches++;
+            SearchedDestination = destination;
+            reason = SearchAccepted ? string.Empty : SearchFailure;
+            return SearchAccepted;
         }
         public void Log(string message) => Logs.Add(message);
         public void Notify(string message, bool error) => Notices.Add((message, error));
@@ -166,6 +175,8 @@ public class MarketboardTravelTests
         Assert.Equal(MarketTravelState.Complete, coordinator.State);
         Assert.False(coordinator.BlocksAutomation);
         Assert.Equal(0, port.Changes + port.Markets);
+        Assert.Equal(1, port.Searches);
+        Assert.Equal(Target, port.SearchedDestination);
     }
 
     [Fact]
@@ -196,8 +207,30 @@ public class MarketboardTravelTests
         Assert.Equal(1, port.Changes);
         Assert.Equal(1, port.Markets);
         Assert.False(coordinator.BlocksAutomation);
+        Assert.Equal(1, port.Searches);
+        Assert.Equal(Target, port.SearchedDestination);
         Assert.Single(port.Notices);
         Assert.False(port.Notices[0].Error);
+    }
+
+    [Fact]
+    public void SearchFailureDoesNotKeepTravelAutomationBlocked()
+    {
+        var port = new Port
+        {
+            Observation = new(42, 63, 40, true, false, true),
+            SearchAccepted = false,
+        };
+        var coordinator = new MarketboardTravelCoordinator(port);
+        Assert.True(coordinator.Start(Target, At(0), out _));
+
+        coordinator.Tick(At(0));
+        coordinator.Tick(At(0.5));
+
+        Assert.Equal(MarketTravelState.Complete, coordinator.State);
+        Assert.False(coordinator.BlocksAutomation);
+        Assert.Equal(1, port.Searches);
+        Assert.Contains("Could not start item search", coordinator.Status, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -23,6 +23,7 @@ public interface IMarketTravelPort
     bool CanVisit(MarketTravelDestination destination);
     bool ChangeWorld(uint worldId);
     void GoToMarketboard();
+    bool TrySearchItem(MarketTravelDestination destination, out string reason);
     void Log(string message);
     void Notify(string message, bool error);
 }
@@ -162,7 +163,7 @@ public sealed class MarketboardTravelCoordinator
             if (State == MarketTravelState.WaitingForReadiness)
             {
                 if (!IsStable(now)) return;
-                if (observed.MarketboardOpen) { Finish("Marketboard already open on destination world."); return; }
+                if (observed.MarketboardOpen) { SearchAndFinish("Marketboard already open on destination world."); return; }
                 _submitted = true;
                 _sawBusy = false;
                 _readySince = null;
@@ -175,7 +176,7 @@ public sealed class MarketboardTravelCoordinator
             if (State == MarketTravelState.GoingToMarketboard)
             {
                 _sawBusy |= observed.Busy;
-                if (observed.MarketboardOpen && IsStable(now)) Finish("Arrived; marketboard open on requested world.");
+                if (observed.MarketboardOpen && IsStable(now)) SearchAndFinish("Arrived; marketboard open on requested world.");
                 else if (!_sawBusy && !observed.MarketboardOpen && now >= _ackDeadline)
                     throw new TimeoutException("Lifestream marketboard shortcut did not start or open the marketboard.");
             }
@@ -201,6 +202,20 @@ public sealed class MarketboardTravelCoordinator
     }
 
     private bool IsStable(TimeSpan now) => _readySince is { } since && now - since >= TimeSpan.FromMilliseconds(500);
+    private void SearchAndFinish(string arrivalMessage)
+    {
+        try
+        {
+            Finish(_port.TrySearchItem(Destination!, out var reason)
+                ? $"{arrivalMessage} Searching for {Destination!.ItemName}."
+                : $"{arrivalMessage} Could not start item search: {reason}");
+        }
+        catch (Exception ex)
+        {
+            Finish($"{arrivalMessage} Could not start item search; search manually. {ex.GetBaseException().Message}");
+        }
+    }
+
     private void Finish(string message)
     {
         BlocksAutomation = false;
