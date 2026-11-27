@@ -21,6 +21,7 @@ public enum AethernetSourceAction { Approach, Stop, Wait, CorrectiveApproach, Re
 public sealed class AethernetSourceApproach
 {
     public const uint SolutionNineTerritoryId = 1185;
+    public const float ShortRepathInset = 1f;
     public static readonly TimeSpan RecognitionGrace = TimeSpan.FromSeconds(2);
     public static readonly TimeSpan RecognitionTimeout = TimeSpan.FromSeconds(10);
     public static readonly TimeSpan ApproachTimeout = TimeSpan.FromSeconds(60);
@@ -29,7 +30,20 @@ public sealed class AethernetSourceApproach
     private DateTime? _arrived;
     private bool _stopped;
     private bool _corrected;
+    private bool _shortRepathAttempted;
     private bool _finished;
+
+    public static bool TryGetShortRepathDistance(AethernetSourceRange range, float minimumStandOff, out float distance)
+    {
+        distance = 0;
+        if (!range.IsValid || !float.IsFinite(minimumStandOff) || minimumStandOff < 0) return false;
+        var minimumDistance = range.Radius + minimumStandOff;
+        var targetDistance = range.Limit - ShortRepathInset;
+        if (!float.IsFinite(targetDistance) || targetDistance <= minimumDistance || targetDistance >= range.Limit)
+            return false;
+        distance = targetDistance;
+        return true;
+    }
 
     public static bool CanUseSolutionNineInteractionFallback(uint territoryId, bool housing,
         bool approachPreparationFailed, bool alreadyAttempted)
@@ -39,7 +53,7 @@ public sealed class AethernetSourceApproach
     {
         _source = null;
         _started = _arrived = null;
-        _stopped = _corrected = _finished = false;
+        _stopped = _corrected = _shortRepathAttempted = _finished = false;
     }
 
     public AethernetSourceAction Evaluate(DateTime now, uint territory, ulong sourceId,
@@ -53,7 +67,7 @@ public sealed class AethernetSourceApproach
             if (_source is { } old && old.Territory != territory) Reset();
             _source = identity;
             _arrived = null;
-            _stopped = _corrected = false;
+            _stopped = _corrected = _shortRepathAttempted = false;
         }
         _started ??= now;
         if (now - _started.Value >= ApproachTimeout) return Fail();
@@ -74,6 +88,12 @@ public sealed class AethernetSourceApproach
 
     public void MarkStopped() => _stopped = true;
     public void MarkCorrectiveApproachStarted() => _corrected = true;
+    public bool TryBeginShortRepath()
+    {
+        if (_shortRepathAttempted) return false;
+        _shortRepathAttempted = true;
+        return true;
+    }
     // Accepted teleport or cancellation is terminal until a new navigation explicitly resets this tracker.
     public void Finish() => _finished = true;
     private AethernetSourceAction Fail() { _finished = true; return AethernetSourceAction.Failed; }

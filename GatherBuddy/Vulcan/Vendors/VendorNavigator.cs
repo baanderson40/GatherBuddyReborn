@@ -622,6 +622,9 @@ public class VendorNavigator
     private CancellationTokenSource? _sourcePathCancellation;
     private ulong _sourcePathObjectId;
     private ulong _sourceCandidateObjectId;
+    private bool _sourcePathIsShortRepath;
+    private bool _sourceMovementPending;
+    private bool _sourceMovementWasShortRepath;
     private List<Vector3> _sourceApproachCandidates = [];
     private int _sourceApproachCandidateIndex;
     private int _sourceProjectionFailureCount;
@@ -2197,6 +2200,7 @@ public class VendorNavigator
         _sourceCandidateObjectId = 0;
         _sourceApproachCandidates.Clear();
         _sourceApproachCandidateIndex = 0;
+        _sourcePathIsShortRepath = _sourceMovementPending = _sourceMovementWasShortRepath = false;
         _sourceProjectionFailureCount = 0;
         _lastSourceProjectionAttemptTime = DateTime.MinValue;
         _solutionNineAethernetFallbackAvailable = false;
@@ -2230,6 +2234,7 @@ public class VendorNavigator
             _sourceApproachCandidateIndex = 0;
             _sourceProjectionFailureCount = 0;
             _lastSourceProjectionAttemptTime = DateTime.MinValue;
+            _sourcePathIsShortRepath = _sourceMovementPending = _sourceMovementWasShortRepath = false;
         }
         if (_sourcePathObjectId != 0 && _sourcePathObjectId != sourceId) StopPathing();
         var action = _sourceApproach.Evaluate(now, Dalamud.ClientState.TerritoryType, sourceId, range, recognized);
@@ -2270,41 +2275,62 @@ public class VendorNavigator
             if (task.IsCompletedSuccessfully && task.Result.Count > 0
                 && IsAethernetApproachPoint(task.Result[^1], source, range))
             {
-                GatherBuddy.Log.Debug($"[VendorNavigator] Aethernet source path accepted: source={sourceId}; candidate={_sourceApproachCandidateIndex + 1}/{_sourceApproachCandidates.Count}; endpoint={task.Result[^1]}; pathPoints={task.Result.Count}");
+                var pathKind = _sourcePathIsShortRepath ? "short-repath" : "candidate";
+                GatherBuddy.Log.Debug($"[VendorNavigator] Aethernet source {pathKind} path accepted: source={sourceId}; candidate={_sourceApproachCandidateIndex + 1}/{_sourceApproachCandidates.Count}; endpoint={task.Result[^1]}; pathPoints={task.Result.Count}");
                 VNavmesh.Path.MoveTo(task.Result, false);
+                _sourceMovementPending = true;
+                _sourceMovementWasShortRepath = _sourcePathIsShortRepath;
             }
             else
             {
                 var failure = task.IsCanceled ? "cancelled" : task.IsFaulted
                     ? task.Exception?.GetBaseException().Message ?? "faulted"
                     : task.Result.Count == 0 ? "empty path" : $"endpoint outside interaction window: {task.Result[^1]}";
-                GatherBuddy.Log.Warning($"[VendorNavigator] Aethernet approach candidate failed: source={sourceId}; candidate={_sourceApproachCandidateIndex + 1}/{_sourceApproachCandidates.Count}; failure={failure}");
+                var pathKind = _sourcePathIsShortRepath ? "short-repath" : "candidate";
+                GatherBuddy.Log.Warning($"[VendorNavigator] Aethernet approach {pathKind} failed: source={sourceId}; candidate={_sourceApproachCandidateIndex + 1}/{_sourceApproachCandidates.Count}; failure={failure}");
                 _sourceApproachCandidateIndex++;
-                if (_sourceApproachCandidateIndex >= _sourceApproachCandidates.Count)
-                {
-                    if (AethernetSourceApproach.CanUseSolutionNineInteractionFallback(
-                        Dalamud.ClientState.TerritoryType, housing, approachPreparationFailed: true,
-                        alreadyAttempted: _solutionNineAethernetFallbackAttempted))
-                    {
-                        _solutionNineAethernetFallbackAvailable = true;
-                        GatherBuddy.Log.Warning($"[VendorNavigator] Solution Nine projected approach candidates failed; allowing one interaction-first fallback. failure={failure}");
-                    }
-                    else
-                    {
-                        FailAethernetSource($"No reachable projected ground candidate within interaction range ({failure})");
-                    }
-                }
+                _sourcePathIsShortRepath = false;
+                HandleAethernetApproachCandidatesExhausted(housing, $"No reachable projected ground candidate within interaction range ({failure})");
             }
             return false;
+        }
+        if (_sourceMovementPending)
+        {
+            if (VNavmesh.Path.IsRunning()) return false;
+            _sourceMovementPending = false;
+            var wasShortRepath = _sourceMovementWasShortRepath;
+            _sourceMovementWasShortRepath = false;
+            if (!range.InRange)
+            {
+                if (!wasShortRepath && now - _lastSourceActionTime >= TimeSpan.FromSeconds(1)
+                    && (housing ? CanIssueHousingEntryAction() : CanIssueTeleportRequest())
+                    && _sourceApproach.TryBeginShortRepath())
+                {
+                    if (TryBuildAethernetShortRepathCandidate(source, range, out var shortTarget, out var summary))
+                    {
+                        GatherBuddy.Log.Warning($"[VendorNavigator] Aethernet approach stopped outside interaction range; requesting one short repath: source={sourceId}; horizontal={range.Horizontal:F2}m; limit={range.Limit:F2}m; target={shortTarget}; {summary}");
+                        StartAethernetSourcePath(source, range, housing, shortTarget, shortRepath: true);
+                        return false;
+                    }
+                    GatherBuddy.Log.Warning($"[VendorNavigator] Short aethernet repath target unavailable; moving to another projected candidate: source={sourceId}; {summary}");
+                }
+
+                _sourceApproachCandidateIndex++;
+                HandleAethernetApproachCandidatesExhausted(housing, "Every projected candidate stopped outside the source interaction range");
+                return false;
+            }
+        }
+        if (action == AethernetSourceAction.Ready)
+        {
+            // Do not allow pending movement to survive the teleport handoff.
+            StopPathing();
+            CancelSourcePath();
+            _lastSourceActionTime = now;
+            return true;
         }
         if (action == AethernetSourceAction.Wait) return false;
         if (now - _lastSourceActionTime < TimeSpan.FromSeconds(1)
             || (housing ? !CanIssueHousingEntryAction() : !CanIssueTeleportRequest())) return false;
-        if (action == AethernetSourceAction.Ready)
-        {
-            _lastSourceActionTime = now;
-            return true;
-        }
         if (VNavmesh.Path.IsRunning() || VNavmesh.SimpleMove.PathfindInProgress()) return false;
         if (!VNavmesh.Enabled || !VNavmesh.Nav.IsReady())
         {
@@ -2345,19 +2371,11 @@ public class VendorNavigator
             GatherBuddy.Log.Debug($"[VendorNavigator] Projected aethernet ground candidates ready: source={sourceId}; count={_sourceApproachCandidates.Count}; sourcePosition={source.Position}; player={Dalamud.Objects.LocalPlayer!.Position}");
         if (_sourceApproachCandidateIndex >= _sourceApproachCandidates.Count)
         {
-            FailAethernetSource($"All {_sourceApproachCandidates.Count} projected ground candidates were unreachable");
+            HandleAethernetApproachCandidatesExhausted(housing, $"All {_sourceApproachCandidates.Count} projected ground candidates were unreachable");
             return false;
         }
-        _lastSourceActionTime = now;
-        // Own the cancellable calculation: SimpleMove can otherwise launch movement after cancellation/handoff.
-        _sourcePathCancellation = new CancellationTokenSource();
-        _sourcePathObjectId = sourceId;
         var destination = _sourceApproachCandidates[_sourceApproachCandidateIndex];
-        GatherBuddy.Log.Debug($"[VendorNavigator] Pathfinding to projected aethernet approach: source={sourceId}; candidate={_sourceApproachCandidateIndex + 1}/{_sourceApproachCandidates.Count}; target={destination}; sourcePosition={source.Position}; radius={range.Radius:F2}; interactionLimit={range.Limit:F2}");
-        _sourcePathTask = VNavmesh.Nav.PathfindCancelable(Dalamud.Objects.LocalPlayer!.Position,
-            destination, false, _sourcePathCancellation.Token);
-        _ = _sourcePathTask.ContinueWith(t => { _ = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
-        if (housing) _lastHousingEntryActionTime = now;
+        StartAethernetSourcePath(source, range, housing, destination, shortRepath: false);
         if (action == AethernetSourceAction.CorrectiveApproach) _sourceApproach.MarkCorrectiveApproachStarted();
         return false;
     }
@@ -2457,6 +2475,104 @@ public class VendorNavigator
             && GetHorizontalDistance(point, source.Position) >= source.HitboxRadius + VendorApproachMinimumStandOff
             && MathF.Abs(point.Y - source.Position.Y) <= AethernetApproachVerticalTolerance;
 
+    private void StartAethernetSourcePath(IGameObject source, AethernetSourceRange range, bool housing,
+        Vector3 destination, bool shortRepath)
+    {
+        var now = DateTime.UtcNow;
+        _lastSourceActionTime = now;
+        _sourcePathCancellation = new CancellationTokenSource();
+        _sourcePathObjectId = source.GameObjectId;
+        _sourcePathIsShortRepath = shortRepath;
+        var kind = shortRepath ? "short aethernet repath" : "projected aethernet approach";
+        GatherBuddy.Log.Debug($"[VendorNavigator] Pathfinding to {kind}: source={source.GameObjectId}; candidate={_sourceApproachCandidateIndex + 1}/{_sourceApproachCandidates.Count}; target={destination}; sourcePosition={source.Position}; radius={range.Radius:F2}; interactionLimit={range.Limit:F2}");
+        _sourcePathTask = VNavmesh.Nav.PathfindCancelable(Dalamud.Objects.LocalPlayer!.Position,
+            destination, false, _sourcePathCancellation.Token);
+        _ = _sourcePathTask.ContinueWith(t => { _ = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
+        if (housing) _lastHousingEntryActionTime = now;
+    }
+
+    private bool TryBuildAethernetShortRepathCandidate(IGameObject source, AethernetSourceRange range,
+        out Vector3 destination, out string summary)
+    {
+        destination = default;
+        if (!AethernetSourceApproach.TryGetShortRepathDistance(range, VendorApproachMinimumStandOff, out var targetDistance))
+        {
+            summary = $"no safe interior distance for radius={range.Radius:F2}, limit={range.Limit:F2}";
+            return false;
+        }
+
+        var player = Dalamud.Objects.LocalPlayer?.Position ?? Vector3.Zero;
+        var towardPlayer = new Vector3(player.X - source.Position.X, 0, player.Z - source.Position.Z);
+        if (towardPlayer.LengthSquared() < 0.001f) towardPlayer = Vector3.UnitX;
+        else towardPlayer = Vector3.Normalize(towardPlayer);
+        var proposed = new Vector3(
+            source.Position.X + towardPlayer.X * targetDistance,
+            source.Position.Y,
+            source.Position.Z + towardPlayer.Z * targetDistance);
+        var candidates = new List<(Vector3 Point, string Method)>();
+        var rejections = new List<string>();
+
+        void Consider(Vector3? point, string method)
+        {
+            if (!point.HasValue)
+            {
+                rejections.Add($"{method}=null");
+                return;
+            }
+
+            var projected = point.Value;
+            if (!float.IsFinite(projected.X) || !float.IsFinite(projected.Y) || !float.IsFinite(projected.Z))
+            {
+                rejections.Add($"{method}=non-finite");
+                return;
+            }
+
+            var drift = GetHorizontalDistance(projected, proposed);
+            var fromSource = GetHorizontalDistance(projected, source.Position);
+            if (drift > VendorApproachMaxHorizontalDrift
+                || MathF.Abs(projected.Y - source.Position.Y) > AethernetApproachVerticalTolerance
+                || fromSource < source.HitboxRadius + VendorApproachMinimumStandOff
+                || fromSource > range.Limit - AethernetSourceApproach.ShortRepathInset * 0.5f)
+            {
+                rejections.Add($"{method}=outside safe target window (drift={drift:F2}, sourceDistance={fromSource:F2})");
+                return;
+            }
+
+            candidates.Add((projected, method));
+        }
+
+        try { Consider(VNavmesh.Query.Mesh.PointOnFloor?.Invoke(proposed, true, VendorApproachFloorSearchHeight), "PointOnFloor"); }
+        catch (Exception ex) { rejections.Add($"PointOnFloor threw {ex.GetBaseException().Message}"); }
+        try { Consider(VNavmesh.Query.Mesh.NearestPoint(proposed, VendorApproachMeshSearchRadius, VendorApproachFloorSearchHeight), "NearestPoint"); }
+        catch (Exception ex) { rejections.Add($"NearestPoint threw {ex.GetBaseException().Message}"); }
+
+        if (candidates.Count == 0)
+        {
+            summary = $"target={proposed}; desiredDistance={targetDistance:F2}; {string.Join("; ", rejections)}";
+            return false;
+        }
+
+        var selected = candidates.OrderBy(candidate => Vector3.DistanceSquared(candidate.Point, player)).First();
+        destination = selected.Point;
+        summary = $"method={selected.Method}; projected={destination}; distance={GetHorizontalDistance(destination, source.Position):F2}m";
+        return true;
+    }
+
+    private void HandleAethernetApproachCandidatesExhausted(bool housing, string reason)
+    {
+        if (_sourceApproachCandidateIndex < _sourceApproachCandidates.Count) return;
+        if (AethernetSourceApproach.CanUseSolutionNineInteractionFallback(
+            Dalamud.ClientState.TerritoryType, housing, approachPreparationFailed: true,
+            alreadyAttempted: _solutionNineAethernetFallbackAttempted))
+        {
+            _solutionNineAethernetFallbackAvailable = true;
+            GatherBuddy.Log.Warning($"[VendorNavigator] Solution Nine projected approach candidates failed; allowing one interaction-first fallback. {reason}");
+            return;
+        }
+
+        FailAethernetSource(reason);
+    }
+
     private void CancelSourcePath()
     {
         _sourcePathCancellation?.Cancel();
@@ -2464,6 +2580,7 @@ public class VendorNavigator
         _sourcePathCancellation = null;
         _sourcePathTask = null;
         _sourcePathObjectId = 0;
+        _sourcePathIsShortRepath = _sourceMovementPending = _sourceMovementWasShortRepath = false;
     }
 
     private void FailAethernetSource(string reason)

@@ -16,6 +16,10 @@ namespace GatherBuddy.Gui;
 public class CraftingStatusWindow : M3PanelWindow
 {
     private const string WindowId = "Crafting Status###GatherBuddyCraftingStatus";
+    private static readonly M3WindowAction[] CraftingStatusWindowActions =
+    [
+        new("##craft_vulcan", FontAwesomeIcon.Hammer, "Open Vulcan's crafting lists"),
+    ];
     private static readonly Vector2 DefaultSize = new(360f, 260f);
     private static readonly WindowSizeConstraints DefaultConstraints = new()
     {
@@ -96,7 +100,13 @@ public class CraftingStatusWindow : M3PanelWindow
     }
 
     protected override M3WindowAction[] WindowActions
-        => [];
+        => CraftingStatusWindowActions;
+
+    protected override void OnWindowAction(int index)
+    {
+        if (index == 0)
+            GatherBuddy.VulcanWindow?.RestoreWindow();
+    }
 
     protected override void DrawContents()
     {
@@ -232,9 +242,6 @@ public class CraftingStatusWindow : M3PanelWindow
                     M3Text.Draw(shortage, M3TextStyle.Muted, true);
             }
         }
-
-        if (M3Widgets.Button("##craft_open_vulcan", "Open Vulcan", M3ButtonStyle.Text, FontAwesomeIcon.Hammer))
-            GatherBuddy.VulcanWindow?.RestoreWindow();
     }
 
     private static string GetStatusHeader(CraftingQueueProcessor processor, CraftingQueueProcessor.QueueState state,

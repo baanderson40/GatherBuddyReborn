@@ -36,6 +36,32 @@ public class AethernetSourceApproachTests
         Assert.Equal(remaining, range.Remaining, 4);
     }
 
+    [Fact]
+    public void ShortRepathAimsOneMeterInsideInteractionLimit()
+    {
+        var slightlyOutOfRange = new AethernetSourceRange(2, 5.04f, 0);
+
+        Assert.True(AethernetSourceApproach.TryGetShortRepathDistance(slightlyOutOfRange, 0.35f, out var targetDistance));
+        Assert.Equal(4f, targetDistance);
+        Assert.True(targetDistance < slightlyOutOfRange.Limit);
+        Assert.False(AethernetSourceApproach.TryGetShortRepathDistance(
+            new AethernetSourceRange(float.NaN, 0, 0), 0.35f, out _));
+    }
+
+    [Fact]
+    public void ShortRepathIsAttemptedOnlyOncePerSource()
+    {
+        var approach = new AethernetSourceApproach();
+
+        approach.Evaluate(Now, 128, 1, Near, recognized: false);
+        Assert.True(approach.TryBeginShortRepath());
+        Assert.False(approach.TryBeginShortRepath());
+        approach.Evaluate(Now.AddMilliseconds(1), 128, 1, Near, recognized: false);
+        Assert.False(approach.TryBeginShortRepath());
+        approach.Evaluate(Now.AddSeconds(1), 128, 2, Near, recognized: false);
+        Assert.True(approach.TryBeginShortRepath());
+    }
+
     [Theory]
     [InlineData(-1f, 0f, 0f)]
     [InlineData(float.NaN, 0f, 0f)]
