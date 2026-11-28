@@ -3,6 +3,7 @@ using System.Diagnostics;
 using Dalamud.Game.ClientState.Conditions;
 using GatherBuddy.Helpers;
 using GatherBuddy.Plugin;
+using Lumina.Excel.Sheets;
 
 namespace GatherBuddy.Crafting;
 
@@ -116,8 +117,13 @@ internal sealed class PreCraftHomeTravelHost
             !busy && ready && IsInsidePreCraftDestination());
 
     private static bool IsInsidePreCraftDestination()
-        => PreCraftHomeTravelRules.IsIndoorFastPath(
-            SeFunctions.HousingManager.IsInsideHousing(), Dalamud.ClientState.TerritoryType);
+    {
+        var territoryId = Dalamud.ClientState.TerritoryType;
+        var intendedUse = Dalamud.GameData.GetExcelSheet<TerritoryType>()
+            .GetRowOrDefault(territoryId)?.TerritoryIntendedUse.RowId ?? 0;
+        return PreCraftHomeTravelRules.IsIndoorFastPath(
+            SeFunctions.HousingManager.IsInsideHousing(), territoryId, intendedUse);
+    }
 
     private static bool CapturePlayerReady()
         => CraftingQueueProcessor.CapturePreparationBlockers() == CraftPreparationBlocker.None

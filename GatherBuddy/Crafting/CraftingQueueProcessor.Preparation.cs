@@ -21,7 +21,12 @@ public partial class CraftingQueueProcessor
     {
         if (_paused || _currentState != QueueState.WaitingForRetainerTravel) return;
         if (DeferForInventory(QueueState.WaitingForRetainerTravel)) return;
-        var home = _homeTravel?.Tick(allowStart: true) ?? HomeTravelAdmission.Ready;
+        var nearbyBell = RetainerTaskExecutor.FindNearestBellForNavigation() != null;
+        var useNearbyBell = PreCraftHomeTravelRules.ShouldSkipInitialTravelForNearbyBell(
+            nearbyBell, _homeTravel?.Submitted == true);
+        var home = useNearbyBell
+            ? HomeTravelAdmission.Ready
+            : _homeTravel?.Tick(allowStart: true) ?? HomeTravelAdmission.Ready;
         if (home is HomeTravelAdmission.Failed or HomeTravelAdmission.Cancelled)
         {
             Pause(_homeTravel?.Status ?? "Pre-retainer home travel cancelled.");
@@ -33,6 +38,8 @@ public partial class CraftingQueueProcessor
             RetainerCoordinationStatus = _homeTravel!.Status;
             return;
         }
+        if (useNearbyBell)
+            RetainerCoordinationStatus = "Nearby summoning bell found; navigating locally before restock";
         var blockers = CapturePreparationBlockers();
         var admission = _preparationGate.Tick(_runClock.Elapsed, blockers);
         RetainerCoordinationStatus = "Waiting for stable readiness before retainer bell access";
@@ -50,7 +57,8 @@ public partial class CraftingQueueProcessor
     private void BeginRetainerStage()
     {
         // Bell discovery lives inside these deferred tasks, after arrival and AR admission.
-        if (GatherBuddy.Config.VulcanRetainerBellConfig.AutoNavigateToRetainerBell)
+        if (GatherBuddy.Config.VulcanRetainerBellConfig.AutoNavigateToRetainerBell
+            || RetainerTaskExecutor.FindNearestBellForNavigation() != null)
         {
             GatherBuddy.Log.Debug("[CraftingQueueProcessor] Home travel ready; starting retainer bell navigation");
             _currentState = QueueState.NavigatingToRetainerBell;

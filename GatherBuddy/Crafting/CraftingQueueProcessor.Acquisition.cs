@@ -24,6 +24,10 @@ public partial class CraftingQueueProcessor
     private void BeginMaterialAcquisition()
     {
         if (_executionPlan == null) return;
+        // Retainer departure travel is only for accessing the bell. Crafting gets
+        // a fresh final-return receipt after purchases/gathering settle.
+        _homeTravel?.Cancel();
+        _homeTravel = new PreCraftHomeTravelHost();
         _acquisitionPort ??= new(_executionPlan);
         _acquisition = new(_executionPlan.AcquisitionSessionId, _executionPlan.PurchasePolicy, _acquisitionPort, DateTime.UtcNow);
         _currentState = QueueState.PlanningAcquisition;

@@ -32,6 +32,23 @@ public class PreCraftHomeTravelRulesTests
     public void NativeHousingStillUsesIndoorFastPath()
         => Assert.True(PreCraftHomeTravelRules.IsIndoorFastPath(true, 132));
 
+    [Fact]
+    public void InnIntendedUseIsSafeButPublicLobbyIsNot()
+    {
+        Assert.True(PreCraftHomeTravelRules.IsIndoorFastPath(false, 177,
+            PreCraftHomeTravelRules.InnIntendedUseId));
+        Assert.False(PreCraftHomeTravelRules.IsIndoorFastPath(false, 177, intendedUseId: 0));
+    }
+
+    [Theory]
+    [InlineData(true, false, true)]
+    [InlineData(false, false, false)]
+    [InlineData(true, true, false)]
+    public void NearbyBellSkipsInitialTravelOnlyBeforeTravelSubmission(
+        bool bellAvailable, bool travelSubmitted, bool expected)
+        => Assert.Equal(expected,
+            PreCraftHomeTravelRules.ShouldSkipInitialTravelForNearbyBell(bellAvailable, travelSubmitted));
+
     [Theory]
     [InlineData(false, false)]
     [InlineData(true, true)]
