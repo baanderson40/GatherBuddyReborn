@@ -50,9 +50,6 @@ public class CraftingMaterialsWindow : M3PanelWindow
     private static float MaterialRowIconSpacing
         => VulcanUiScaling.Scaled(4f);
 
-    private static float MaterialRowIconGutter
-        => VulcanUiScaling.Scaled(8f);
-
     private static float MinPanelWidth
         => VulcanUiScaling.Scaled(300f);
 
@@ -82,7 +79,9 @@ public class CraftingMaterialsWindow : M3PanelWindow
 
         MobDropItemInfo DropInfo,
         MaterialPurchaseCandidate? PurchaseCandidate = null,
-        uint AutoPurchaseCurrencyItemId = 0);
+        uint AutoPurchaseCurrencyItemId = 0,
+        MaterialAcquisitionMethod? AcquisitionMethod = null,
+        bool PurchaseDataPending = false);
 
     private sealed record MaterialPanel(
         string Id,
@@ -105,7 +104,6 @@ public class CraftingMaterialsWindow : M3PanelWindow
     private bool _matsKeepFulfilled;
     private string? _windowNameListName;
 
-    private readonly Dictionary<uint, uint> _userSelectedCurrencyByItem = [];
     private bool _cachedMaterialViewValid;
     private bool _cachedHasMaterials;
     private bool _cachedHasVisibleEntries;
@@ -243,8 +241,8 @@ public class CraftingMaterialsWindow : M3PanelWindow
         if (ShouldRebuildMaterialView(showRetainer, purchaseContext))
             RebuildMaterialView(showRetainer, purchaseContext);
 
-        if (purchaseContext.Policy.Enabled && _cachedPurchaseDataPending)
-            M3Widgets.Banner("##materials_purchase_pending", "Automatic offer data is pending or unavailable; normal source grouping is shown until the data is ready.",
+        if (_cachedPurchaseDataPending)
+            M3Widgets.Banner("##materials_purchase_pending", "Supported purchase methods are pending or unavailable; acquisition choices may be incomplete until vendor data is ready.",
                 M3Severity.Warning, FontAwesomeIcon.ExclamationTriangle);
         if (!VendorShopResolver.IsInitialized)
             M3Text.Draw(VendorShopResolver.IsInitializing
@@ -446,16 +444,13 @@ public class CraftingMaterialsWindow : M3PanelWindow
                 : null;
 
             var snapshotItemIds = materials.Keys.Concat(craftMaterials != null ? craftMaterials.Keys : Enumerable.Empty<uint>());
-            if (context.Policy.Enabled)
-            {
-                VendorShopResolver.InitializeAsync();
-                if (VendorShopResolver.IsInitialized) VendorNpcLocationCache.InitializeAsync(VendorShopResolver.AllVendorNpcIds);
-            }
-            var offerSnapshot = context.Policy.Enabled && CanReadPurchaseOffers()
+            VendorShopResolver.InitializeAsync();
+            if (VendorShopResolver.IsInitialized) VendorNpcLocationCache.InitializeAsync(VendorShopResolver.AllVendorNpcIds);
+            var offerSnapshot = CanReadPurchaseOffers()
                 ? IntegratedMaterialOfferAdapter.Capture(materials.Keys)
-                : new VendorAcquisitionOfferSnapshot(context.Policy.Enabled ? VendorOfferDataStatus.Unavailable : VendorOfferDataStatus.Ready,
+                : new VendorAcquisitionOfferSnapshot(VendorOfferDataStatus.Unavailable,
                     Array.Empty<AcquisitionVendorOffer>());
-            _cachedPurchaseDataPending = context.Policy.Enabled && offerSnapshot.Status != VendorOfferDataStatus.Ready;
+            _cachedPurchaseDataPending = offerSnapshot.Status != VendorOfferDataStatus.Ready;
             var offersByItem = offerSnapshot.Offers.ToLookup(o => o.ItemId);
             var acquisitionItems = _editor.GetCachedMaterials();
             var qualityDemands = _editor.GetDisplayIngredientDemands();
@@ -475,13 +470,37 @@ public class CraftingMaterialsWindow : M3PanelWindow
             void AddEntry(MaterialEntry entry)
             {
                 var demand = qualityDemands.GetValueOrDefault(entry.ItemId);
-                var candidate = MaterialPurchasePresentation.Classify(entry.ItemId, demand,
+                var method = !entry.IsPrecraft
+                    ? _editor.GetMaterialAcquisitionMethod(entry.ItemId)
+                    : MaterialAcquisitionMethod.Auto;
+                var itemOffers = offersByItem[entry.ItemId].ToArray();
+                var supportedCurrencyIds = itemOffers.Where(offer => MaterialAcquisitionPlanner.IsValid(offer)
+                        && offer.Costs.All(cost => cost.CurrencyItemId == offer.CurrencyItemId))
+                    .Select(offer => offer.CurrencyItemId).ToHashSet();
+                entry = entry with
+                {
+                    CurrencyOptions = offerSnapshot.Status == VendorOfferDataStatus.Ready
+                        ? entry.CurrencyOptions.Where(option => supportedCurrencyIds.Contains(option.CurrencyItemId)).ToArray()
+                        : Array.Empty<CurrencyOption>(),
+                };
+                var relevantOffers = method.Kind == MaterialAcquisitionMethodKind.Currency
+                    ? itemOffers.Where(offer => offer.Costs.All(cost => cost.CurrencyItemId == method.CurrencyItemId))
+                    : itemOffers;
+                var candidate = method.Kind == MaterialAcquisitionMethodKind.Gather
+                    ? MaterialPurchaseCandidate.None("Gather selected for this material; automatic purchasing is skipped.")
+                    : MaterialPurchasePresentation.Classify(entry.ItemId, demand,
                     !entry.IsPrecraft && acquisitionItems.ContainsKey(entry.ItemId), context.Policy, offerSnapshot.Status,
-                    offersByItem[entry.ItemId], currentSeals);
+                    relevantOffers, currentSeals);
                 var autoPurchaseCurrency = candidate.IsCandidate
-                    ? ResolveAutoPurchaseCurrency(entry.CurrencyOptions, offersByItem[entry.ItemId], context.Policy, currentSeals)
+                    ? ResolveAutoPurchaseCurrency(entry.CurrencyOptions, relevantOffers, context.Policy, currentSeals)
                     : 0;
-                entry = entry with { PurchaseCandidate = candidate, AutoPurchaseCurrencyItemId = autoPurchaseCurrency };
+                entry = entry with
+                {
+                    PurchaseCandidate = candidate,
+                    AutoPurchaseCurrencyItemId = autoPurchaseCurrency,
+                    AcquisitionMethod = method,
+                    PurchaseDataPending = offerSnapshot.Status != VendorOfferDataStatus.Ready,
+                };
                 if (entry.EffectiveAvailable < entry.Needed)
                 {
                     _cachedTotalMissing++;
@@ -642,12 +661,24 @@ public class CraftingMaterialsWindow : M3PanelWindow
         => Dalamud.ClientState.IsLoggedIn && Dalamud.Objects.LocalPlayer != null && GenericHelpers.IsScreenReady();
 
     private static string GetMaterialDisplayName(MaterialEntry entry)
-        => entry.Name + (entry.PurchaseCandidate?.Kind switch
+        => entry.Name;
+
+    private static string Ellipsize(string text, float width)
+    {
+        if (width <= 0f || ImGui.CalcTextSize(text).X <= width) return text;
+        const string ellipsis = "…";
+        var low = 0;
+        var high = text.Length;
+        while (low < high)
         {
-            MaterialPurchaseCandidateKind.Eligible => " [Auto]",
-            MaterialPurchaseCandidateKind.Partial => " [Auto partial]",
-            _ => string.Empty,
-        });
+            var middle = (low + high + 1) / 2;
+            if (ImGui.CalcTextSize(text[..middle] + ellipsis).X <= width)
+                low = middle;
+            else
+                high = middle - 1;
+        }
+        return low == 0 ? ellipsis : text[..low] + ellipsis;
+    }
 
     private bool TryCreateMaterialEntry(ExcelSheet<Item> itemSheet, uint itemId, int needed, bool isPrecraft,
         RetainerItemSnapshot retainerSnapshot, bool countRetainersTowardNeed, out MaterialEntry entry)
@@ -738,40 +769,18 @@ public class CraftingMaterialsWindow : M3PanelWindow
 
     private uint GetSelectedCurrencyItemId(MaterialEntry entry, bool preferBicolor)
     {
-        if (entry.CurrencyOptions.Count == 0)
-        {
-            return 0;
-        }
-
-        if (_userSelectedCurrencyByItem.TryGetValue(entry.ItemId, out var selected)
-         && IndexOfCurrencyOption(entry.CurrencyOptions, selected) >= 0)
-        {
-            return selected;
-        }
-
+        if (entry.CurrencyOptions.Count == 0) return 0;
+        var method = entry.AcquisitionMethod;
+        if (method?.Kind == MaterialAcquisitionMethodKind.Currency
+            && IndexOfCurrencyOption(entry.CurrencyOptions, method.CurrencyItemId) >= 0)
+            return method.CurrencyItemId;
         if (entry.AutoPurchaseCurrencyItemId != 0
-         && IndexOfCurrencyOption(entry.CurrencyOptions, entry.AutoPurchaseCurrencyItemId) >= 0)
-        {
+            && IndexOfCurrencyOption(entry.CurrencyOptions, entry.AutoPurchaseCurrencyItemId) >= 0)
             return entry.AutoPurchaseCurrencyItemId;
-        }
-
         if (preferBicolor)
         {
-            for (var i = 0; i < entry.CurrencyOptions.Count; i++)
-            {
-                var option = entry.CurrencyOptions[i];
-                if (option.Group != VendorCurrencyGroup.BicolorGemstones)
-                {
-                    continue;
-                }
-
-                if (option.CurrencyItemId != 0)
-                {
-                    return option.CurrencyItemId;
-                }
-
-                break;
-            }
+            var bicolor = entry.CurrencyOptions.FirstOrDefault(option => option.Group == VendorCurrencyGroup.BicolorGemstones);
+            if (bicolor.CurrencyItemId != 0) return bicolor.CurrencyItemId;
         }
         return entry.CurrencyOptions[0].CurrencyItemId;
     }
@@ -901,9 +910,9 @@ public class CraftingMaterialsWindow : M3PanelWindow
         var mode = panel.RetainerColumns;
         var columnCount = mode switch
         {
-            RetainerColumnMode.Total => 5,
-            RetainerColumnMode.Split => 6,
-            _ => 4,
+            RetainerColumnMode.Total => 6,
+            RetainerColumnMode.Split => 7,
+            _ => 5,
         };
 
         float headerWidth;
@@ -925,6 +934,7 @@ public class CraftingMaterialsWindow : M3PanelWindow
 
         ImGui.TableSetupScrollFreeze(0, 1);
         ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableSetupColumn("Acquire", ImGuiTableColumnFlags.WidthFixed, VulcanUiScaling.Scaled(90f));
         ImGui.TableSetupColumn("Have", ImGuiTableColumnFlags.WidthFixed, numberWidth);
         switch (mode)
         {
@@ -943,6 +953,8 @@ public class CraftingMaterialsWindow : M3PanelWindow
         ImGui.TableNextRow(ImGuiTableRowFlags.Headers);
         ImGui.TableNextColumn();
         M3Table.Header("Item", center: false);
+        ImGui.TableNextColumn();
+        M3Table.Header("Acquire", "How Gather + Craft acquires this item");
         ImGui.TableNextColumn();
         M3Table.Header("Have", "In your inventory");
         switch (mode)
@@ -965,19 +977,13 @@ public class CraftingMaterialsWindow : M3PanelWindow
         M3Table.Header("%", "How much of the need you already have");
 
         var entries = panel.Entries;
-        var maxNameWidth = 0f;
-        for (var i = 0; i < entries.Count; i++)
-        {
-            maxNameWidth = MathF.Max(maxNameWidth, ImGui.CalcTextSize(entries[i].Name).X);
-        }
-
         var clipper = ImGui.ImGuiListClipper();
         clipper.Begin(entries.Count);
         while (clipper.Step())
         {
             for (var i = clipper.DisplayStart; i < clipper.DisplayEnd; i++)
             {
-                DrawPanelRow(entries[i], mode, panel.VendorTargets, maxNameWidth, panel.PreferBicolorDefault);
+                DrawPanelRow(entries[i], mode, panel.VendorTargets);
             }
         }
 
@@ -988,7 +994,7 @@ public class CraftingMaterialsWindow : M3PanelWindow
     }
 
     private void DrawPanelRow(MaterialEntry entry, RetainerColumnMode mode,
-        IReadOnlyList<VendorBuyListManager.VendorTargetRequest>? vendorTargets, float maxNameWidth, bool preferBicolorDefault)
+        IReadOnlyList<VendorBuyListManager.VendorTargetRequest>? vendorTargets)
     {
         var s = M3.Scheme;
         var satisfied = entry.EffectiveAvailable >= entry.Needed;
@@ -1008,56 +1014,25 @@ public class CraftingMaterialsWindow : M3PanelWindow
         ImGui.TableNextColumn();
         M3Widgets.GameIcon(entry.IconId, lineHeight);
         ImGui.SameLine(0, MaterialRowIconSpacing);
-        var nameTextStartX = ImGui.GetCursorScreenPos().X;
 
-        if (ImGui.Selectable(GetMaterialDisplayName(entry), false, ImGuiSelectableFlags.AllowItemOverlap))
-
+        var nameHitboxWidth = ImGui.GetContentRegionAvail().X;
+        var displayName = Ellipsize(GetMaterialDisplayName(entry), nameHitboxWidth);
+        if (ImGui.Selectable(displayName, false, ImGuiSelectableFlags.AllowItemOverlap,
+                new Vector2(nameHitboxWidth, lineHeight)))
         {
             CopyName(entry.Name);
         }
 
         if (ImGui.IsItemHovered())
-        {
-            var candidate = entry.PurchaseCandidate;
-            var details = candidate == null ? string.Empty : $"\n{candidate.Reason}";
-            if (candidate?.IsCandidate == true)
-                details += $"\nEligible currencies (policy order): {candidate.CurrencyDescription}\n{MaterialPurchaseCandidate.Disclaimer}";
-            ImGui.SetTooltip("Click to copy to clipboard." + details);
-        }
-        DrawItemContextMenu(entry, vendorTargets);
-        M3Tooltip.Hovered("Click to copy the name. Right-click for more.");
+            ImGui.SetTooltip($"{entry.Name}\nClick to copy. Right-click for options.");
+        var openMobDropPopup = DrawItemContextMenu(entry, vendorTargets);
+        if (openMobDropPopup)
+            ImGui.OpenPopup("##mob_drops");
+        if (entry.DropInfo.HasData)
+            DrawMobDropPopup(entry, "##mob_drops");
 
-        var sourceIcons = GetVisibleSourceIcons(entry);
-        if (sourceIcons.Count > 0 || entry.CurrencyOptions.Count > 0 || entry.DropInfo.HasData)
-        {
-            var iconColumnX = nameTextStartX + maxNameWidth + MaterialRowIconGutter;
-            ImGui.SameLine(0, 0);
-            var gap = iconColumnX - ImGui.GetCursorScreenPos().X;
-            ImGui.Dummy(new Vector2(gap > 0f ? gap : MaterialRowIconSpacing, 0));
-            ImGui.SameLine(0, 0);
-
-            var hasDrawnIcon = false;
-            if (sourceIcons.Count > 0)
-            {
-                CraftingRowIcons.DrawIconsRightAligned(sourceIcons, lineHeight, MaterialRowIconSpacing);
-                hasDrawnIcon = true;
-            }
-
-            if (entry.CurrencyOptions.Count > 0)
-            {
-                if (hasDrawnIcon)
-                {
-                    ImGui.SameLine(0, MaterialRowIconSpacing);
-                }
-
-                hasDrawnIcon = DrawCurrencyPicker(entry, preferBicolorDefault, lineHeight);
-            }
-
-            if (entry.DropInfo.HasData)
-            {
-                DrawMobDropIcon(entry, hasDrawnIcon, lineHeight);
-            }
-        }
+        ImGui.TableNextColumn();
+        DrawAcquisitionMethod(entry);
 
         ImGui.TableNextColumn();
         CenterNumber(entry.Have, satisfied ? s.Success : s.Error);
@@ -1123,12 +1098,13 @@ public class CraftingMaterialsWindow : M3PanelWindow
         M3Table.Progress(progress, text, satisfied ? M3.Scheme.Success : M3.Scheme.Error, height);
     }
 
-    private static void DrawItemContextMenu(MaterialEntry entry, IReadOnlyList<VendorBuyListManager.VendorTargetRequest>? vendorTargets)
+    private static bool DrawItemContextMenu(MaterialEntry entry,
+        IReadOnlyList<VendorBuyListManager.VendorTargetRequest>? vendorTargets)
     {
         using var menu = M3Menu.BeginContext("##material_menu");
         if (!menu.IsOpen)
         {
-            return;
+            return false;
         }
 
         if (M3Menu.Item("##material_link", "Create link", FontAwesomeIcon.Link, tooltip: "Print the item's link in chat"))
@@ -1142,7 +1118,11 @@ public class CraftingMaterialsWindow : M3PanelWindow
             GatherBuddy.VulcanWindow?.OpenToMarketboardItem(entry.ItemId);
         }
 
+        var openMobDropPopup = entry.DropInfo.HasData
+            && M3Menu.Item("##material_mob_drops", "View mob drops", FontAwesomeIcon.Skull);
+
         DrawVendorBuyListMenu(entry, vendorTargets);
+        return openMobDropPopup;
     }
 
     private static void DrawVendorBuyListMenu(MaterialEntry entry, IReadOnlyList<VendorBuyListManager.VendorTargetRequest>? vendorTargets)
@@ -1412,91 +1392,135 @@ public class CraftingMaterialsWindow : M3PanelWindow
         }
     }
 
-    private static IReadOnlyList<CraftingRowIcons.RowIcon> GetVisibleSourceIcons(MaterialEntry entry)
+    private void DrawAcquisitionMethod(MaterialEntry entry)
     {
-        var sourceIcons = CraftingRowIcons.GetMaterialIcons(entry.ItemId, entry.IsPrecraft);
-        if (entry.CurrencyOptions.Count == 0 || sourceIcons.Count == 0)
+        if (entry.IsPrecraft)
         {
-            return sourceIcons;
+            ImGui.TextDisabled("—");
+            return;
         }
-
-        var currencyIconIds = new HashSet<uint>();
-        foreach (var option in entry.CurrencyOptions)
+        var rawItemId = AutoGather.Helpers.Diadem.ApprovedToRawItemIds.GetValueOrDefault(entry.ItemId, entry.ItemId);
+        var canGather = !entry.IsPrecraft && (GatherBuddy.GameData.Gatherables.ContainsKey(rawItemId)
+            || GatherBuddy.GameData.Fishes.ContainsKey(rawItemId));
+        var selected = entry.AcquisitionMethod ?? MaterialAcquisitionMethod.Auto;
+        var selectedCurrency = entry.CurrencyOptions.FirstOrDefault(option => option.CurrencyItemId == selected.CurrencyItemId);
+        var selectedCurrencyAvailable = selected.Kind != MaterialAcquisitionMethodKind.Currency
+            || entry.CurrencyOptions.Any(option => option.CurrencyItemId == selected.CurrencyItemId);
+        var staleChoice = !entry.PurchaseDataPending
+            && (selected.Kind == MaterialAcquisitionMethodKind.Gather && !canGather
+                || selected.Kind == MaterialAcquisitionMethodKind.Currency && !selectedCurrencyAvailable);
+        var methodCount = entry.CurrencyOptions.Count + (canGather ? 1 : 0);
+        var needsPicker = methodCount > 1 || staleChoice;
+        var label = selected.Kind switch
         {
-            currencyIconIds.Add(option.IconId);
-        }
+            MaterialAcquisitionMethodKind.Gather => "Gather",
+            MaterialAcquisitionMethodKind.Currency when selectedCurrencyAvailable
+                => CompactCurrencyName(selectedCurrency.Group),
+            MaterialAcquisitionMethodKind.Currency => "Unsupported",
+            _ => "Auto",
+        };
+        if (entry.PurchaseDataPending && entry.CurrencyOptions.Count == 0)
+            label = canGather ? "Gather*" : "Checking";
+        else if (!staleChoice && methodCount == 0)
+            label = "Manual";
+        else if (!staleChoice && methodCount == 1 && selected.Kind == MaterialAcquisitionMethodKind.Auto)
+            label = canGather ? "Gather" : CompactCurrencyName(entry.CurrencyOptions[0].Group);
+        var purchasePolicy = _editor?.GetMaterialPurchaseDisplayContext().Policy;
+        if (selected.Kind == MaterialAcquisitionMethodKind.Currency && selectedCurrencyAvailable && purchasePolicy != null
+            && (!purchasePolicy.Enabled || !purchasePolicy.Allows(selectedCurrency.Group, selectedCurrency.CurrencyItemId)))
+            label += " !";
+        else if (selected.Kind == MaterialAcquisitionMethodKind.Auto && !canGather && entry.CurrencyOptions.Count == 1
+            && purchasePolicy != null
+            && (!purchasePolicy.Enabled || !purchasePolicy.Allows(entry.CurrencyOptions[0].Group, entry.CurrencyOptions[0].CurrencyItemId)))
+            label += " !";
 
-        var filtered = new List<CraftingRowIcons.RowIcon>(sourceIcons.Count);
-        foreach (var sourceIcon in sourceIcons)
+        if (!needsPicker)
         {
-            if (!currencyIconIds.Contains(sourceIcon.IconId))
-            {
-                filtered.Add(sourceIcon);
-            }
-        }
-
-        return filtered;
-    }
-
-    private bool DrawCurrencyPicker(MaterialEntry entry, bool preferBicolorDefault, float size)
-    {
-        if (entry.CurrencyOptions.Count == 0)
-        {
-            return false;
-        }
-
-        var selectedCurrencyId = GetSelectedCurrencyItemId(entry, preferBicolorDefault);
-        var choosable = entry.CurrencyOptions.Count > 1;
-        for (var i = 0; i < entry.CurrencyOptions.Count; i++)
-        {
-            if (i > 0)
-            {
-                ImGui.SameLine(0, MaterialRowIconSpacing);
-            }
-
-            var option = entry.CurrencyOptions[i];
-            var isSelected = option.CurrencyItemId == selectedCurrencyId;
-            var clicked = M3Widgets.GameIconButton($"##currency_{option.CurrencyItemId}", option.IconId, size, isSelected ? 1f : 0.35f);
+            var textWidth = ImGui.CalcTextSize(label).X;
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX()
+                + MathF.Max(0f, (ImGui.GetContentRegionAvail().X - textWidth) * 0.5f));
+            ImGui.TextUnformatted(label);
             if (ImGui.IsItemHovered())
             {
-                M3Tooltip.Show(!choosable
-                    ? $"{option.Name}: {option.CostPerItem:N0} each"
-                    : isSelected
-                        ? $"{option.Name}: {option.CostPerItem:N0} each\nUsed for the totals."
-                        : $"{option.Name}: {option.CostPerItem:N0} each\nClick to use it for the totals.");
+                if (entry.PurchaseDataPending && entry.CurrencyOptions.Count == 0)
+                    M3Tooltip.Show("Checking supported vendor purchase methods.");
+                else if (label == "Manual")
+                    M3Tooltip.Show(entry.PurchaseCandidate?.Reason ?? "No supported automatic acquisition method.");
+                else if (selected.Kind == MaterialAcquisitionMethodKind.Currency && selectedCurrencyAvailable)
+                    M3Tooltip.Show($"Prefer {selectedCurrency.Name}: buy with this currency, then gather the remainder. No other currency will be used.");
+                else if (canGather)
+                    M3Tooltip.Show("Gather is the only supported automatic acquisition method.");
+                else if (entry.CurrencyOptions.Count == 1 && !canGather
+                    && (purchasePolicy?.Enabled != true
+                        || !purchasePolicy.Allows(entry.CurrencyOptions[0].Group, entry.CurrencyOptions[0].CurrencyItemId)))
+                    M3Tooltip.Show($"{entry.CurrencyOptions[0].Name} is supported, but disabled by this list's purchase policy.");
+                else if (entry.CurrencyOptions.Count == 1)
+                    M3Tooltip.Show($"Only supported purchase method: {entry.CurrencyOptions[0].Name}.");
             }
-
-
-            if (clicked)
-            {
-                _userSelectedCurrencyByItem[entry.ItemId] = option.CurrencyItemId;
-            }
+            return;
         }
 
-        return true;
+        var availableWidth = ImGui.GetContentRegionAvail().X;
+        var comboWidth = MathF.Min(availableWidth, ImGui.CalcTextSize(label).X + VulcanUiScaling.Scaled(38f));
+        ImGui.SetCursorPosX(ImGui.GetCursorPosX() + MathF.Max(0f, (availableWidth - comboWidth) * 0.5f));
+        ImGui.SetNextItemWidth(comboWidth);
+        var context = _editor?.GetMaterialPurchaseDisplayContext();
+        var isActiveRun = context?.RunId.HasValue == true;
+        ImGui.PushStyleVar(ImGuiStyleVar.FramePadding,
+            new Vector2(VulcanUiScaling.Scaled(14f), ImGui.GetStyle().FramePadding.Y));
+        var comboOpen = ImGui.BeginCombo($"##acquisition_method_{entry.ItemId}", label);
+        ImGui.PopStyleVar();
+        if (!comboOpen)
+        {
+            if (isActiveRun && ImGui.IsItemHovered())
+                ImGui.SetTooltip("Saved for the next run. The active run uses its captured acquisition settings.");
+            else if (ImGui.IsItemHovered())
+                ImGui.SetTooltip(selected.Kind switch
+                {
+                    MaterialAcquisitionMethodKind.Gather => "Gather only; automatic purchasing is skipped.",
+                    MaterialAcquisitionMethodKind.Currency when selectedCurrencyAvailable
+                        => $"Prefer {selectedCurrency.Name}: buy what policy allows, then gather the remainder. No other currency will be used.",
+                    _ => "Auto: use configured currency priority, then gather the remainder.",
+                });
+            return;
+        }
+
+        if (staleChoice)
+        {
+            ImGui.TextDisabled("Saved choice is no longer supported.");
+            if (ImGui.Selectable("Reset to Auto"))
+                _editor?.SetMaterialAcquisitionMethod(entry.ItemId, MaterialAcquisitionMethod.Auto);
+            ImGui.Separator();
+        }
+        if (ImGui.Selectable("Auto", selected.Kind == MaterialAcquisitionMethodKind.Auto))
+            _editor?.SetMaterialAcquisitionMethod(entry.ItemId, MaterialAcquisitionMethod.Auto);
+        if (canGather && ImGui.Selectable("Gather", selected.Kind == MaterialAcquisitionMethodKind.Gather))
+            _editor?.SetMaterialAcquisitionMethod(entry.ItemId, MaterialAcquisitionMethod.Gather);
+        foreach (var currency in entry.CurrencyOptions)
+        {
+            var isSelected = selected.Kind == MaterialAcquisitionMethodKind.Currency
+                && selected.CurrencyItemId == currency.CurrencyItemId;
+            var optionLabel = canGather ? $"Prefer {currency.Name}" : $"Buy with {currency.Name}";
+            if (ImGui.Selectable(optionLabel, isSelected))
+                _editor?.SetMaterialAcquisitionMethod(entry.ItemId, MaterialAcquisitionMethod.BuyWith(currency.CurrencyItemId));
+            if (ImGui.IsItemHovered() && context != null
+                && (!context.Policy.Enabled || !context.Policy.Allows(currency.Group, currency.CurrencyItemId)))
+                M3Tooltip.Show($"{currency.Name} is supported, but disabled by this list's purchase policy. Gathering fallback remains available.");
+        }
+        ImGui.EndCombo();
+        if (isActiveRun && ImGui.IsItemHovered())
+            ImGui.SetTooltip("Saved for the next run. The active run uses its captured acquisition settings.");
     }
 
-    private static void DrawMobDropIcon(MaterialEntry entry, bool addLeadingSpacing, float size)
+    private static string CompactCurrencyName(VendorCurrencyGroup group) => group switch
     {
-        const string popupId = "##mob_drops";
-        if (addLeadingSpacing)
-        {
-            ImGui.SameLine(0, MaterialRowIconSpacing);
-        }
-
-        var clicked = M3Widgets.GameIconButton("##mob_drops_button", MobDropIconId, size);
-        if (ImGui.IsItemHovered() && !ImGui.IsPopupOpen(popupId))
-        {
-            M3Tooltip.Show(BuildMobDropTooltip(entry.DropInfo));
-        }
-
-        if (clicked)
-        {
-            ImGui.OpenPopup(popupId);
-        }
-
-        DrawMobDropPopup(entry, popupId);
-    }
+        VendorCurrencyGroup.Gil => "Gil",
+        VendorCurrencyGroup.GrandCompanySeals => "Seals",
+        VendorCurrencyGroup.BicolorGemstones => "Bicolor",
+        VendorCurrencyGroup.Scrips => "Scrips",
+        VendorCurrencyGroup.Tomestones => "Tomes",
+        _ => group.ToString(),
+    };
 
     private static string BuildMobDropTooltip(MobDropItemInfo dropInfo)
     {

@@ -49,6 +49,66 @@ public class PlannerTests
     }
 
     [Fact]
+    public void GatherMethodNeverBuysAndSatisfiesShortageByGathering()
+    {
+        var demand = Demand(gather: true) with { Method = MaterialAcquisitionMethod.Gather };
+        var plan = MaterialAcquisitionPlanner.Plan(Input(demands: [demand]));
+
+        Assert.Empty(plan.Allocations);
+        Assert.Equal(20, Assert.Single(plan.Materials).GatheringDemand.Total);
+        Assert.Equal(0, plan.Materials.Single().UnresolvedDemand.Total);
+    }
+
+    [Fact]
+    public void ExplicitCurrencyUsesOnlySelectedCurrencyThenGathersRemainder()
+    {
+        var demand = Demand(gather: true) with { Method = MaterialAcquisitionMethod.BuyWith(20) };
+        var plan = MaterialAcquisitionPlanner.Plan(Input(demands: [demand], balances: new() { [1] = 200, [20] = 25 }));
+
+        Assert.Equal(20u, Assert.Single(plan.Allocations).CurrencyItemId);
+        Assert.Equal(5u, plan.Materials.Single().PlannedPurchaseQuantity);
+        Assert.Equal(15, plan.Materials.Single().GatheringDemand.Total);
+        Assert.Equal(0, plan.Materials.Single().UnresolvedDemand.Total);
+    }
+
+    [Fact]
+    public void ExplicitCurrencyDoesNotChooseAnotherCurrencyButFallsBackToGathering()
+    {
+        var demand = Demand(gather: true) with { Method = MaterialAcquisitionMethod.BuyWith(33913) };
+        var plan = MaterialAcquisitionPlanner.Plan(Input(demands: [demand]));
+
+        Assert.Empty(plan.Allocations);
+        Assert.Equal(20, plan.Materials.Single().GatheringDemand.Total);
+        Assert.Equal(0, plan.Materials.Single().UnresolvedDemand.Total);
+    }
+
+    [Fact]
+    public void ExplicitCurrencyLeavesRemainderUnresolvedWhenItemCannotBeGathered()
+    {
+        var demand = Demand(gather: false) with { Method = MaterialAcquisitionMethod.BuyWith(20) };
+        var plan = MaterialAcquisitionPlanner.Plan(Input(demands: [demand], balances: new() { [1] = 200, [20] = 25 }));
+
+        Assert.Equal(20u, Assert.Single(plan.Allocations).CurrencyItemId);
+        Assert.Equal(0, plan.Materials.Single().GatheringDemand.Total);
+        Assert.Equal(15, plan.Materials.Single().UnresolvedDemand.Total);
+    }
+
+    [Fact]
+    public void ExplicitCurrencyReconciliationGatherFallbackWorksWithPurchasesDisabled()
+    {
+        var demand = Demand(gather: true) with
+        {
+            AllowPurchasing = false,
+            Method = MaterialAcquisitionMethod.BuyWith(20),
+        };
+        var plan = MaterialAcquisitionPlanner.Plan(Input(demands: [demand]));
+
+        Assert.Empty(plan.Allocations);
+        Assert.Equal(20, plan.Materials.Single().GatheringDemand.Total);
+        Assert.Equal(0, plan.Materials.Single().UnresolvedDemand.Total);
+    }
+
+    [Fact]
     public void ConfiguredPriorityWinsOverUnlikeNumericCosts()
     {
         var policy = Policy();

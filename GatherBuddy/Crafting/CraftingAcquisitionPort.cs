@@ -38,7 +38,10 @@ internal sealed class CraftingAcquisitionPort(CraftingExecutionPlan executionPla
                 checked((int)manager->GetInventoryItemCount(itemId, true, false, false)));
             var rawItemId = AutoGather.Helpers.Diadem.ApprovedToRawItemIds.GetValueOrDefault(itemId, itemId);
             var canGather = GatherBuddy.GameData.Gatherables.ContainsKey(rawItemId) || GatherBuddy.GameData.Fishes.ContainsKey(rawItemId);
-            demands.Add(new(itemId, demand, CanGatherNQ: canGather, CanGatherHQ: false, AllowPurchasing: allowPurchasing));
+            demands.Add(new(itemId, demand, CanGatherNQ: canGather, CanGatherHQ: false, AllowPurchasing: allowPurchasing)
+            {
+                Method = executionPlan.MaterialAcquisitionMethods.GetValueOrDefault(itemId, MaterialAcquisitionMethod.Auto),
+            });
         }
         var snapshot = new VendorAcquisitionOfferSnapshot(VendorOfferDataStatus.Ready, Array.Empty<AcquisitionVendorOffer>());
         if (allowPurchasing && policy.Enabled)

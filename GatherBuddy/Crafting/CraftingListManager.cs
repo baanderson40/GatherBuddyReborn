@@ -1,6 +1,7 @@
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 
 namespace GatherBuddy.Crafting;
@@ -464,6 +465,16 @@ public class CraftingListManager
                 if (_lists[i].VendorPurchases == null)
                     purchaseTrace.Record("P1", "Normalize", $"list={_lists[i].ID}; field=VendorPurchases action=InitializeMissingPolicy");
                 _lists[i].VendorPurchases ??= new();
+                _lists[i].MaterialAcquisitionMethods ??= [];
+                foreach (var itemId in _lists[i].MaterialAcquisitionMethods.Where(pair =>
+                             pair.Key == 0 || pair.Value == null
+                             || !Enum.IsDefined(pair.Value.Kind)
+                             || pair.Value.Kind == MaterialAcquisitionMethodKind.Currency && pair.Value.CurrencyItemId == 0)
+                         .Select(pair => pair.Key).ToList())
+                {
+                    _lists[i].MaterialAcquisitionMethods.Remove(itemId);
+                    needsSave = true;
+                }
                 _lists[i].VendorPurchases.DrainLoadDiagnostics(purchaseTrace, $"List[{_lists[i].ID}].VendorPurchases");
                 needsSave |= _lists[i].VendorPurchases.Normalize(purchaseTrace, $"List[{_lists[i].ID}].VendorPurchases");
                 var normalizedFolderPath = NormalizeFolderPath(_lists[i].FolderPath);
@@ -735,6 +746,9 @@ public class CraftingListManager
             var purchaseTrace = new AcquisitionTrace(Guid.NewGuid(), 128);
             source.VendorPurchases?.DrainLoadDiagnostics(purchaseTrace, "ImportedList.VendorPurchases");
             newList.VendorPurchases = source.VendorPurchases?.Clone(purchaseTrace) ?? new();
+            newList.MaterialAcquisitionMethods = source.MaterialAcquisitionMethods == null
+                ? []
+                : new(source.MaterialAcquisitionMethods);
             purchaseTrace.Record("P1", "Import", $"list={newList.ID}; preservedMode={newList.VendorPurchases.Mode}; customEnabled={newList.VendorPurchases.CustomPolicy.Enabled}");
             Plugin.AcquisitionTraceLogger.Write(purchaseTrace);
             CanonicalizeOriginalItemQualitySettings(newList);

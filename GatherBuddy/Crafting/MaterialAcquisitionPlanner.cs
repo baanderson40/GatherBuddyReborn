@@ -26,7 +26,8 @@ public static class MaterialAcquisitionPlanner
         var needsVendors = input.Policy.Enabled && demands.Any(item =>
         {
             var remaining = RemainingDemand(input, item);
-            return item.AllowPurchasing && remaining.Total > remaining.RequiredHQ;
+            return item.Method.Kind != MaterialAcquisitionMethodKind.Gather
+                && item.AllowPurchasing && remaining.Total > remaining.RequiredHQ;
         });
         var waiting = needsVendors && input.VendorDataStatus == VendorOfferDataStatus.Loading;
         var status = waiting ? AcquisitionPlanningStatus.WaitingForVendorData
@@ -42,14 +43,17 @@ public static class MaterialAcquisitionPlanner
             {
                 var owned = input.Inventory.GetValueOrDefault(item.ItemId);
                 item.QualityDemand.ConsumeSplit(owned.NQ, owned.HQ, out var consumedNQ, out var consumedHQ);
-                trace.Record("P2", "Demand", $"item={item.ItemId}; total={item.QualityDemand.Total}; aggregatedQuality={item.QualityDemand}; ownedNQ={owned.NQ}; ownedHQ={owned.HQ}; consumedNQ={consumedNQ}; consumedHQ={consumedHQ}; remainingQuality={demand}; allowPurchasing={item.AllowPurchasing}; gatherNQ={item.CanGatherNQ}; gatherHQ={item.CanGatherHQ}; order={(item.CanGatherNQ || item.CanGatherHQ ? "GatherFallbackAvailable" : "NonGatherableFirst")}");
+                trace.Record("P2", "Demand", $"item={item.ItemId}; total={item.QualityDemand.Total}; aggregatedQuality={item.QualityDemand}; ownedNQ={owned.NQ}; ownedHQ={owned.HQ}; consumedNQ={consumedNQ}; consumedHQ={consumedHQ}; remainingQuality={demand}; method={item.Method.Kind}; selectedCurrency={item.Method.CurrencyItemId}; allowPurchasing={item.AllowPurchasing}; gatherNQ={item.CanGatherNQ}; gatherHQ={item.CanGatherHQ}; order={(item.Method.Kind == MaterialAcquisitionMethodKind.Auto && (item.CanGatherNQ || item.CanGatherHQ) ? "GatherFallbackAvailable" : item.Method.Kind.ToString())}");
             }
             var remaining = demand;
             uint purchased = 0;
-            var offers = OrderOffers(input, input.Offers.Where(offer => offer.ItemId == item.ItemId)).ToList();
+            var offers = OrderOffers(input, input.Offers.Where(offer => offer.ItemId == item.ItemId
+                && (item.Method.Kind != MaterialAcquisitionMethodKind.Currency
+                    || offer.Costs.All(cost => cost.CurrencyItemId == item.Method.CurrencyItemId)))).ToList();
             if (remaining.Total > remaining.RequiredHQ && !waiting)
             {
-                if (input.Policy.Enabled && item.AllowPurchasing && input.VendorDataStatus == VendorOfferDataStatus.Ready)
+                if (item.Method.Kind != MaterialAcquisitionMethodKind.Gather
+                    && input.Policy.Enabled && item.AllowPurchasing && input.VendorDataStatus == VendorOfferDataStatus.Ready)
                 {
                     foreach (var offer in offers)
                     {
@@ -115,7 +119,8 @@ public static class MaterialAcquisitionPlanner
             }
 
             var gathering = default(IngredientQualityDemand);
-            if (!waiting && remaining.Total > 0)
+            if (!waiting && remaining.Total > 0 && item.Method.Kind is
+                    MaterialAcquisitionMethodKind.Auto or MaterialAcquisitionMethodKind.Gather or MaterialAcquisitionMethodKind.Currency)
             {
                 var nq = item.CanGatherNQ ? remaining.RequiredNQ + remaining.PreferNQ + remaining.PreferHQ : 0;
                 var hq = item.CanGatherHQ ? remaining.RequiredHQ + (item.CanGatherNQ ? 0 : remaining.PreferNQ + remaining.PreferHQ) : 0;
@@ -127,7 +132,9 @@ public static class MaterialAcquisitionPlanner
             var eligible = offers.Where(offer => GetOfferRejection(offer, input.Policy) == null).ToList();
             var blockers = new List<MaterialShortage>();
             var shortages = waiting || remaining.Total == 0 ? Array.Empty<MaterialShortage>()
-                : ExplainShortage(input, item, remaining, offers, eligible, commitments, blockers);
+                : ExplainShortage(input, item, remaining, offers, eligible, commitments, blockers,
+                    item.Method.Kind == MaterialAcquisitionMethodKind.Currency
+                    && input.Offers.Any(offer => offer.ItemId == item.ItemId && offer.Costs.Any(cost => cost.CurrencyItemId != item.Method.CurrencyItemId)));
             var rejected = offers.Select(offer => GetOfferRejection(offer, input.Policy)).Where(kind => kind.HasValue)
                 .GroupBy(kind => kind!.Value).OrderBy(group => group.Key)
                 .Select(group => new AcquisitionOfferRejectionSummary(group.Key, group.Count())).ToArray();
@@ -135,7 +142,7 @@ public static class MaterialAcquisitionPlanner
             {
                 foreach (var rejection in rejected)
                     trace.Record("P2", "RejectedOffers", $"item={item.ItemId}; category={rejection.Kind}; offerCount={rejection.OfferCount}; grouped=True");
-                trace.Record("P2", "Outcome", $"item={item.ItemId}; plannedPurchase={purchased}; gatheringQuality={gathering}; unresolvedQuality={remaining}; primary={(shortages.Length > 0 ? shortages[0].Reason.ToString() : waiting ? "deferred" : "none")}; selectionRule=HighestPriorityEligibleOptionOrSourceRestriction");
+                trace.Record("P2", "Outcome", $"item={item.ItemId}; method={item.Method.Kind}; selectedCurrency={item.Method.CurrencyItemId}; plannedPurchase={purchased}; gatheringQuality={gathering}; unresolvedQuality={remaining}; primary={(shortages.Length > 0 ? shortages[0].Reason.ToString() : waiting ? "deferred" : "none")}; selectionRule={(item.Method.Kind == MaterialAcquisitionMethodKind.Auto ? "HighestPriorityEligibleOptionOrSourceRestriction" : "PerItemMethod")}");
                 foreach (var blocker in blockers)
                     trace.Record("P2", "EligibleBlocker", $"item={item.ItemId}; reason={blocker.Reason}; {blocker.Detail}");
             }
@@ -174,7 +181,7 @@ public static class MaterialAcquisitionPlanner
 
     private static MaterialShortage[] ExplainShortage(MaterialAcquisitionPlanningInput input, AcquisitionMaterialDemand item,
         IngredientQualityDemand remaining, List<AcquisitionVendorOffer> offers, List<AcquisitionVendorOffer> eligible,
-        Dictionary<uint, ulong> commitments, List<MaterialShortage> eligibleBlockers)
+        Dictionary<uint, ulong> commitments, List<MaterialShortage> eligibleBlockers, bool hasUnselectedCurrencyOffer)
     {
         var result = new List<MaterialShortage>();
         var nqShortage = remaining.Total - remaining.RequiredHQ;
@@ -203,7 +210,9 @@ public static class MaterialAcquisitionPlanner
             {
                 var supported = offers.Where(IsValid).ToList();
                 var allowed = supported.Where(offer => offer.Costs.All(c => input.Policy.Allows(c.CurrencyGroup, c.CurrencyItemId))).ToList();
-                if (allowed.Count > 0) Add(MaterialShortageReason.VendorInaccessible);
+                if (hasUnselectedCurrencyOffer) Add(MaterialShortageReason.CurrencyDisallowed,
+                    $"The selected currency {item.Method.CurrencyItemId} has no matching offer. Other currencies are not selected.");
+                else if (allowed.Count > 0) Add(MaterialShortageReason.VendorInaccessible);
                 else if (supported.Count > 0) Add(MaterialShortageReason.CurrencyDisallowed);
                 else Add(MaterialShortageReason.UnsupportedOffer);
             }
@@ -279,7 +288,8 @@ public static class MaterialAcquisitionPlanner
                 // Validate individual demands before summing; otherwise negative values could cancel positives.
                 _ = new MaterialAcquisitionRequirement(item.ItemId, checked(item.QualityDemand.RequiredHQ + item.QualityDemand.RequiredNQ
                     + item.QualityDemand.PreferHQ + item.QualityDemand.PreferNQ), 0, item.QualityDemand);
-                if (item.CanGatherNQ != first.CanGatherNQ || item.CanGatherHQ != first.CanGatherHQ || item.AllowPurchasing != first.AllowPurchasing)
+                if (item.CanGatherNQ != first.CanGatherNQ || item.CanGatherHQ != first.CanGatherHQ || item.AllowPurchasing != first.AllowPurchasing
+                    || item.Method != first.Method)
                     throw new ArgumentException("Repeated material demands must use identical source permissions.", nameof(materials));
                 total = new(checked(total.RequiredHQ + item.QualityDemand.RequiredHQ), checked(total.RequiredNQ + item.QualityDemand.RequiredNQ),
                     checked(total.PreferHQ + item.QualityDemand.PreferHQ), checked(total.PreferNQ + item.QualityDemand.PreferNQ));

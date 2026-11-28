@@ -22,6 +22,7 @@ public sealed class CraftingExecutionPlan
     public Guid AcquisitionRunId => AcquisitionRun.RunId;
     public Guid AcquisitionSessionId => AcquisitionRun.SessionId;
     public ResolvedVendorPurchasePolicy PurchasePolicy { get; }
+    public IReadOnlyDictionary<uint, MaterialAcquisitionMethod> MaterialAcquisitionMethods { get; }
     public CraftingListPlan ResolvedPlan { get; private set; }
 
     internal List<CraftingListItem> Queue { get; private set; } = [];
@@ -54,6 +55,8 @@ public sealed class CraftingExecutionPlan
         RetainerRestock = planningSnapshot.RetainerRestock;
         InventoryOnly = inventoryOnly;
         PurchasePolicy = ResolvedVendorPurchasePolicy.Resolve(GatherBuddy.Config.AutomaticVendorPurchases, planningSnapshot.VendorPurchases);
+        MaterialAcquisitionMethods = new Dictionary<uint, MaterialAcquisitionMethod>(
+            planningSnapshot.MaterialAcquisitionMethods ?? []);
         ApplyResolvedPlan(resolvedPlan);
     }
 

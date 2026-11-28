@@ -150,6 +150,22 @@ public class CraftingListEditor
     internal bool SkipIfEnoughEnabled => GetPlanningList().SkipIfEnough;
     internal bool RetainerRestockEnabled => GetPlanningList().RetainerRestock;
     internal CraftingListDefinition PlanningList => GetPlanningList();
+    internal MaterialAcquisitionMethod GetMaterialAcquisitionMethod(uint itemId)
+        => _list.MaterialAcquisitionMethods?.GetValueOrDefault(itemId, MaterialAcquisitionMethod.Auto)
+            ?? MaterialAcquisitionMethod.Auto;
+
+    internal void SetMaterialAcquisitionMethod(uint itemId, MaterialAcquisitionMethod method)
+    {
+        if (itemId == 0 || method == null) return;
+        _list.MaterialAcquisitionMethods ??= [];
+        if (method.Kind == MaterialAcquisitionMethodKind.Auto)
+            _list.MaterialAcquisitionMethods.Remove(itemId);
+        else
+            _list.MaterialAcquisitionMethods[itemId] = method;
+        GatherBuddy.CraftingListManager.SaveList(_list);
+        InvalidateMaterialCaches();
+        TriggerMaterialsRegeneration();
+    }
 
     internal long MaterialCacheVersion  => Interlocked.Read(ref _materialCacheVersion);
 

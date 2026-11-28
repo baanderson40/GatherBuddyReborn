@@ -11,10 +11,20 @@ public enum VendorOfferAccess { Unknown, Accessible, Inaccessible }
 public enum AcquisitionPlanningStatus { Ready, WaitingForVendorData, VendorDataUnavailable }
 public enum AcquisitionOfferRejectionKind { Unsupported, WrongGrandCompany, MissingLocation, VendorInaccessible, CurrencyDisallowed }
 public sealed record AcquisitionOfferRejectionSummary(AcquisitionOfferRejectionKind Kind, int OfferCount);
+public enum MaterialAcquisitionMethodKind { Auto, Gather, Currency }
+public sealed record MaterialAcquisitionMethod(MaterialAcquisitionMethodKind Kind, uint CurrencyItemId = 0)
+{
+    public static MaterialAcquisitionMethod Auto { get; } = new(MaterialAcquisitionMethodKind.Auto);
+    public static MaterialAcquisitionMethod Gather { get; } = new(MaterialAcquisitionMethodKind.Gather);
+    public static MaterialAcquisitionMethod BuyWith(uint currencyItemId) => new(MaterialAcquisitionMethodKind.Currency, currencyItemId);
+}
 
 /// <summary>Total demand, not a net shortage. Repeated items are summed before inventory is consumed once.</summary>
 public sealed record AcquisitionMaterialDemand(uint ItemId, IngredientQualityDemand QualityDemand,
-    bool CanGatherNQ = false, bool CanGatherHQ = false, bool AllowPurchasing = true);
+    bool CanGatherNQ = false, bool CanGatherHQ = false, bool AllowPurchasing = true)
+{
+    public MaterialAcquisitionMethod Method { get; init; } = MaterialAcquisitionMethod.Auto;
+}
 
 public readonly record struct AcquisitionInventory(int NQ, int HQ);
 

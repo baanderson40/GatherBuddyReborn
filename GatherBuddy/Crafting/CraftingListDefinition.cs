@@ -35,6 +35,7 @@ public class CraftingListDefinition
     public int RepairPercent { get; set; } = 50;
     public bool RetainerRestock { get; set; } = false;
     public VendorPurchaseListSettings VendorPurchases { get; set; } = new();
+    public Dictionary<uint, MaterialAcquisitionMethod> MaterialAcquisitionMethods { get; set; } = [];
     public bool Ephemeral { get; set; } = false;
 
     public bool ShouldApplyQuickSynthAllOverrides(bool isOriginalRecipe)
@@ -104,6 +105,9 @@ public class CraftingListDefinition
             RepairPercent = RepairPercent,
             RetainerRestock = RetainerRestock,
             VendorPurchases = VendorPurchases?.Clone() ?? new(),
+            MaterialAcquisitionMethods = MaterialAcquisitionMethods == null
+                ? []
+                : MaterialAcquisitionMethods.ToDictionary(pair => pair.Key, pair => pair.Value),
             Ephemeral = Ephemeral,
         };
 
