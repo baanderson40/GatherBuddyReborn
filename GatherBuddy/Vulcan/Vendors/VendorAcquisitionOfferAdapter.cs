@@ -12,6 +12,8 @@ public sealed record VendorAcquisitionOfferSnapshot(VendorOfferDataStatus Status
 /// <summary>Call on the game thread after the existing caches have been requested. Does not start travel or purchases.</summary>
 public static class VendorAcquisitionOfferAdapter
 {
+    private static readonly Dictionary<uint, string> LastResolverDiagnostics = [];
+
     public static VendorAcquisitionOfferSnapshot Capture(IEnumerable<uint> itemIds)
     {
         ArgumentNullException.ThrowIfNull(itemIds);
@@ -27,10 +29,15 @@ public static class VendorAcquisitionOfferAdapter
             var special = VendorShopResolver.SpecialShopEntries.Where(entry => entry.ItemId == itemId).ToArray();
             var acquisition = VendorShopResolver.AcquisitionSpecialEntries.Where(entry => entry.ItemId == itemId).ToArray();
             var gc = VendorShopResolver.GcShopEntries.Where(entry => entry.ItemId == itemId).ToArray();
-            var sourceDetails = special.Concat(acquisition).SelectMany(entry => entry.Npcs.Select(npc =>
+            var sourceDetails = string.Join(" | ", special.Concat(acquisition).SelectMany(entry => entry.Npcs.Select(npc =>
                 $"{entry.Group}:{entry.CurrencyItemId};npc={npc.NpcId};menu={npc.MenuShopType};shop={npc.ShopId};source={npc.SourceShopId}:{npc.SourceItemIndex};routePage={npc.InclusionPageIndex}/{npc.InclusionSubPageIndex}"))
-                .Distinct().Take(4);
-            Dalamud.Log.Debug($"[VendorAcquisitionOfferAdapter] Resolver matches item={itemId}; gil={gil.Length}; special={special.Length}; acquisition={acquisition.Length}; gc={gc.Length}; specialRoutes=[{string.Join(" | ", sourceDetails)}]");
+                .Distinct().Take(4));
+            var diagnostic = $"gil={gil.Length}; special={special.Length}; acquisition={acquisition.Length}; gc={gc.Length}; specialRoutes=[{sourceDetails}]";
+            if (!LastResolverDiagnostics.TryGetValue(itemId, out var previous) || previous != diagnostic)
+            {
+                LastResolverDiagnostics[itemId] = diagnostic;
+                Dalamud.Log.Debug($"[VendorAcquisitionOfferAdapter] Resolver matches item={itemId}; {diagnostic}");
+            }
         }
         var currentSeals = Dalamud.ClientState.IsLoggedIn && Dalamud.Objects.LocalPlayer != null
             ? VendorShopResolver.GetCurrentGrandCompanySealCurrencyItemId() : 0;

@@ -571,6 +571,7 @@ public class VendorNavigator
     private const float VendorApproachMaxVerticalDrift = 4.0f;
     private const float VendorInteractionMaxVerticalDistance = 2.0f;
     private const float AethernetApproachVerticalTolerance = 2.0f;
+    private const float AethernetFallbackVerticalTolerance = 3.5f;
     private const float VendorApproachDistanceStep = 0.5f;
     private const float VendorApproachMinimumStandOff = 0.35f;
     private const float VendorCloseCombinedLandingDistanceMinimum = 4.0f;
@@ -627,7 +628,9 @@ public class VendorNavigator
     private bool _sourceMovementWasShortRepath;
     private List<Vector3> _sourceApproachCandidates = [];
     private int _sourceApproachCandidateIndex;
-    private int _sourceProjectionFailureCount;
+    private bool _sourceVerticalFallbackAttempted;
+    private bool _sourceApproachUsingVerticalFallback;
+    private (uint Territory, ulong Source, Vector3 PlayerPosition)? _lastProjectionFailureKey;
     private DateTime _lastSourceProjectionAttemptTime;
     private bool _solutionNineAethernetFallbackAvailable;
     private bool _solutionNineAethernetFallbackAttempted;
@@ -2191,7 +2194,9 @@ public class VendorNavigator
 
     private static AethernetSourceRange GetAethernetSourceRange(IGameObject source, float horizontalDistance)
         => new(source.HitboxRadius, horizontalDistance,
-            MathF.Abs((Dalamud.Objects.LocalPlayer?.Position.Y ?? float.NaN) - source.Position.Y));
+            MathF.Abs((Dalamud.Objects.LocalPlayer?.Position.Y ?? float.NaN) - source.Position.Y),
+            source.ObjectKind == ObjectKind.Aetheryte ? 4f : AethernetSourceRange.InteractionMargin,
+            AethernetSourceRange.InteractionMargin);
 
     private void ResetSourceApproach()
     {
@@ -2200,8 +2205,9 @@ public class VendorNavigator
         _sourceCandidateObjectId = 0;
         _sourceApproachCandidates.Clear();
         _sourceApproachCandidateIndex = 0;
+        _sourceVerticalFallbackAttempted = _sourceApproachUsingVerticalFallback = false;
         _sourcePathIsShortRepath = _sourceMovementPending = _sourceMovementWasShortRepath = false;
-        _sourceProjectionFailureCount = 0;
+        _lastProjectionFailureKey = null;
         _lastSourceProjectionAttemptTime = DateTime.MinValue;
         _solutionNineAethernetFallbackAvailable = false;
         _solutionNineAethernetFallbackAttempted = false;
@@ -2232,7 +2238,8 @@ public class VendorNavigator
             _sourceCandidateObjectId = sourceId;
             _sourceApproachCandidates.Clear();
             _sourceApproachCandidateIndex = 0;
-            _sourceProjectionFailureCount = 0;
+            _sourceVerticalFallbackAttempted = _sourceApproachUsingVerticalFallback = false;
+            _lastProjectionFailureKey = null;
             _lastSourceProjectionAttemptTime = DateTime.MinValue;
             _sourcePathIsShortRepath = _sourceMovementPending = _sourceMovementWasShortRepath = false;
         }
@@ -2241,7 +2248,7 @@ public class VendorNavigator
         var logKey = (sourceId, action);
         if (_lastSourceLog != logKey || now - _lastSourceLogTime >= TimeSpan.FromSeconds(2))
         {
-            GatherBuddy.Log.Debug($"[VendorNavigator] Aethernet source {action}: '{source?.Name.TextValue ?? "missing"}'; sourceId={sourceId}; territory={Dalamud.ClientState.TerritoryType}; radius={range.Radius:F2}m; margin={AethernetSourceRange.InteractionMargin:F1}m; allowedHorizontal={range.Limit:F2}m; horizontal={range.Horizontal:F2}m; vertical={range.Vertical:F2}m; verticalLimit={range.Limit:F2}m; recognized={recognized}; {sourceState}");
+            GatherBuddy.Log.Debug($"[VendorNavigator] Aethernet source {action}: '{source?.Name.TextValue ?? "missing"}'; sourceId={sourceId}; territory={Dalamud.ClientState.TerritoryType}; radius={range.Radius:F2}m; horizontalMargin={range.HorizontalMargin:F1}m; allowedHorizontal={range.HorizontalLimit:F2}m; horizontal={range.Horizontal:F2}m; vertical={range.Vertical:F2}m; liveVerticalLimit={range.VerticalLimit:F2}m; recognized={recognized}; {sourceState}");
             _lastSourceLog = logKey;
             _lastSourceLogTime = now;
         }
@@ -2273,7 +2280,7 @@ public class VendorNavigator
             _sourcePathCancellation?.Dispose();
             _sourcePathCancellation = null;
             if (task.IsCompletedSuccessfully && task.Result.Count > 0
-                && IsAethernetApproachPoint(task.Result[^1], source, range))
+                && IsAethernetApproachPoint(task.Result[^1], source, range, _sourceApproachUsingVerticalFallback))
             {
                 var pathKind = _sourcePathIsShortRepath ? "short-repath" : "candidate";
                 GatherBuddy.Log.Debug($"[VendorNavigator] Aethernet source {pathKind} path accepted: source={sourceId}; candidate={_sourceApproachCandidateIndex + 1}/{_sourceApproachCandidates.Count}; endpoint={task.Result[^1]}; pathPoints={task.Result.Count}");
@@ -2290,7 +2297,7 @@ public class VendorNavigator
                 GatherBuddy.Log.Warning($"[VendorNavigator] Aethernet approach {pathKind} failed: source={sourceId}; candidate={_sourceApproachCandidateIndex + 1}/{_sourceApproachCandidates.Count}; failure={failure}");
                 _sourceApproachCandidateIndex++;
                 _sourcePathIsShortRepath = false;
-                HandleAethernetApproachCandidatesExhausted(housing, $"No reachable projected ground candidate within interaction range ({failure})");
+                HandleAethernetApproachCandidatesExhausted(housing, source, range, $"No reachable projected ground candidate within interaction range ({failure})");
             }
             return false;
         }
@@ -2316,7 +2323,7 @@ public class VendorNavigator
                 }
 
                 _sourceApproachCandidateIndex++;
-                HandleAethernetApproachCandidatesExhausted(housing, "Every projected candidate stopped outside the source interaction range");
+                HandleAethernetApproachCandidatesExhausted(housing, source, range, "Every projected candidate stopped outside the source interaction range");
                 return false;
             }
         }
@@ -2343,35 +2350,53 @@ public class VendorNavigator
         {
             if (now - _lastSourceProjectionAttemptTime < TimeSpan.FromSeconds(2)) return false;
             _lastSourceProjectionAttemptTime = now;
-            if (!TryBuildAethernetApproachCandidates(source, range, out var projectionSummary))
+            var playerPosition = Dalamud.Objects.LocalPlayer!.Position;
+            var failureKey = (Dalamud.ClientState.TerritoryType, sourceId, new Vector3(
+                MathF.Round(playerPosition.X * 2f) * 0.5f,
+                MathF.Round(playerPosition.Y * 2f) * 0.5f,
+                MathF.Round(playerPosition.Z * 2f) * 0.5f));
+            if (_lastProjectionFailureKey == failureKey)
             {
-                _sourceProjectionFailureCount++;
-                if (_navigationDiagnostics.TryLog((sourceId, "AethernetProjectionRejected"), projectionSummary, out var suppressed))
-                    GatherBuddy.Log.Warning($"[VendorNavigator] Aethernet ground projection found no acceptable candidate; source={sourceId}; attempt={_sourceProjectionFailureCount}/8; {projectionSummary}{DiagnosticThrottle.Suffix(suppressed)}");
-                if (_sourceProjectionFailureCount >= 8)
+                const string unchangedFailure = "Primary and alternate aethernet approach projections found no valid point; territory, source, and player position remain unchanged, so identical projection retries are skipped.";
+                if (AethernetSourceApproach.CanUseSolutionNineInteractionFallback(
+                    Dalamud.ClientState.TerritoryType, housing, approachPreparationFailed: true,
+                    alreadyAttempted: _solutionNineAethernetFallbackAttempted))
                 {
-                    if (AethernetSourceApproach.CanUseSolutionNineInteractionFallback(
-                        Dalamud.ClientState.TerritoryType, housing, approachPreparationFailed: true,
-                        alreadyAttempted: _solutionNineAethernetFallbackAttempted))
-                    {
-                        _solutionNineAethernetFallbackAvailable = true;
-                        GatherBuddy.Log.Warning($"[VendorNavigator] Solution Nine aethernet approach projection failed; allowing one interaction-first fallback. {projectionSummary}");
-                    }
-                    else
-                    {
-                        FailAethernetSource($"No projected ground candidate within interaction range after {_sourceProjectionFailureCount} retries; {projectionSummary}");
-                    }
+                    _solutionNineAethernetFallbackAvailable = true;
+                    GatherBuddy.Log.Warning($"[VendorNavigator] Solution Nine aethernet approach projection failed; allowing one interaction-first fallback. {unchangedFailure}");
                 }
+                else
+                    FailAethernetSource(unchangedFailure);
                 return false;
             }
-            _sourceProjectionFailureCount = 0;
+
+            var primarySummary = "not attempted";
+            var alternateSummary = "not attempted";
+            var fallbackSummary = "not attempted";
+            var hasCandidates = TryBuildAethernetApproachCandidates(source, range, alternate: false,
+                verticalFallback: false, out primarySummary)
+                || TryBuildAethernetApproachCandidates(source, range, alternate: true,
+                    verticalFallback: false, out alternateSummary)
+                || (!housing && TryBuildAethernetApproachCandidates(source, range, alternate: true,
+                    verticalFallback: true, out fallbackSummary));
+            if (!hasCandidates)
+            {
+                _lastProjectionFailureKey = failureKey;
+                _sourceVerticalFallbackAttempted = true;
+                var projectionSummary = $"primary=[{primarySummary}]; alternate=[{alternateSummary}]; verticalFallback=[{fallbackSummary}]";
+                if (_navigationDiagnostics.TryLog((sourceId, "AethernetProjectionRejected"), projectionSummary, out var suppressed))
+                    GatherBuddy.Log.Warning($"[VendorNavigator] Aethernet ground projection found no acceptable candidate; source={sourceId}; strategies=2; player={playerPosition}; {projectionSummary}{DiagnosticThrottle.Suffix(suppressed)}");
+                return false;
+            }
+
+            _lastProjectionFailureKey = null;
             _navigationDiagnostics.Forget((sourceId, "AethernetProjectionRejected"));
         }
         if (_sourceApproachCandidateIndex == 0 && _sourceApproachCandidates.Count > 0)
             GatherBuddy.Log.Debug($"[VendorNavigator] Projected aethernet ground candidates ready: source={sourceId}; count={_sourceApproachCandidates.Count}; sourcePosition={source.Position}; player={Dalamud.Objects.LocalPlayer!.Position}");
         if (_sourceApproachCandidateIndex >= _sourceApproachCandidates.Count)
         {
-            HandleAethernetApproachCandidatesExhausted(housing, $"All {_sourceApproachCandidates.Count} projected ground candidates were unreachable");
+            HandleAethernetApproachCandidatesExhausted(housing, source, range, $"All {_sourceApproachCandidates.Count} projected ground candidates were unreachable");
             return false;
         }
         var destination = _sourceApproachCandidates[_sourceApproachCandidateIndex];
@@ -2380,7 +2405,8 @@ public class VendorNavigator
         return false;
     }
 
-    private bool TryBuildAethernetApproachCandidates(IGameObject source, AethernetSourceRange range, out string summary)
+    private bool TryBuildAethernetApproachCandidates(IGameObject source, AethernetSourceRange range,
+        bool alternate, bool verticalFallback, out string summary)
     {
         var pointOnFloor = VNavmesh.Query.Mesh.PointOnFloor;
         var player = Dalamud.Objects.LocalPlayer?.Position ?? Vector3.Zero;
@@ -2388,9 +2414,25 @@ public class VendorNavigator
         if (towardPlayer.LengthSquared() < 0.001f) towardPlayer = Vector3.UnitX;
         else towardPlayer = Vector3.Normalize(towardPlayer);
         var minimum = source.HitboxRadius + 0.15f;
-        var distances = new[] { MathF.Max(minimum, range.Limit * 0.65f), MathF.Max(minimum, range.Limit * 0.82f),
-                MathF.Max(minimum, range.Limit - 0.2f) }
-            .Where(distance => distance <= range.Limit).Distinct().ToArray();
+        var approachVerticalTolerance = verticalFallback
+            ? MathF.Min(AethernetFallbackVerticalTolerance, range.VerticalLimit)
+            : AethernetApproachVerticalTolerance;
+        var distances = (alternate
+                ? new[]
+                {
+                    minimum + 0.15f,
+                    minimum + 0.65f,
+                    (minimum + range.Limit) * 0.5f,
+                    range.Limit - 0.1f,
+                    range.Limit + 0.75f,
+                }
+                : new[]
+                {
+                    MathF.Max(minimum, range.Limit * 0.65f),
+                    MathF.Max(minimum, range.Limit * 0.82f),
+                    MathF.Max(minimum, range.Limit - 0.2f),
+                })
+            .Where(distance => distance <= range.Limit + (alternate ? 0.75f : 0f)).Distinct().ToArray();
         var candidates = new List<Vector3>();
         var examined = 0;
         var noResult = 0;
@@ -2423,17 +2465,17 @@ public class VendorNavigator
                 return;
             }
             var verticalDrift = MathF.Abs(projected.Y - source.Position.Y);
-            if (verticalDrift > AethernetApproachVerticalTolerance)
+            if (verticalDrift > approachVerticalTolerance)
             {
                 verticalRejected++;
-                firstRejection ??= $"{method} vertical drift={verticalDrift:F2} exceeds {AethernetApproachVerticalTolerance:F2}; point={projected}; source={source.Position}";
+                firstRejection ??= $"{method} vertical drift={verticalDrift:F2} exceeds {approachVerticalTolerance:F2}; point={projected}; source={source.Position}";
                 return;
             }
             var fromSource = GetHorizontalDistance(projected, source.Position);
-            if (fromSource > range.Limit || fromSource < source.HitboxRadius + VendorApproachMinimumStandOff)
+            if (fromSource > range.HorizontalLimit || fromSource < source.HitboxRadius + VendorApproachMinimumStandOff)
             {
                 rangeRejected++;
-                firstRejection ??= $"{method} interaction distance={fromSource:F2} outside [{source.HitboxRadius + VendorApproachMinimumStandOff:F2},{range.Limit:F2}]; point={projected}; source={source.Position}";
+                firstRejection ??= $"{method} interaction distance={fromSource:F2} outside [{source.HitboxRadius + VendorApproachMinimumStandOff:F2},{range.HorizontalLimit:F2}]; point={projected}; source={source.Position}";
                 return;
             }
             if (!candidates.Any(existing => Vector3.DistanceSquared(existing, projected) < 0.25f))
@@ -2443,8 +2485,10 @@ public class VendorNavigator
         foreach (var angle in VendorApproachCandidateAngles)
         {
             examined++;
-            var horizontal = RotateHorizontal(towardPlayer * distance, angle);
-            var proposed = new Vector3(source.Position.X + horizontal.X, source.Position.Y, source.Position.Z + horizontal.Z);
+            var candidateAngle = alternate ? angle + MathF.PI / 12f : angle;
+            var horizontal = RotateHorizontal(towardPlayer * distance, candidateAngle);
+            var proposed = new Vector3(source.Position.X + horizontal.X,
+                verticalFallback ? player.Y : source.Position.Y, source.Position.Z + horizontal.Z);
             Vector3? floorPoint = null;
             try { floorPoint = pointOnFloor?.Invoke(proposed, true, VendorApproachFloorSearchHeight); }
             catch (Exception ex) { firstRejection ??= $"PointOnFloor threw {ex.Message} at {proposed}"; }
@@ -2457,7 +2501,7 @@ public class VendorNavigator
         }
         if (candidates.Count == 0)
         {
-            summary = $"PointOnFloor/NearestPoint found no acceptable point; proposed={examined}; noResult={noResult}; nonFinite={nonFinite}; verticalRejected={verticalRejected}; rangeRejected={rangeRejected}; driftRejected={driftRejected}; first={firstRejection ?? "none"}; source={source.Position}; radius={range.Radius:F2}; interactionLimit={range.Limit:F2}; verticalLimit={AethernetApproachVerticalTolerance:F2}";
+            summary = $"strategy={(verticalFallback ? "player-floor-vertical-fallback" : alternate ? "alternate-close-and-outer-rings" : "primary")}; PointOnFloor/NearestPoint found no acceptable point; proposed={examined}; noResult={noResult}; nonFinite={nonFinite}; verticalRejected={verticalRejected}; rangeRejected={rangeRejected}; driftRejected={driftRejected}; first={firstRejection ?? "none"}; source={source.Position}; radius={range.Radius:F2}; interactionLimit={range.HorizontalLimit:F2}; verticalLimit={approachVerticalTolerance:F2}";
             return false;
         }
         // Prefer the nearest candidate to the player, then retain deterministic projection order.
@@ -2465,15 +2509,19 @@ public class VendorNavigator
         // Cache projected points for this live source; each path is attempted sequentially.
         _sourceApproachCandidates = candidates;
         _sourceApproachCandidateIndex = 0;
-        summary = $"projected={candidates.Count}; proposed={examined}; noResult={noResult}; nonFinite={nonFinite}; verticalRejected={verticalRejected}; rangeRejected={rangeRejected}; driftRejected={driftRejected}; first={firstRejection ?? "none"}";
+        _sourceApproachUsingVerticalFallback = verticalFallback;
+        summary = $"strategy={(verticalFallback ? "player-floor-vertical-fallback" : alternate ? "alternate-close-and-outer-rings" : "primary")}; projected={candidates.Count}; proposed={examined}; noResult={noResult}; nonFinite={nonFinite}; verticalRejected={verticalRejected}; rangeRejected={rangeRejected}; driftRejected={driftRejected}; first={firstRejection ?? "none"}";
         return true;
     }
 
-    private static bool IsAethernetApproachPoint(Vector3 point, IGameObject source, AethernetSourceRange range)
+    private static bool IsAethernetApproachPoint(Vector3 point, IGameObject source, AethernetSourceRange range,
+        bool verticalFallback = false)
         => float.IsFinite(point.X) && float.IsFinite(point.Y) && float.IsFinite(point.Z)
-            && GetHorizontalDistance(point, source.Position) <= range.Limit
+            && GetHorizontalDistance(point, source.Position) <= range.HorizontalLimit
             && GetHorizontalDistance(point, source.Position) >= source.HitboxRadius + VendorApproachMinimumStandOff
-            && MathF.Abs(point.Y - source.Position.Y) <= AethernetApproachVerticalTolerance;
+            && MathF.Abs(point.Y - source.Position.Y) <= (verticalFallback
+                ? MathF.Min(AethernetFallbackVerticalTolerance, range.VerticalLimit)
+                : AethernetApproachVerticalTolerance);
 
     private void StartAethernetSourcePath(IGameObject source, AethernetSourceRange range, bool housing,
         Vector3 destination, bool shortRepath)
@@ -2558,9 +2606,23 @@ public class VendorNavigator
         return true;
     }
 
-    private void HandleAethernetApproachCandidatesExhausted(bool housing, string reason)
+    private void HandleAethernetApproachCandidatesExhausted(bool housing, IGameObject source,
+        AethernetSourceRange range, string reason)
     {
         if (_sourceApproachCandidateIndex < _sourceApproachCandidates.Count) return;
+        if (!housing && !_sourceVerticalFallbackAttempted)
+        {
+            _sourceVerticalFallbackAttempted = true;
+            _sourceApproachCandidates.Clear();
+            _sourceApproachCandidateIndex = 0;
+            if (TryBuildAethernetApproachCandidates(source, range, alternate: true,
+                    verticalFallback: true, out var fallbackSummary))
+            {
+                GatherBuddy.Log.Debug($"[VendorNavigator] Normal aethernet candidates exhausted; trying player-floor fallback: source={source.GameObjectId}; {fallbackSummary}");
+                return;
+            }
+            GatherBuddy.Log.Debug($"[VendorNavigator] Player-floor aethernet fallback found no candidates: source={source.GameObjectId}; {fallbackSummary}");
+        }
         if (AethernetSourceApproach.CanUseSolutionNineInteractionFallback(
             Dalamud.ClientState.TerritoryType, housing, approachPreparationFailed: true,
             alreadyAttempted: _solutionNineAethernetFallbackAttempted))

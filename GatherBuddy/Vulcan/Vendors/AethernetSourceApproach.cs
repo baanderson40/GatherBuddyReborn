@@ -3,16 +3,24 @@ using System;
 namespace GatherBuddy.Vulcan.Vendors;
 
 /// <summary>Distances from the live object's center, not from a cached map marker.</summary>
-public readonly record struct AethernetSourceRange(float Radius, float Horizontal, float Vertical)
+public readonly record struct AethernetSourceRange(
+    float Radius, float Horizontal, float Vertical, float HorizontalMargin = 3f, float VerticalMargin = 3f)
 {
     public const float InteractionMargin = 3f;
-    public float Limit => Radius + InteractionMargin;
-    public bool IsValid => float.IsFinite(Radius) && Radius >= 0 && float.IsFinite(Limit)
+    public float Limit => HorizontalLimit;
+    public float HorizontalLimit => Radius + HorizontalMargin;
+    public float VerticalLimit => Radius + VerticalMargin;
+    public bool IsValid => float.IsFinite(Radius) && Radius >= 0
+        && float.IsFinite(HorizontalMargin) && HorizontalMargin >= 0
+        && float.IsFinite(VerticalMargin) && VerticalMargin >= 0
+        && float.IsFinite(HorizontalLimit) && float.IsFinite(VerticalLimit)
         && float.IsFinite(Horizontal) && Horizontal >= 0 && float.IsFinite(Vertical) && Vertical >= 0;
     // Separate vertical guard prevents horizontal proximity on another floor from passing.
     // Scale it with the hitbox too: large source object origins may sit above the ground.
-    public bool InRange => IsValid && Horizontal <= Limit && Vertical <= Limit;
-    public float Remaining => IsValid ? MathF.Max(0, MathF.Max(Horizontal - Limit, Vertical - Limit)) : float.PositiveInfinity;
+    public bool InRange => IsValid && Horizontal <= HorizontalLimit && Vertical <= VerticalLimit;
+    public float Remaining => IsValid
+        ? MathF.Max(0, MathF.Max(Horizontal - HorizontalLimit, Vertical - VerticalLimit))
+        : float.PositiveInfinity;
 }
 
 public enum AethernetSourceAction { Approach, Stop, Wait, CorrectiveApproach, Ready, Failed }

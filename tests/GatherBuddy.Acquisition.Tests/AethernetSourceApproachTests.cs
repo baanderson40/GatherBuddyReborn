@@ -37,6 +37,20 @@ public class AethernetSourceApproachTests
     }
 
     [Fact]
+    public void HorizontalAndLiveVerticalLimitsRemainIndependent()
+    {
+        var mainCrystal = new AethernetSourceRange(2, 6, 5, HorizontalMargin: 4, VerticalMargin: 3);
+        var shard = new AethernetSourceRange(1, 4, 3.9f);
+
+        Assert.Equal(6, mainCrystal.HorizontalLimit);
+        Assert.Equal(5, mainCrystal.VerticalLimit);
+        Assert.True(mainCrystal.InRange);
+        Assert.Equal(4, shard.HorizontalLimit);
+        Assert.Equal(4, shard.VerticalLimit);
+        Assert.False(new AethernetSourceRange(2, 5, 5.01f, HorizontalMargin: 4, VerticalMargin: 3).InRange);
+    }
+
+    [Fact]
     public void ShortRepathAimsOneMeterInsideInteractionLimit()
     {
         var slightlyOutOfRange = new AethernetSourceRange(2, 5.04f, 0);
