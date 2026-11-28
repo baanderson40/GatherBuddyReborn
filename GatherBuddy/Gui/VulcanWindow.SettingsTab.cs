@@ -28,6 +28,10 @@ public partial class VulcanWindow
         using (M3Card.Begin("vulcan_settings_crafting", "Crafting", FontAwesomeIcon.Hammer, M3.AccentFor(0)))
         {
             DrawSolverMode();
+            SettingRows.Switch("Return home before crafting",
+                "Use the configured Lifestream command before crafting or queue retainer restock. Skip travel when already inside housing or an FC Company Workshop.",
+                GatherBuddy.Config.VulcanReturnHomeBeforeCrafting,
+                v => GatherBuddy.Config.VulcanReturnHomeBeforeCrafting = v);
             SettingRows.Slider("Action delay", "Delay in milliseconds between crafting actions. 0 is instant, 1000 the most.",
                 GatherBuddy.Config.VulcanExecutionDelayMs, 0, 1000, v => GatherBuddy.Config.VulcanExecutionDelayMs = v);
             SettingRows.Switch("Context menu entries",

@@ -199,7 +199,13 @@ namespace GatherBuddy.AutoGather
 
         public readonly HashSet<Vector3> FarNodesSeenSoFar = [with(8)];
         private readonly TimedNodeSearchState _timedNodeSearchState = new();
+        private readonly FailedGatherSpawnCooldown _failedGatherSpawnCooldown = new();
         public readonly List<uint> VisitedNodes = [with(4)];
+        private (uint TerritoryId, uint NodeId, Vector3 Position)? _nodeApproachRecoveryKey;
+        private Vector3 _nodeApproachRecoveryDestination;
+        private bool _nodeApproachRecoveryAttempted;
+        private bool _nodeApproachRecoveryObservedMovement;
+        private bool _nodeApproachOriginalRouteObserved;
         // Distance at which a node is expected to become visible, and it is given up on if it does not.
         public const float NodeVisibilityDistance = 50f;
 

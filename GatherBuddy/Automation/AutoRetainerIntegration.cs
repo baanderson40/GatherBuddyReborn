@@ -292,7 +292,7 @@ public sealed partial class AutoRetainerIntegration : IAutoRetainerCoordinationP
         return parts.Length == 2 && Lifestream.ChangeCharacter(parts[0], parts[1]) == 0;
     }
 
-    public void Release(bool resume)
+    public void Release(bool resume, bool preserveTravelReceipt)
     {
         if (_parkedHomeTravel is { } home)
         {
@@ -303,9 +303,13 @@ public sealed partial class AutoRetainerIntegration : IAutoRetainerCoordinationP
                 home.Cancel();
                 resume = false;
             }
-            else if (resume)
+            else if (resume || preserveTravelReceipt)
             {
-                if (!home.ResumeFromAutoRetainer(_parkedHomeHandoff)) resume = false;
+                if (!home.ResumeFromAutoRetainer(_parkedHomeHandoff))
+                {
+                    home.Cancel();
+                    resume = false;
+                }
             }
             else
             {

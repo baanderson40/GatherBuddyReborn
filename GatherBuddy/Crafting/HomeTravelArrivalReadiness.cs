@@ -8,11 +8,11 @@ public sealed class HomeTravelArrivalReadiness
     public static readonly TimeSpan OutdoorStability = TimeSpan.FromSeconds(2);
     private TimeSpan? _clearSince;
 
-    public bool Observe(TimeSpan now, bool busy, bool playerReady, bool insideHousing)
+    public bool Observe(TimeSpan now, bool busy, bool playerReady, bool insideFastPath)
     {
         if (busy || !playerReady) { Reset(); return false; }
         _clearSince ??= now;
-        return insideHousing || now - _clearSince.Value >= OutdoorStability;
+        return insideFastPath || now - _clearSince.Value >= OutdoorStability;
     }
 
     public void Reset() => _clearSince = null;

@@ -43,8 +43,10 @@ public static class CraftingGatherBridge
     internal static bool TryHandleGatherHomeReturn(out bool submitted)
     {
         submitted = false;
-        if (!_waitingForGatherComplete || !GatherBuddy.Config.AutoGatherConfig.GoHomeWhenIdle || !IsGatheringComplete())
+        if (!_waitingForGatherComplete || !IsGatheringComplete())
             return false;
+        if (!GatherBuddy.Config.VulcanReturnHomeBeforeCrafting)
+            return true; // Handle final gather handoff without falling through to AutoGather's separate idle-return setting.
         var travel = _isQueueMode ? _queueProcessor?.HomeTravel : _singleHomeTravel;
         if (travel == null) return false;
         travel.Tick(allowStart: true);

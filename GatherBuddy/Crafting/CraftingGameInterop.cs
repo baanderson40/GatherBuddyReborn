@@ -352,7 +352,7 @@ public static class CraftingGameInterop
             return;
         }
         if (_pendingHomeCraft != null) return;
-        if (!homeTravelHandled && GatherBuddy.Config.AutoGatherConfig.GoHomeWhenIdle)
+        if (!homeTravelHandled && GatherBuddy.Config.VulcanReturnHomeBeforeCrafting)
         {
             _pendingHomeTravel = new();
             _pendingHomeCraft = (recipe, quantity, useQuickSynthesis);

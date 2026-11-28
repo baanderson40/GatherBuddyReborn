@@ -38,7 +38,7 @@ public class PreCraftTravelBoundaryTests
         Assert.Contains("Pause", Calls("CraftingQueueProcessor", "EnsureCraftPreparationReady"));
         Assert.Contains("TryHandleGatherHomeReturn", Calls("AutoGather", "GoHome"));
         Assert.Contains("IsGatheringComplete", Calls("CraftingGatherBridge", "TryHandleGatherHomeReturn"));
-        Assert.Contains("get_GoHomeWhenIdle", Calls("CraftingGatherBridge", "TryHandleGatherHomeReturn"));
+        Assert.Contains("get_VulcanReturnHomeBeforeCrafting", Calls("CraftingGatherBridge", "TryHandleGatherHomeReturn"));
         Assert.Contains("Observe", Calls("CraftingGatherBridge", "ObserveHomeTravel"));
         Assert.Contains("ObserveHomeTravel", Calls("GatherBuddy", "Update"));
         Assert.Contains("Tick", Calls("CraftingGameInterop", "Update"));
@@ -46,6 +46,11 @@ public class PreCraftTravelBoundaryTests
         Assert.Contains("Cancel", Calls("CraftingQueueProcessor", "Reset"));
         Assert.Contains("RecordSubmission", Calls("PreCraftHomeTravelHost", "Tick"));
         Assert.Contains("Invoke", Calls("PreCraftHomeTravelHost", "Tick")); // Lifestream IPC is a delegate field.
+        Assert.Contains("get_VulcanReturnHomeBeforeCrafting", Calls("PreCraftHomeTravelHost", "Tick"));
+        Assert.Contains("get_VulcanReturnHomeBeforeCrafting", Calls("CraftingGameInterop", "StartCraft"));
+        Assert.Contains("get_VulcanReturnHomeBeforeCrafting", Calls("CraftingGatherBridge", "TryHandleGatherHomeReturn"));
+        Assert.Contains("Migrate17To18", Calls("Configuration", "Load"));
+        Assert.Contains("MigratePreference", Calls("Configuration", "Migrate17To18"));
         Assert.DoesNotContain("ExecuteCommand", Calls("PreCraftHomeTravelHost", "Observe"));
         Assert.DoesNotContain("ExecuteCommand", Calls("PreCraftHomeTravel", "Observe"));
         var startup = Calls("CraftingQueueProcessor", "StartQueue");

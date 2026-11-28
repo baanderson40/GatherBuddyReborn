@@ -127,7 +127,8 @@ public class RetainerCoordinationBoundaryTests
     public void ArrivalHeuristicUsesHousingStateAndRechecksBeforeBellAccess()
     {
         Assert.Contains("ObserveArrival", Calls("PreCraftHomeTravelHost", "Tick"));
-        Assert.Contains("IsInsideHousing", Calls("PreCraftHomeTravelHost", "ObserveArrival"));
+        Assert.Contains("IsInsidePreCraftDestination", Calls("PreCraftHomeTravelHost", "ObserveArrival"));
+        Assert.Contains("IsCompanyWorkshop", Calls("PreCraftHomeTravelRules", "IsIndoorFastPath"));
         Assert.Contains("IsInside", Calls("HousingManager", "IsInsideHousing"));
         Assert.DoesNotContain("get_TerritoryType", Calls("HousingManager", "IsInsideHousing"));
         foreach (var method in new[] { "SuspendForAutoRetainer", "ResumeFromAutoRetainer", "InvalidateForGathering" })
@@ -142,8 +143,8 @@ public class RetainerCoordinationBoundaryTests
     public void HousingInteriorIsCheckedBeforeHomeCommandReservation()
     {
         var tick = Calls("PreCraftHomeTravelHost", "Tick").ToList();
-        Assert.Contains("IsInsideHousing", tick);
-        Assert.Contains("get_SkippedInsideHousing", tick);
+        Assert.Contains("IsInsidePreCraftDestination", tick);
+        Assert.Contains("get_SkippedIndoorFastPath", tick);
         Assert.True(tick.IndexOf("IsInsideHousing") < tick.IndexOf("RecordSubmission"));
         Assert.DoesNotContain("get_TerritoryType", tick);
     }

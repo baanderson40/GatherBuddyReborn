@@ -29,7 +29,7 @@ public interface IAutoRetainerCoordinationPort
     void CancelPass();
     bool TryFinishCancellation(out string reason);
     bool ReturnTo(AutoRetainerCharacter character);
-    void Release(bool resume);
+    void Release(bool resume, bool preserveTravelReceipt);
     void Log(string message);
 }
 
@@ -314,17 +314,17 @@ public sealed class AutoRetainerCoordinator
             if (!_yielded && !_port.TryYield(out _)) return false;
             _resume = false;
             _repeatedWork = 0;
-            Finish(now);
+            Finish(now, preserveTravelReceipt: true);
             return true;
         }
         catch (Exception) { return false; }
     }
 
-    private void Finish(TimeSpan now)
+    private void Finish(TimeSpan now, bool preserveTravelReceipt = false)
     {
         var stopped = _stopRequested;
         // Keep the gate closed while reconciling/releasing participants.
-        _port.Release(_resume && _port.ActiveOwner == _owner);
+        _port.Release(_resume && _port.ActiveOwner == _owner, preserveTravelReceipt);
         _yielded = false;
         _owner = null;
         _original = null;

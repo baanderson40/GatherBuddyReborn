@@ -65,7 +65,7 @@ internal sealed partial class GatherBuddySettings
                     () => AutoCfg.TeleportToNextNode, v => AutoCfg.TeleportToNextNode = v),
                 PluginToggle("Go home when done", "Uses the '/li auto' command to take you home when done gathering.",
                     () => AutoCfg.GoHomeWhenDone, v => AutoCfg.GoHomeWhenDone = v, Lifestream),
-                PluginToggle("Go home when idle", "Uses the '/li auto' command to take you home when waiting for timed nodes.",
+                PluginToggle("Go home when idle", "Uses the configured Lifestream command when AutoGather waits for timed nodes. Vulcan's pre-craft return is configured separately in Vulcan Settings.",
                     () => AutoCfg.GoHomeWhenIdle, v => AutoCfg.GoHomeWhenIdle = v, Lifestream),
                 Toggle("Gather any crystals when The Giving Land is off cooldown",
                     "Gather random crystals on any regular node when The Giving Land is available, regardless of the current target item.",

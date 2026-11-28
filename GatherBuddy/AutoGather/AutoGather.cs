@@ -31,6 +31,7 @@ using RebornMaterial;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Numerics;
 using System.Threading.Tasks;
 using Fish = GatherBuddy.Classes.Fish;
@@ -470,6 +471,8 @@ namespace GatherBuddy.AutoGather
                     FarNodesSeenSoFar.Clear();
                     _timedNodeSearchState.Reset();
                     VisitedNodes.Clear();
+                    _failedGatherSpawnCooldown.Clear();
+                    ResetNodeApproachRecovery();
                     _lastAetherTarget = DateTime.MinValue;
                     _diademPathIndex = -1;
                     _fishDetectedPlayer = false;
@@ -544,7 +547,7 @@ namespace GatherBuddy.AutoGather
             {
                 if (submitted)
                     TaskManager.EnqueueImmediate(() => !Lifestream.IsBusy(), 120000, "Wait until Lifestream is done");
-                return submitted;
+                return true; // The craft handoff owns this decision even when travel is disabled or already satisfied.
             }
 
             if (Dalamud.Conditions[ConditionFlag.BoundByDuty])
@@ -599,6 +602,8 @@ namespace GatherBuddy.AutoGather
             if (_lastTerritory != currentTerritory)
             {
                 ResetFishingApproachState();
+                _failedGatherSpawnCooldown.Clear();
+                ResetNodeApproachRecovery();
                 _lastTerritory = currentTerritory;
                 _diademPathIndex = -1;
 
@@ -2165,7 +2170,9 @@ namespace GatherBuddy.AutoGather
                     var positionCount = 0;
                     foreach (var position in WorldData.WorldLocationsByNodeId[path[i]])
                     {
-                        if (!IsBlacklisted(position))
+                        if (!IsBlacklisted(position)
+                            && !_failedGatherSpawnCooldown.Contains(Dalamud.ClientState.TerritoryType,
+                                path[i], position, DateTime.UtcNow))
                         {
                             positionSum += position;
                             ++positionCount;
@@ -2186,15 +2193,27 @@ namespace GatherBuddy.AutoGather
                     }
                 }
             }
+            if (_diademPathIndex == -1)
+            {
+                AutoStatus = "Waiting for failed node approaches to retry...";
+                StopNavigation();
+                return true;
+            }
             else
             {
                 var prevIndex = _diademPathIndex;
-                while (!_diadem.IsNodeAvailable(path[_diademPathIndex]) || WorldData.WorldLocationsByNodeId[path[_diademPathIndex]].TrueForAll(IsBlacklisted))
+                while (!_diadem.IsNodeAvailable(path[_diademPathIndex])
+                    || WorldData.WorldLocationsByNodeId[path[_diademPathIndex]].TrueForAll(position =>
+                        IsBlacklisted(position)
+                        || _failedGatherSpawnCooldown.Contains(Dalamud.ClientState.TerritoryType,
+                            path[_diademPathIndex], position, DateTime.UtcNow)))
                 {
                     _diademPathIndex = (_diademPathIndex + 1) % path.Length;
                     if (prevIndex == _diademPathIndex)
                     {
-                        AbortAutoGather("All active nodes in The Diadem are blacklisted");
+                        AutoStatus = "Waiting for failed node approaches to retry...";
+                        StopNavigation();
+                        return true;
                     }
                 }
             }
@@ -2203,7 +2222,9 @@ namespace GatherBuddy.AutoGather
             var nextNode = FindGameObject(o => o.ObjectKind == ObjectKind.GatheringPoint && o.BaseId == nextNodeId && o.IsTargetable);
             if (nextNode != null)
             {
-                if (IsBlacklisted(nextNode.Position))
+                if (IsBlacklisted(nextNode.Position)
+                    || _failedGatherSpawnCooldown.Contains(Dalamud.ClientState.TerritoryType,
+                        nextNode.BaseId, nextNode.Position, DateTime.UtcNow))
                 {
                     _diademPathIndex = (_diademPathIndex + 1) % path.Length;
                 }
@@ -2224,10 +2245,15 @@ namespace GatherBuddy.AutoGather
             else
             {
                 var nodeId = path[_diademPathIndex];
-                var nodePositions = WorldData.WorldLocationsByNodeId[nodeId];
+                var nodePositions = WorldData.WorldLocationsByNodeId[nodeId]
+                    .Where(position => !IsBlacklisted(position)
+                        && !_failedGatherSpawnCooldown.Contains(Dalamud.ClientState.TerritoryType,
+                            nodeId, position, DateTime.UtcNow))
+                    .ToList();
                 if (nodePositions.Count == 0)
                 {
-                    throw new InvalidOperationException($"Diadem node {nodeId} has no known positions.");
+                    _diademPathIndex = (_diademPathIndex + 1) % path.Length;
+                    return true;
                 }
 
                 var pos = nodePositions[0];
@@ -2296,6 +2322,7 @@ namespace GatherBuddy.AutoGather
             }
 
             var allPositions = new List<(uint Id, Vector3 Position)>();
+            var cooldownExcluded = 0;
             foreach (var (worldNodeId, worldPositions) in next.Location.WorldPositions)
             {
                 if (VisitedNodes.Contains(worldNodeId))
@@ -2305,11 +2332,23 @@ namespace GatherBuddy.AutoGather
 
                 foreach (var worldPosition in worldPositions)
                 {
-                    if (!IsBlacklisted(worldPosition))
+                    if (_failedGatherSpawnCooldown.Contains(Dalamud.ClientState.TerritoryType,
+                            worldNodeId, worldPosition, DateTime.UtcNow))
+                    {
+                        cooldownExcluded++;
+                    }
+                    else if (!IsBlacklisted(worldPosition))
                     {
                         allPositions.Add((worldNodeId, worldPosition));
                     }
                 }
+            }
+
+            if (allPositions.Count == 0 && cooldownExcluded > 0)
+            {
+                StopNavigation();
+                AutoStatus = "Waiting for failed node approaches to retry...";
+                return;
             }
 
             var isSpearfishing = next.Fish?.IsSpearFish == true;

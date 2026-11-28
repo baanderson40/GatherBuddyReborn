@@ -352,8 +352,8 @@ public class PreCraftHomeTravelTests
     public void AlreadyInsideHousingSkipsCommandAndSharesReceiptAcrossSamePhase()
     {
         var gate = new PreCraftHomeTravel(7);
-        Assert.Equal(HomeTravelAdmission.Ready, gate.Observe(TimeSpan.Zero, 7, "auto", true, false, true, insideHousing: true));
-        Assert.True(gate.SkippedInsideHousing);
+        Assert.Equal(HomeTravelAdmission.Ready, gate.Observe(TimeSpan.Zero, 7, "auto", true, false, true, insideFastPath: true));
+        Assert.True(gate.SkippedIndoorFastPath);
         Assert.False(gate.Submitted);
         Assert.False(gate.RecordSubmission(TimeSpan.Zero, "auto"));
         gate.Consume();
@@ -367,10 +367,10 @@ public class PreCraftHomeTravelTests
     public void HousingSkipRequiresIdleAndPlayerReadiness(bool busy, bool ready)
     {
         var gate = new PreCraftHomeTravel(7);
-        Assert.Equal(HomeTravelAdmission.Waiting, gate.Observe(TimeSpan.Zero, 7, "auto", true, busy, ready, insideHousing: true));
-        Assert.False(gate.SkippedInsideHousing);
-        Assert.Equal(HomeTravelAdmission.Ready, gate.Observe(TimeSpan.FromSeconds(1), 7, "auto", true, false, true, insideHousing: true));
-        Assert.True(gate.SkippedInsideHousing);
+        Assert.Equal(HomeTravelAdmission.Waiting, gate.Observe(TimeSpan.Zero, 7, "auto", true, busy, ready, insideFastPath: true));
+        Assert.False(gate.SkippedIndoorFastPath);
+        Assert.Equal(HomeTravelAdmission.Ready, gate.Observe(TimeSpan.FromSeconds(1), 7, "auto", true, false, true, insideFastPath: true));
+        Assert.True(gate.SkippedIndoorFastPath);
     }
 
     [Theory]
@@ -379,7 +379,7 @@ public class PreCraftHomeTravelTests
     public void SkippedButUnconsumedPhaseStillWaitsWithoutAllowingSubmission(bool busy, bool ready)
     {
         var gate = new PreCraftHomeTravel(7);
-        gate.Observe(TimeSpan.Zero, 7, "auto", true, false, true, insideHousing: true);
+        gate.Observe(TimeSpan.Zero, 7, "auto", true, false, true, insideFastPath: true);
         Assert.Equal(HomeTravelAdmission.Waiting, gate.Observe(TimeSpan.FromSeconds(1), 7, "auto", true, busy, ready));
         gate.Consume();
         Assert.False(gate.Consumed);
@@ -393,12 +393,12 @@ public class PreCraftHomeTravelTests
     public void OutsideAndInnClassificationDoNotSkipAndDisabledSettingStaysIndependent()
     {
         var outside = new PreCraftHomeTravel(7);
-        Assert.Equal(HomeTravelAdmission.NeedsCommand, outside.Observe(TimeSpan.Zero, 7, "auto", true, false, true, insideHousing: false));
-        Assert.False(outside.SkippedInsideHousing);
+        Assert.Equal(HomeTravelAdmission.NeedsCommand, outside.Observe(TimeSpan.Zero, 7, "auto", true, false, true, insideFastPath: false));
+        Assert.False(outside.SkippedIndoorFastPath);
         Assert.True(outside.RecordSubmission(TimeSpan.Zero, "auto"));
         var disabled = new PreCraftHomeTravel(7);
-        Assert.Equal(HomeTravelAdmission.Ready, disabled.Observe(TimeSpan.Zero, 7, "auto", false, false, true, insideHousing: true));
-        Assert.False(disabled.SkippedInsideHousing);
+        Assert.Equal(HomeTravelAdmission.Ready, disabled.Observe(TimeSpan.Zero, 7, "auto", false, false, true, insideFastPath: true));
+        Assert.False(disabled.SkippedIndoorFastPath);
     }
 
     [Fact]
@@ -406,19 +406,19 @@ public class PreCraftHomeTravelTests
     {
         var gate = new PreCraftHomeTravel(7);
         gate.RecordSubmission(TimeSpan.Zero, "auto");
-        Assert.Equal(HomeTravelAdmission.Waiting, gate.Observe(TimeSpan.Zero, 7, "auto", true, false, true, insideHousing: true));
-        Assert.False(gate.SkippedInsideHousing);
-        Assert.Equal(HomeTravelAdmission.Failed, gate.Observe(TimeSpan.FromSeconds(10), 7, "auto", true, false, true, insideHousing: true));
+        Assert.Equal(HomeTravelAdmission.Waiting, gate.Observe(TimeSpan.Zero, 7, "auto", true, false, true, insideFastPath: true));
+        Assert.False(gate.SkippedIndoorFastPath);
+        Assert.Equal(HomeTravelAdmission.Failed, gate.Observe(TimeSpan.FromSeconds(10), 7, "auto", true, false, true, insideFastPath: true));
     }
 
     [Fact]
     public void GatheringDepartureAndFreshRunDoNotReuseHousingSkip()
     {
         var gate = new PreCraftHomeTravel(7);
-        gate.Observe(TimeSpan.Zero, 7, "auto", true, false, true, insideHousing: true);
+        gate.Observe(TimeSpan.Zero, 7, "auto", true, false, true, insideFastPath: true);
         gate.Consume();
         Assert.True(gate.InvalidateForGathering());
-        Assert.False(gate.SkippedInsideHousing);
+        Assert.False(gate.SkippedIndoorFastPath);
         Assert.Equal(HomeTravelAdmission.NeedsCommand, Tick(gate, 1000));
         Assert.Equal(HomeTravelAdmission.NeedsCommand, Tick(new(7), 1000));
     }
@@ -427,12 +427,12 @@ public class PreCraftHomeTravelTests
     public void CoordinatedArSuspensionPreservesHousingSkipButUnownedLogoutStillFails()
     {
         var gate = new PreCraftHomeTravel(7); var handoff = Guid.NewGuid();
-        gate.Observe(TimeSpan.Zero, 7, "auto", true, false, true, insideHousing: true);
+        gate.Observe(TimeSpan.Zero, 7, "auto", true, false, true, insideFastPath: true);
         Assert.True(gate.SuspendForAutoRetainer(handoff, TimeSpan.FromSeconds(1), 7));
         Assert.Equal(HomeTravelAdmission.Waiting, Tick(gate, 300000, character: 0));
         Assert.True(gate.ResumeFromAutoRetainer(handoff, TimeSpan.FromSeconds(301), 7));
         Assert.Equal(HomeTravelAdmission.Ready, Tick(gate, 301000));
-        Assert.True(gate.SkippedInsideHousing);
+        Assert.True(gate.SkippedIndoorFastPath);
         Assert.False(gate.RecordSubmission(TimeSpan.FromSeconds(301), "auto"));
         Assert.Equal(HomeTravelAdmission.Failed, Tick(gate, 302000, character: 0));
     }
@@ -445,11 +445,11 @@ public class PreCraftHomeTravelTests
             var gate = new PreCraftHomeTravel(7);
             if (cancelled) gate.Cancel(); else gate.Fail("Existing uncertainty");
             Assert.Equal(cancelled ? HomeTravelAdmission.Cancelled : HomeTravelAdmission.Failed,
-                gate.Observe(TimeSpan.Zero, 7, "auto", true, false, true, insideHousing: true));
-            Assert.False(gate.SkippedInsideHousing);
+                gate.Observe(TimeSpan.Zero, 7, "auto", true, false, true, insideFastPath: true));
+            Assert.False(gate.SkippedIndoorFastPath);
         }
         var waiting = new PreCraftHomeTravel(7);
-        waiting.Observe(TimeSpan.Zero, 7, "auto", true, false, true, insideHousing: true);
+        waiting.Observe(TimeSpan.Zero, 7, "auto", true, false, true, insideFastPath: true);
         Assert.Equal(HomeTravelAdmission.Failed, Tick(waiting, 120000, busy: true));
         Assert.False(waiting.RecordSubmission(TimeSpan.FromSeconds(120), "auto"));
     }

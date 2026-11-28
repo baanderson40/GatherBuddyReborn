@@ -88,6 +88,34 @@ namespace GatherBuddy.AutoGather
             // We can open a node with less than 3 vertical and less than 3.5 horizontal separation
             var hSeparation = Vector2.Distance(gameObject.Position.ToVector2(), Player.Position.ToVector2());
             var vSeparation = Math.Abs(gameObject.Position.Y - Player.Position.Y);
+            var inInteractionRange = GatherNodeApproachRules.IsWithinInteractionRange(gameObject.Position, Player.Position);
+            if (inInteractionRange)
+            {
+                ResetNodeApproachRecovery();
+            }
+            else
+            {
+                var key = (Dalamud.ClientState.TerritoryType, gameObject.BaseId, gameObject.Position);
+                if (_nodeApproachRecoveryKey != key)
+                {
+                    ResetNodeApproachRecovery();
+                    _nodeApproachRecoveryKey = key;
+                }
+
+                if (_nodeApproachRecoveryKey == key)
+                {
+                    if (CurrentDestination == gameObject.Position && (IsPathing || IsPathGenerating))
+                        _nodeApproachOriginalRouteObserved = true;
+                    else if (_nodeApproachOriginalRouteObserved && !IsPathing && !IsPathGenerating
+                        && TryRecoverElevatedNodeApproach(gameObject))
+                        return;
+                }
+
+                if (hSeparation < 3.5f && vSeparation >= 3f
+                    && !IsPathing && !IsPathGenerating
+                    && TryRecoverElevatedNodeApproach(gameObject))
+                    return;
+            }
 
             if (hSeparation < 3.5)
             {
@@ -152,6 +180,128 @@ namespace GatherBuddy.AutoGather
             {
                 Navigate(gameObject.Position, ShouldFly(gameObject.Position), nodeId: gameObject.BaseId);
             }
+        }
+
+        private bool TryRecoverElevatedNodeApproach(IGameObject node)
+        {
+            var now = DateTime.UtcNow;
+            var territoryId = Dalamud.ClientState.TerritoryType;
+            var key = (territoryId, node.BaseId, node.Position);
+            if (_nodeApproachRecoveryKey != key)
+            {
+                _nodeApproachRecoveryKey = key;
+                _nodeApproachRecoveryDestination = default;
+                _nodeApproachRecoveryAttempted = false;
+                _nodeApproachRecoveryObservedMovement = false;
+                _nodeApproachOriginalRouteObserved = false;
+            }
+
+            if (_failedGatherSpawnCooldown.Contains(territoryId, node.BaseId, node.Position, now))
+            {
+                StopNavigation();
+                AutoStatus = "Skipping unreachable node...";
+                return true;
+            }
+
+            if (_nodeApproachRecoveryAttempted)
+            {
+                if (IsPathing || IsPathGenerating)
+                {
+                    _nodeApproachRecoveryObservedMovement = true;
+                    AutoStatus = "Trying an alternate approach to elevated node...";
+                    return true;
+                }
+
+                if (!_nodeApproachRecoveryObservedMovement)
+                {
+                    _nodeApproachRecoveryObservedMovement = true;
+                    AutoStatus = "Trying an alternate approach to elevated node...";
+                    return true;
+                }
+
+                _failedGatherSpawnCooldown.MarkFailed(territoryId, node.BaseId, node.Position, now);
+                GatherBuddy.Log.Warning(
+                    $"[AutoGather] Elevated node approach failed; temporarily skipping spawn: territory={territoryId}; node={node.BaseId}; player={Player.Position}; endpoint={_nodeApproachRecoveryDestination}; nodePosition={node.Position}; horizontal={Vector2.Distance(Player.Position.ToVector2(), node.Position.ToVector2()):F2}; vertical={Math.Abs(Player.Position.Y - node.Position.Y):F2}; cooldown={FailedGatherSpawnCooldown.Duration.TotalSeconds:F0}s");
+                StopNavigation();
+                AutoStatus = "Elevated node unreachable; trying another spawn...";
+                ResetNodeApproachRecovery();
+                return true;
+            }
+
+            if (!TryGetElevatedNodeApproach(node, out var approach))
+            {
+                _failedGatherSpawnCooldown.MarkFailed(territoryId, node.BaseId, node.Position, now);
+                GatherBuddy.Log.Warning(
+                    $"[AutoGather] No reachable-height approach point found; temporarily skipping spawn: territory={territoryId}; node={node.BaseId}; player={Player.Position}; nodePosition={node.Position}; horizontal={Vector2.Distance(Player.Position.ToVector2(), node.Position.ToVector2()):F2}; vertical={Math.Abs(Player.Position.Y - node.Position.Y):F2}; cooldown={FailedGatherSpawnCooldown.Duration.TotalSeconds:F0}s");
+                StopNavigation();
+                AutoStatus = "No safe approach to elevated node; trying another spawn...";
+                ResetNodeApproachRecovery();
+                return true;
+            }
+
+            _nodeApproachRecoveryAttempted = true;
+            _nodeApproachRecoveryDestination = approach;
+            _nodeApproachRecoveryObservedMovement = IsPathing || IsPathGenerating;
+            GatherBuddy.Log.Warning(
+                $"[AutoGather] Player is beside node but below interaction height; trying alternate direct approach: territory={territoryId}; node={node.BaseId}; player={Player.Position}; endpoint={approach}; nodePosition={node.Position}; horizontal={Vector2.Distance(Player.Position.ToVector2(), node.Position.ToVector2()):F2}; vertical={Math.Abs(Player.Position.Y - node.Position.Y):F2}");
+            Navigate(approach, shouldFly: true, direct: true);
+            AutoStatus = "Trying an alternate approach to elevated node...";
+            return true;
+        }
+
+        private static bool TryGetElevatedNodeApproach(IGameObject node, out Vector3 approach)
+        {
+            const float desiredRadius = 2.5f;
+            const float horizontalLimit = 3.25f;
+            const float verticalLimit = 2.5f;
+            var candidates = new List<Vector3>(16);
+            var player = Player.Position;
+            var toPlayer = new Vector2(player.X - node.Position.X, player.Z - node.Position.Z);
+            var preferredAngle = toPlayer.LengthSquared() > 0.001f ? MathF.Atan2(toPlayer.Y, toPlayer.X) : 0f;
+
+            for (var i = 0; i < 16; i++)
+            {
+                var angle = preferredAngle + i * (MathF.Tau / 16f);
+                var proposed = new Vector3(
+                    node.Position.X + MathF.Cos(angle) * desiredRadius,
+                    node.Position.Y,
+                    node.Position.Z + MathF.Sin(angle) * desiredRadius);
+                Vector3? projected = null;
+                try
+                {
+                    projected = VNavmesh.Query.Mesh.NearestPoint(proposed, 2.0f, verticalLimit);
+                }
+                catch (Exception ex)
+                {
+                    GatherBuddy.Log.Debug($"[AutoGather] Elevated node approach projection failed at {proposed}: {ex.GetBaseException().Message}");
+                }
+
+                if (projected is not { } point
+                    || Vector2.Distance(point.ToVector2(), node.Position.ToVector2()) > horizontalLimit
+                    || Math.Abs(point.Y - node.Position.Y) >= verticalLimit
+                    || Vector3.DistanceSquared(point, player) < 0.25f)
+                    continue;
+
+                candidates.Add(point);
+            }
+
+            if (candidates.Count == 0)
+            {
+                approach = default;
+                return false;
+            }
+
+            approach = candidates.OrderBy(point => Vector3.DistanceSquared(point, player)).First();
+            return true;
+        }
+
+        private void ResetNodeApproachRecovery()
+        {
+            _nodeApproachRecoveryKey = null;
+            _nodeApproachRecoveryDestination = default;
+            _nodeApproachRecoveryAttempted = false;
+            _nodeApproachRecoveryObservedMovement = false;
+            _nodeApproachOriginalRouteObserved = false;
         }
 
         private void ForceLandAndDismount()
@@ -401,6 +551,28 @@ namespace GatherBuddy.AutoGather
                             pathtype = "fallback direct";
                             _navState.stage++;
                             break;
+                    }
+                }
+
+                if (_nodeApproachRecoveryKey is { } recovery
+                    && recovery.Position == _navState.destination
+                    && !_nodeApproachRecoveryAttempted)
+                {
+                    var hasEndpoint = _navState.direct
+                        ? path.Count > 0
+                        : GatherNodeApproachRules.TryGetCombinedPathGroundEndpoint(path, out _);
+                    var endpoint = _navState.direct
+                        ? (path.Count > 0 ? path[^1] : default)
+                        : (GatherNodeApproachRules.TryGetCombinedPathGroundEndpoint(path, out var groundEndpoint)
+                            ? groundEndpoint
+                            : default);
+                    if (!hasEndpoint || !GatherNodeApproachRules.IsPathEndpointReachable(recovery.Position, endpoint))
+                    {
+                        _nodeApproachOriginalRouteObserved = true;
+                        GatherBuddy.Log.Warning(
+                            $"[AutoGather] Rejecting gathering-node path ending outside interaction range: territory={recovery.TerritoryId}; node={recovery.NodeId}; player={Player.Position}; endpoint={endpoint}; nodePosition={recovery.Position}; horizontal={Vector2.Distance(endpoint.ToVector2(), recovery.Position.ToVector2()):F2}; vertical={Math.Abs(endpoint.Y - recovery.Position.Y):F2}; combined={!_navState.direct}");
+                        StopNavigation();
+                        return;
                     }
                 }
 

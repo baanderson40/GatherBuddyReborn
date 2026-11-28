@@ -30,9 +30,10 @@ public class AutoRetainerCoordinatorTests
         public bool CancellationClean { get; set; } = true;
         public bool CancelThrows { get; set; }
         public bool? Resumed;
+        public bool? PreservedTravelReceipt;
         public Action? DuringStart;
         public Action? DuringYield;
-        public Action<bool>? DuringRelease;
+        public Action<bool, bool>? DuringRelease;
         public AutoRetainerProcessingMode StartedMode;
         public void VerifyAvailable() { if (!Available) throw new InvalidOperationException("IPC missing"); }
         public string? FindReadyWork(AutoRetainerProcessingMode mode) => Work;
@@ -52,7 +53,13 @@ public class AutoRetainerCoordinatorTests
             MultiModeEnabled = false;
         }
         public bool TryFinishCancellation(out string reason) { reason = "Retainer menu still closing"; return CancellationClean; }
-        public void Release(bool resume) { Releases++; Resumed = resume; DuringRelease?.Invoke(resume); }
+        public void Release(bool resume, bool preserveTravelReceipt)
+        {
+            Releases++;
+            Resumed = resume;
+            PreservedTravelReceipt = preserveTravelReceipt;
+            DuringRelease?.Invoke(resume, preserveTravelReceipt);
+        }
         public void Log(string message) { }
     }
 
@@ -70,9 +77,10 @@ public class AutoRetainerCoordinatorTests
             port.CharacterReady = false;
             Assert.Equal(HomeTravelAdmission.Waiting, home.Observe(now, 0, "auto", true, false, false));
         };
-        port.DuringRelease = resume =>
+        port.DuringRelease = (resume, preserveTravelReceipt) =>
         {
             Assert.True(resume);
+            Assert.False(preserveTravelReceipt);
             Assert.True(port.CharacterReady);
             Assert.True(home.ResumeFromAutoRetainer(coordinator.HandoffId, now, port.Character!.ContentId));
         };
@@ -764,6 +772,43 @@ public class AutoRetainerCoordinatorTests
         coordinator.Tick(TimeSpan.FromSeconds(3));
         Assert.False(coordinator.YieldRequested);
         Assert.False(port.Resumed);
+    }
+
+    [Fact]
+    public void ManualRecoveryPreservesParkedTravelReceiptWithoutResumingOwner()
+    {
+        var port = new Port();
+        var coordinator = new AutoRetainerCoordinator(port);
+        var home = new PreCraftHomeTravel(42);
+        var now = TimeSpan.Zero;
+        Assert.True(home.RecordSubmission(now, "auto"));
+        port.DuringYield = () => Assert.True(
+            home.SuspendForAutoRetainer(coordinator.HandoffId, now, port.Character!.ContentId));
+        port.DuringRelease = (resume, preserveTravelReceipt) =>
+        {
+            Assert.False(resume);
+            Assert.True(preserveTravelReceipt);
+            Assert.True(home.ResumeFromAutoRetainer(coordinator.HandoffId, now, port.Character!.ContentId));
+        };
+
+        coordinator.Tick(now);
+        Assert.True(home.Suspended);
+        port.Available = false;
+        now = TimeSpan.FromSeconds(1);
+        coordinator.Tick(now);
+        Assert.Equal(AutoRetainerHandoffState.Failed, coordinator.State);
+
+        port.Available = true;
+        port.MultiModeEnabled = false;
+        now = TimeSpan.FromSeconds(2);
+        Assert.True(coordinator.Recover(now));
+
+        Assert.False(home.Suspended);
+        Assert.True(home.Submitted);
+        Assert.False(home.RecordSubmission(now, "auto"));
+        Assert.False(port.Resumed);
+        Assert.True(port.PreservedTravelReceipt);
+        Assert.Equal(AutoRetainerHandoffState.Monitoring, coordinator.State);
     }
 
     [Fact]

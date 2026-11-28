@@ -16,7 +16,7 @@ namespace GatherBuddy.Config;
 
 public partial class Configuration : IPluginConfiguration
 {
-    public int Version { get; set; } = 17;
+    public int Version { get; set; } = 18;
 
     // Set Names
     public string BotanistSetName { get; set; } = "Botanist";
@@ -79,6 +79,7 @@ public partial class Configuration : IPluginConfiguration
     public VulcanRepairConfig VulcanRepairConfig { get; set; } = new();
     public VulcanMateriaConfig VulcanMateriaConfig { get; set; } = new();
     public VulcanRetainerBellConfig VulcanRetainerBellConfig { get; set; } = new();
+    public bool VulcanReturnHomeBeforeCrafting { get; set; } = true;
     public int VulcanExecutionDelayMs { get; set; } = 300;
     public Marketboard.MarketboardPreferences MarketboardPreferences { get; set; } = new();
     public bool VulcanContextMenuEntries { get; set; } = true;
@@ -278,6 +279,7 @@ public partial class Configuration : IPluginConfiguration
                 config.Migrate14To15();
                 config.Migrate15To16();
                 config.Migrate16To17();
+                config.Migrate17To18();
                 changed |= config.HiddenGatherableLevelFilters == null;
                 config.HiddenGatherableLevelFilters ??= [];
                 changed |= config.HiddenGatherableFolkloreFilters == null;
@@ -506,6 +508,17 @@ public partial class Configuration : IPluginConfiguration
         }
 
         Version = 17;
+        Save();
+    }
+
+    public void Migrate17To18()
+    {
+        if (Version >= PreCraftHomeTravelRules.PreferenceConfigVersion)
+            return;
+
+        VulcanReturnHomeBeforeCrafting = PreCraftHomeTravelRules.MigratePreference(
+            Version, AutoGatherConfig.GoHomeWhenIdle, VulcanReturnHomeBeforeCrafting);
+        Version = PreCraftHomeTravelRules.PreferenceConfigVersion;
         Save();
     }
 

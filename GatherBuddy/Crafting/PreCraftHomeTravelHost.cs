@@ -15,7 +15,7 @@ internal sealed class PreCraftHomeTravelHost
     private readonly HomeTravelArrivalReadiness _arrival = new();
     private TimeSpan _nextExitAt;
     public PreCraftHomeTravelHost() => _receipt = new(_character);
-    public string Status => _receipt.Error ?? "Waiting for Lifestream idle and player readiness (2 seconds outdoors; housing interior fast path).";
+    public string Status => _receipt.Error ?? "Waiting for Lifestream idle and player readiness (2 seconds outdoors; housing/workshop fast path).";
     public bool Submitted => _receipt.Submitted;
     public void Consume() => _receipt.Consume();
     public void Cancel() => _receipt.Cancel();
@@ -57,7 +57,7 @@ internal sealed class PreCraftHomeTravelHost
             if (_receipt.Suspended)
                 return _receipt.Observe(Clock.Elapsed, 0, string.Empty, false, false, false);
             var command = HomeNavigationHelper.NormalizeCommand(GatherBuddy.Config.AutoGatherConfig.LifestreamCommand);
-            var enabled = GatherBuddy.Config.AutoGatherConfig.GoHomeWhenIdle;
+            var enabled = GatherBuddy.Config.VulcanReturnHomeBeforeCrafting;
             var character = Dalamud.ClientState.IsLoggedIn ? Dalamud.PlayerState.ContentId : 0;
             if (_receipt.Consumed)
                 return _receipt.Observe(Clock.Elapsed, character, command, enabled, false, false);
@@ -66,11 +66,11 @@ internal sealed class PreCraftHomeTravelHost
             var busy = Lifestream.Enabled && Lifestream.IsBusy();
             var ready = CapturePlayerReady();
             var arrivalReady = !Submitted ? ready : ObserveArrival(busy, ready);
-            var alreadyInside = enabled && !Submitted && !busy && ready && SeFunctions.HousingManager.IsInsideHousing();
-            var skippedBefore = _receipt.SkippedInsideHousing;
+            var alreadyInside = enabled && !Submitted && !busy && ready && IsInsidePreCraftDestination();
+            var skippedBefore = _receipt.SkippedIndoorFastPath;
             var admission = _receipt.Observe(Clock.Elapsed, character, command, enabled, busy, arrivalReady, alreadyInside);
-            if (!skippedBefore && _receipt.SkippedInsideHousing)
-                GatherBuddy.Log.Information("[Vulcan] Already inside housing; skipping pre-craft Lifestream command for this phase");
+            if (!skippedBefore && _receipt.SkippedIndoorFastPath)
+                GatherBuddy.Log.Information("[Vulcan] Already inside housing or FC workshop; skipping pre-craft Lifestream command for this phase");
             if (admission is not (HomeTravelAdmission.Failed or HomeTravelAdmission.Cancelled)
                 && allowStart && !Submitted && !busy && !ready
                 && CraftingGameInterop.CurrentState == CraftingGameInterop.CraftState.IdleBetween)
@@ -84,7 +84,7 @@ internal sealed class PreCraftHomeTravelHost
             }
             if (admission != HomeTravelAdmission.NeedsCommand || !allowStart) return admission;
             if (Dalamud.Conditions[ConditionFlag.BoundByDuty]) return _receipt.Fail("Cannot return home while bound by duty.");
-            if (!Lifestream.Enabled) return _receipt.Fail("Lifestream is not available. Enable it or turn off Go Home When Idle before restarting crafting.");
+            if (!Lifestream.Enabled) return _receipt.Fail("Lifestream is not available. Enable it or turn off Return home before crafting in Vulcan Settings.");
             // Reserve before IPC. An exception may occur after the command took effect.
             if (!_receipt.RecordSubmission(Clock.Elapsed, command)) return HomeTravelAdmission.Waiting;
             _arrival.Reset(); // Idle time before submission cannot count as arrival.
@@ -113,7 +113,11 @@ internal sealed class PreCraftHomeTravelHost
 
     private bool ObserveArrival(bool busy, bool ready)
         => _arrival.Observe(Clock.Elapsed, busy, ready,
-            !busy && ready && SeFunctions.HousingManager.IsInsideHousing());
+            !busy && ready && IsInsidePreCraftDestination());
+
+    private static bool IsInsidePreCraftDestination()
+        => PreCraftHomeTravelRules.IsIndoorFastPath(
+            SeFunctions.HousingManager.IsInsideHousing(), Dalamud.ClientState.TerritoryType);
 
     private static bool CapturePlayerReady()
         => CraftingQueueProcessor.CapturePreparationBlockers() == CraftPreparationBlocker.None

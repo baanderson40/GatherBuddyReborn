@@ -17,11 +17,11 @@ public sealed class PreCraftHomeTravel(ulong character)
     public string? Error { get; private set; }
     public bool Submitted => _submittedAt.HasValue;
     public bool Consumed => _consumed;
-    public bool SkippedInsideHousing { get; private set; }
+    public bool SkippedIndoorFastPath { get; private set; }
     public bool Suspended => _handoff.HasValue;
 
     public HomeTravelAdmission Observe(TimeSpan now, ulong currentCharacter, string command,
-        bool enabled, bool busy, bool ready, bool insideHousing = false)
+        bool enabled, bool busy, bool ready, bool insideFastPath = false)
     {
         if (_cancelled) return HomeTravelAdmission.Cancelled;
         if (Error != null) return HomeTravelAdmission.Failed;
@@ -31,7 +31,7 @@ public sealed class PreCraftHomeTravel(ulong character)
         if (_consumed) return HomeTravelAdmission.Ready;
         if (Submitted && !string.Equals(_command, command, StringComparison.Ordinal))
             return Fail("Lifestream command changed during travel. Stop and restart crafting.");
-        if (SkippedInsideHousing)
+        if (SkippedIndoorFastPath)
         {
             _satisfied = !busy && ready;
             if (!_satisfied && now - _waitingAt!.Value >= CompletionTimeout)
@@ -49,9 +49,9 @@ public sealed class PreCraftHomeTravel(ulong character)
             _waitingAt ??= now;
             if (now - _waitingAt.Value >= CompletionTimeout)
                 return Fail("Pre-craft travel readiness exceeded 120 seconds. Finish other travel or interactions and restart crafting.");
-            if (!busy && ready && insideHousing)
+            if (!busy && ready && insideFastPath)
             {
-                SkippedInsideHousing = _satisfied = true;
+                SkippedIndoorFastPath = _satisfied = true;
                 return HomeTravelAdmission.Ready;
             }
             return !busy && ready ? HomeTravelAdmission.NeedsCommand : HomeTravelAdmission.Waiting;
@@ -74,7 +74,7 @@ public sealed class PreCraftHomeTravel(ulong character)
 
     public bool RecordSubmission(TimeSpan now, string command)
     {
-        if (Submitted || SkippedInsideHousing || Suspended || _cancelled || _satisfied || Error != null) return false;
+        if (Submitted || SkippedIndoorFastPath || Suspended || _cancelled || _satisfied || Error != null) return false;
         _submittedAt = now;
         _command = command;
         return true;
@@ -114,7 +114,7 @@ public sealed class PreCraftHomeTravel(ulong character)
         _submittedAt = _clearSince = _waitingAt = null;
         _command = null;
         _sawBusy = _satisfied = _consumed = false;
-        SkippedInsideHousing = false;
+        SkippedIndoorFastPath = false;
         return true;
     }
 
